@@ -60,7 +60,7 @@ class Logger:
 |---|---|
 | `path() -> str` | абсолютный путь к progress файлу |
 | `print(format, *args)` | timestamp + сообщение в файл и stdout (цвет текущей фазы) |
-| `print_raw(format, *args)` | без timestamp (для streaming output) |
+| `print_raw(format, *args)` | алиас для `print()` (с timestamp) |
 | `print_section(section)` | заголовок секции: "\n--- {label} ---\n" |
 | `print_aligned(text)` | timestamp на каждой строке, пропуск пустых, word wrap, list indent, подсветка сигналов |
 | `error(format, *args)` | "ERROR: " prefix в красном |

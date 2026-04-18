@@ -66,7 +66,7 @@ class Executor(Protocol):
 ```python
 class Logger(Protocol):
     def print(self, format: str, *args) -> None: ...        # форматированная строка с timestamp
-    def print_raw(self, format: str, *args) -> None: ...    # без timestamp
+    def print_raw(self, format: str, *args) -> None: ...    # алиас для print()
     def print_section(self, section: Section) -> None: ...  # заголовок секции
     def print_aligned(self, text: str) -> None: ...         # выравненный вывод (для streaming)
     def log_question(self, question: str, options: list[str]) -> None: ...  # Q&A для plan creation

@@ -35,15 +35,15 @@ claude_model = "sonnet"
 review_model = "opus"
 
 [colors]
-task = "46,139,87"
-review = "26,158,158"
-warn = "212,147,13"
-error = "204,0,0"
+task = "#2e8b57"
+review = "#1a9e9e"
+warn = "#d4930d"
+error = "#cc0000"
 ```
 
 Key rules:
 - Duration: string with suffix, parsed manually — `"30m"`, `"1h"`, `"90s"`, `"1h30m"`
-- Colors: RGB string `"r,g,b"` (values 0-255)
+- Colors: hex string `"#rrggbb"` (passed directly to Rich Style)
 - Lists: native TOML arrays `["pattern1", "pattern2"]`
 - Boolean: `true`/`false`
 - Absent key = not set (no need for `*Set` tracking, TOML is unambiguous)
