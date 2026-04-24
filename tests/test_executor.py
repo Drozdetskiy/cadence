@@ -638,3 +638,37 @@ class TestResult:
         assert r.signal == ""
         assert r.error is None
         assert r.idle_timed_out is False
+
+
+class TestClaudeExecutorCancel:
+    def test_cancel_without_active_run_is_noop(self) -> None:
+        executor = ClaudeExecutor()
+        executor.cancel()
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix-only")
+    def test_cancel_kills_running_subprocess(self) -> None:
+        import threading
+
+        executor = ClaudeExecutor(
+            command="sh",
+            args="-c 'sleep 30'",
+            idle_timeout=0,
+        )
+
+        result_holder: list[Result] = []
+
+        def run_it() -> None:
+            result_holder.append(executor.run(""))
+
+        t = threading.Thread(target=run_it)
+        t.start()
+
+        for _ in range(100):
+            if executor._active_cleanup is not None:
+                break
+            time.sleep(0.02)
+
+        executor.cancel()
+        t.join(timeout=5.0)
+        assert not t.is_alive()
+        assert executor._active_cleanup is None

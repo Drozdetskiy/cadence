@@ -13,6 +13,23 @@ def read_line_with_context(reader: IO[str]) -> str:
     return line.rstrip("\n")
 
 
+def ask_yes_no(
+    prompt: str,
+    *,
+    stdin: IO[str] | None = None,
+    stdout: IO[str] | None = None,
+) -> bool:
+    out = stdout if stdout is not None else sys.stdout
+    inp = stdin if stdin is not None else sys.stdin
+    out.write(f"{prompt} [y/N]: ")
+    out.flush()
+    try:
+        raw = read_line_with_context(inp)
+    except (EOFError, OSError):
+        return False
+    return raw.strip().lower() in ("y", "yes")
+
+
 class TerminalCollector:
     def __init__(self) -> None:
         self._stdin: IO[str] = sys.stdin

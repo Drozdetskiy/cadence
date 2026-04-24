@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,13 +13,16 @@ from rlx.cli import (
     check_claude_dep,
     derive_plan_path,
     determine_mode,
+    display_stats,
     resolve_version,
     run_plan_mode,
+    run_task_mode,
     to_rel_path,
 )
 from rlx.executor.claude_executor import Result
+from rlx.git import DiffStats
 from rlx.processor.runner import UserAbortedError
-from rlx.status import Mode, SignalPlanReady
+from rlx.status import Mode, SignalCompleted, SignalPlanReady
 
 
 class TestResolveVersion:
@@ -295,7 +299,10 @@ class TestMainCommand:
         )
         assert result.exit_code != 0
 
-    def test_task_mode_not_implemented(self, tmp_path: Path) -> None:
+    @patch("rlx.cli.run_task_mode")
+    def test_task_flag_calls_run_task_mode(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
         from typer.testing import CliRunner
 
         from rlx.cli import app
@@ -304,8 +311,10 @@ class TestMainCommand:
         f = tmp_path / "plan.md"
         f.write_text("task file")
         result = runner.invoke(app, ["--task", str(f)])
-        assert result.exit_code != 0
-        assert "not implemented" in result.output
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        args, _ = mock_run.call_args
+        assert args[0] == f
 
     def test_review_mode_not_implemented(self) -> None:
         from typer.testing import CliRunner
@@ -477,3 +486,247 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
+
+
+class TestDisplayStats:
+    def test_formats_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        stats = DiffStats(files=3, additions=42, deletions=7)
+        display_stats(stats, "2m30s", "my-branch")
+        captured = capsys.readouterr()
+        assert "my-branch" in captured.out
+        assert "2m30s" in captured.out
+        assert "files: 3" in captured.out
+        assert "+42" in captured.out
+        assert "-7" in captured.out
+
+    def test_zero_stats(self, capsys: pytest.CaptureFixture[str]) -> None:
+        display_stats(DiffStats(), "0m00s", "feature")
+        captured = capsys.readouterr()
+        assert "feature" in captured.out
+        assert "files: 0" in captured.out
+
+
+class TestRunTaskMode:
+    def test_file_not_found(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit):
+            run_task_mode(tmp_path / "nonexistent.md")
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_happy_path_success(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats(
+            files=2, additions=10, deletions=3
+        )
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalCompleted
+        )
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: done\n\n- [x] done item\n")
+
+        run_task_mode(f)
+
+        mock_svc.set_commit_trailer.assert_called()
+        mock_svc.ensure_has_commits.assert_called_once()
+        mock_svc.create_branch_for_plan.assert_called_once()
+        mock_svc.diff_stats.assert_called_once_with("main")
+        mock_svc.move_plan_to_completed.assert_called_once()
+        mock_log.close.assert_called_once()
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_user_aborted(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.side_effect = UserAbortedError("aborted")
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
+
+        run_task_mode(f)
+
+        mock_log.print.assert_any_call("aborted by user")
+        mock_log.close.assert_called_once()
+        mock_svc.diff_stats.assert_not_called()
+        mock_svc.move_plan_to_completed.assert_not_called()
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_service_init_failure(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+        mock_service_cls.side_effect = RuntimeError("not a repo")
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
+
+        with pytest.raises(SystemExit):
+            run_task_mode(f)
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_move_plan_failure_warns_but_succeeds(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_svc.move_plan_to_completed.side_effect = RuntimeError("git failed")
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalCompleted
+        )
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: done\n\n- [x] done item\n")
+
+        run_task_mode(f)
+
+        mock_log.warn.assert_any_call(
+            "could not move plan to completed: %s",
+            mock_svc.move_plan_to_completed.side_effect,
+        )
+        mock_log.close.assert_called_once()
+
+
+class TestInstallSigquit:
+    def test_install_sigquit_sets_event_when_signal_fires(self) -> None:
+        from rlx.cli import _install_sigquit
+
+        event = threading.Event()
+        sigquit = getattr(signal, "SIGQUIT", None)
+        if sigquit is None:
+            pytest.skip("SIGQUIT not available on this platform")
+
+        prior = signal.getsignal(sigquit)
+        try:
+            _install_sigquit(event)
+            handler = signal.getsignal(sigquit)
+            assert callable(handler)
+            handler(sigquit, None)
+            assert event.is_set()
+        finally:
+            signal.signal(sigquit, prior)

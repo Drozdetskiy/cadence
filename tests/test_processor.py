@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -23,10 +24,12 @@ from rlx.processor.runner import (
     Dependencies,
     RunContext,
     Runner,
+    UserAbortedError,
 )
 from rlx.status import (
     Mode,
     PhaseHolder,
+    SignalCompleted,
     SignalFailed,
     SignalPlanReady,
 )
@@ -329,3 +332,362 @@ class TestRunnerPlanCreationIdleTimeout:
         runner.run_plan_creation()
 
         assert executor.run.call_count == 2
+
+
+def _make_task_runner(
+    executor: object,
+    *,
+    plan_file: str = "",
+    max_iterations: int = 10,
+    task_retry_count: int = 1,
+    app_cfg: AppConfig | None = None,
+    local_dir: Path | None = None,
+) -> tuple[Runner, MagicMock, MagicMock]:
+    ctx = RunContext(
+        mode=Mode.FULL,
+        plan_file=plan_file,
+        local_dir=local_dir,
+    )
+    log = MagicMock()
+    log.path = "/tmp/progress.txt"
+    holder = PhaseHolder()
+    input_mock = MagicMock()
+    deps = Dependencies(
+        executor=executor,  # type: ignore[arg-type]
+        input_collector=input_mock,
+        logger=log,
+        holder=holder,
+    )
+    cfg = app_cfg or AppConfig(
+        max_iterations=max_iterations,
+        iteration_delay_ms=0,
+        task_retry_count=task_retry_count,
+    )
+    runner = Runner(ctx, cfg, deps)
+    return runner, log, input_mock
+
+
+def _write_plan(tmp_path: Path, content: str, name: str = "plan.md") -> Path:
+    f = tmp_path / name
+    f.write_text(content)
+    return f
+
+
+_PLAN_DONE = (
+    "# Plan\n"
+    "### Task 1: A\n"
+    "- [x] one\n"
+)
+_PLAN_PENDING = (
+    "# Plan\n"
+    "### Task 1: A\n"
+    "- [ ] one\n"
+)
+_PLAN_PENDING_TASK_2 = (
+    "# Plan\n"
+    "### Task 1: A\n"
+    "- [x] one\n"
+    "### Task 2: B\n"
+    "- [ ] two\n"
+)
+
+
+class TestRunTaskPhaseCompletion:
+    def test_completed_signal_returns_true(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalCompleted)
+        runner, log, _ = _make_task_runner(executor, plan_file=str(plan))
+
+        result = runner.run_task_phase()
+
+        assert result is True
+        assert executor.run.call_count == 1
+        log.print.assert_any_call("all tasks done")
+
+    def test_completed_with_uncompleted_warns_then_returns_true(
+        self, tmp_path: Path
+    ) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+
+        # First COMPLETED signal but plan still has [ ] -> warn and continue.
+        # Second iteration: the plan still has [ ] so we'd loop again. To keep
+        # the test focused we make the second call return COMPLETED with the
+        # plan having been replaced with an all-done plan.
+        call_count = {"n": 0}
+
+        def fake_run(prompt: str) -> Result:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                plan.write_text(_PLAN_DONE)
+            return Result(output="", signal=SignalCompleted)
+
+        executor.run.side_effect = fake_run
+        runner, log, _ = _make_task_runner(
+            executor, plan_file=str(plan), max_iterations=5
+        )
+
+        result = runner.run_task_phase()
+
+        assert result is True
+        log.warn.assert_any_call(
+            "COMPLETED signal received but uncompleted tasks remain"
+        )
+
+    def test_failed_signal_retries_then_raises(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalFailed)
+        runner, log, _ = _make_task_runner(
+            executor,
+            plan_file=str(plan),
+            max_iterations=10,
+            task_retry_count=2,
+        )
+
+        with pytest.raises(RuntimeError, match="task execution failed"):
+            runner.run_task_phase()
+
+        # initial + 2 retries = 3 calls
+        assert executor.run.call_count == 3
+        log.error.assert_called()
+
+    def test_max_iterations_returns_false(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(output="no signal", signal="")
+        runner, log, _ = _make_task_runner(
+            executor, plan_file=str(plan), max_iterations=3
+        )
+
+        result = runner.run_task_phase()
+
+        assert result is False
+        assert executor.run.call_count == 3
+        log.warn.assert_any_call("max iterations reached")
+
+    def test_pattern_match_error_returns_false(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=PatternMatchError("API Error:", "claude /usage"),
+        )
+        runner, log, _ = _make_task_runner(executor, plan_file=str(plan))
+
+        result = runner.run_task_phase()
+
+        assert result is False
+        log.error.assert_called()
+
+    def test_unexpected_error_raised(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        boom = RuntimeError("boom")
+        executor.run.return_value = Result(output="", signal="", error=boom)
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan))
+
+        with pytest.raises(RuntimeError, match="boom"):
+            runner.run_task_phase()
+
+
+class TestHasUncompletedTasks:
+    def test_pending_returns_true(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
+        assert runner.has_uncompleted_tasks() is True
+
+    def test_all_done_returns_false(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
+        assert runner.has_uncompleted_tasks() is False
+
+    def test_empty_plan_file_returns_false(self) -> None:
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file="")
+        assert runner.has_uncompleted_tasks() is False
+
+    def test_malformed_falls_back_to_file_scan(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, "no tasks here\n- [ ] orphan\n")
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
+        assert runner.has_uncompleted_tasks() is True
+
+    def test_resolves_completed_subdir(self, tmp_path: Path) -> None:
+        completed_dir = tmp_path / "completed"
+        completed_dir.mkdir()
+        moved = completed_dir / "plan.md"
+        moved.write_text(_PLAN_PENDING)
+
+        original = str(tmp_path / "plan.md")
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=original)
+        assert runner.has_uncompleted_tasks() is True
+
+
+class TestNextPlanTaskPosition:
+    def test_first_pending_task(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING_TASK_2)
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
+        assert runner.next_plan_task_position() == 2
+
+    def test_no_pending_returns_zero(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
+        assert runner.next_plan_task_position() == 0
+
+    def test_empty_plan_returns_zero(self) -> None:
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file="")
+        assert runner.next_plan_task_position() == 0
+
+
+class TestBreakPause:
+    def test_break_with_pause_handler_resumes(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        # First call sets break event during run; we'll trigger break before result.
+        # Subsequent call returns COMPLETED on the all-done plan.
+        break_event = threading.Event()
+        call_count = {"n": 0}
+
+        def fake_run(prompt: str) -> Result:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                break_event.set()
+                return Result(output="", signal="")
+            plan.write_text(_PLAN_DONE)
+            return Result(output="", signal=SignalCompleted)
+
+        executor.run.side_effect = fake_run
+        runner, _log, _ = _make_task_runner(
+            executor, plan_file=str(plan), max_iterations=5
+        )
+        runner.set_break_event(break_event)
+        runner.set_pause_handler(lambda: True)
+
+        result = runner.run_task_phase()
+        assert result is True
+        assert call_count["n"] == 2
+        assert not break_event.is_set()
+
+    def test_break_without_pause_handler_aborts(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        break_event = threading.Event()
+
+        def fake_run(prompt: str) -> Result:
+            break_event.set()
+            return Result(output="", signal="")
+
+        executor.run.side_effect = fake_run
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan))
+        runner.set_break_event(break_event)
+
+        with pytest.raises(UserAbortedError):
+            runner.run_task_phase()
+
+    def test_break_with_pause_decline_aborts(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        break_event = threading.Event()
+
+        def fake_run(prompt: str) -> Result:
+            break_event.set()
+            return Result(output="", signal="")
+
+        executor.run.side_effect = fake_run
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan))
+        runner.set_break_event(break_event)
+        runner.set_pause_handler(lambda: False)
+
+        with pytest.raises(UserAbortedError):
+            runner.run_task_phase()
+
+
+class TestSessionTimeout:
+    def test_idle_no_signal_marks_session_timed_out(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="", signal="", idle_timed_out=True
+        )
+        runner, _log, _ = _make_task_runner(
+            executor, plan_file=str(plan), max_iterations=1
+        )
+        runner.run_task_phase()
+        assert runner.last_session_timed_out is True
+
+    def test_session_timer_fires_clears_signal_and_error(
+        self, tmp_path: Path
+    ) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        cfg = AppConfig(
+            max_iterations=1,
+            iteration_delay_ms=0,
+            session_timeout="1s",
+        )
+        executor = MagicMock()
+
+        def slow_run(prompt: str) -> Result:
+            time.sleep(1.5)
+            return Result(output="x", signal=SignalCompleted)
+
+        executor.run.side_effect = slow_run
+        runner, _log, _ = _make_task_runner(
+            executor, plan_file=str(plan), app_cfg=cfg
+        )
+        runner.run_task_phase()
+        assert runner.last_session_timed_out is True
+
+
+class TestSleepWithCancel:
+    def test_sleep_short_returns(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        start = time.monotonic()
+        runner._sleep_with_cancel(0.05)
+        elapsed = time.monotonic() - start
+        assert elapsed >= 0.04
+
+    def test_break_event_cancels_sleep(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        event = threading.Event()
+        runner.set_break_event(event)
+        event.set()
+        start = time.monotonic()
+        runner._sleep_with_cancel(2.0)
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.5
+
+    def test_zero_duration_no_op(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        runner._sleep_with_cancel(0.0)
+
+
+class TestRunDispatch:
+    def test_run_full_requires_plan_file(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        with pytest.raises(ValueError, match="plan_file"):
+            runner.run_full()
+
+    def test_run_tasks_only_requires_plan_file(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        with pytest.raises(ValueError, match="plan_file"):
+            runner.run_tasks_only()
+
+    def test_run_dispatches_full_mode(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalCompleted)
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan))
+        assert runner.run() is True
+
+    def test_run_unsupported_mode_raises(self) -> None:
+        executor = MagicMock()
+        runner, _log, _ = _make_task_runner(executor, plan_file="")
+        runner._ctx.mode = Mode.REVIEW
+        with pytest.raises(ValueError, match="unsupported mode"):
+            runner.run()
