@@ -45,7 +45,14 @@ def load_prompt(name: str, local_dir: Path | None = None) -> str:
     ref = importlib.resources.files("rlx.defaults.prompts").joinpath(
         f"{name}.txt"
     )
-    content = ref.read_text(encoding="utf-8")
+    try:
+        content = ref.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"default prompt {name!r} not found in installed rlx "
+            "package; the install may be incomplete or out of date — "
+            "reinstall with 'pip install -e .'"
+        ) from exc
     return normalize_crlf(content)
 
 

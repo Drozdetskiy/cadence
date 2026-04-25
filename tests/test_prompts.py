@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rlx.processor.prompts import (
     build_finalize_prompt,
     build_review_first_prompt,
@@ -21,6 +23,16 @@ class TestLoadTaskPrompt:
         assert "{{PROGRESS_FILE}}" in prompt
         assert "<<<RLX:ALL_TASKS_DONE>>>" in prompt
         assert "<<<RLX:TASK_FAILED>>>" in prompt
+
+    def test_missing_prompt_raises_runtime_error_with_diagnostic(
+        self,
+    ) -> None:
+        with pytest.raises(RuntimeError) as excinfo:
+            load_prompt("does_not_exist")
+        message = str(excinfo.value)
+        assert "does_not_exist" in message
+        assert "rlx" in message
+        assert isinstance(excinfo.value.__cause__, FileNotFoundError)
 
 
 class TestBuildTaskPrompt:
