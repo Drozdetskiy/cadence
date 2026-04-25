@@ -332,7 +332,7 @@ class TestMainCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["--review"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with()
+        mock_run.assert_called_once_with(None)
 
     def test_review_with_impl_errors(self) -> None:
         from typer.testing import CliRunner
