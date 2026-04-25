@@ -34,6 +34,22 @@ class TestLoadTaskPrompt:
         assert "rlx" in message
         assert isinstance(excinfo.value.__cause__, FileNotFoundError)
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "make_plan",
+            "task",
+            "review_first",
+            "review_second",
+            "finalize",
+        ],
+    )
+    def test_all_shipped_prompts_load(self, name: str) -> None:
+        prompt = load_prompt(name)
+        assert prompt.strip(), (
+            f"shipped prompt {name!r} loaded but is empty"
+        )
+
 
 class TestBuildTaskPrompt:
     def test_substitutes_plan_file(self) -> None:

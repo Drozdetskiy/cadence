@@ -197,6 +197,25 @@ class TestEmbeddedDefaults:
             "Review code changes and identify missing documentation updates."
         )
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "quality",
+            "implementation",
+            "testing",
+            "simplification",
+            "documentation",
+        ],
+    )
+    def test_all_shipped_agents_load(self, name: str) -> None:
+        result = load_agent(name)
+        assert result is not None, (
+            f"shipped agent {name!r} returned None"
+        )
+        assert result.body.strip(), (
+            f"shipped agent {name!r} loaded but body is empty"
+        )
+
 
 class TestAgentDef:
     def test_is_frozen(self) -> None:
