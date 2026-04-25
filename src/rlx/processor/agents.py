@@ -80,9 +80,14 @@ def load_agent(
             raw = local_path.read_text(encoding="utf-8")
     if raw is None:
         ref = importlib.resources.files("rlx.defaults.agents").joinpath(f"{name}.txt")
-        if not ref.is_file():
-            return None
-        raw = ref.read_text(encoding="utf-8")
+        try:
+            raw = ref.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"default agent {name!r} not found in installed rlx "
+                "package; the install may be incomplete or out of date — "
+                "reinstall with 'pip install -e .'"
+            ) from exc
 
     raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     fields, body = _parse_frontmatter(raw)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rlx.processor.agents import AgentDef, load_agent
 
 
@@ -32,9 +34,19 @@ class TestLoadAgentFallback:
         assert result is not None
         assert "Review whether the implementation" in result.body
 
-    def test_missing_agent_returns_none(self, tmp_path: Path) -> None:
-        result = load_agent("nonexistent-agent", local_dir=tmp_path)
-        assert result is None
+    def test_missing_agent_raises_diagnostic(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError) as exc_info:
+            load_agent("nonexistent-agent", local_dir=tmp_path)
+        message = str(exc_info.value)
+        assert "nonexistent-agent" in message
+        assert "rlx" in message
+
+    def test_missing_embedded_agent_raises_diagnostic(self) -> None:
+        with pytest.raises(RuntimeError) as exc_info:
+            load_agent("definitely-not-a-real-agent")
+        message = str(exc_info.value)
+        assert "definitely-not-a-real-agent" in message
+        assert "rlx" in message
 
 
 class TestFrontmatter:

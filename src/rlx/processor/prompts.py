@@ -119,7 +119,10 @@ def expand_agent_references(
 ) -> str:
     def _sub(match: re.Match[str]) -> str:
         name = match.group(1)
-        agent = load_agent(name, local_dir=local_dir, warn=warn)
+        try:
+            agent = load_agent(name, local_dir=local_dir, warn=warn)
+        except RuntimeError:
+            agent = None
         if agent is None:
             if warn is not None:
                 warn(f"agent {name!r} not found, leaving marker in place")
