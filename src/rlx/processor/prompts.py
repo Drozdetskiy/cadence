@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import importlib.resources
+import re
+from collections.abc import Callable
 from pathlib import Path
+
+from rlx.processor.agents import load_agent
 
 
 def normalize_crlf(text: str) -> str:
@@ -82,6 +86,70 @@ def append_commit_trailer_instruction(
 
 
 _PLAN_DESC_PLACEHOLDER = "{{PLAN_DESCRIPTION}}"
+_AGENT_REF_RE = re.compile(r"\{\{agent:([a-zA-Z0-9_-]+)\}\}")
+
+
+def format_agent_expansion(
+    prompt_body: str, *, model: str, agent_type: str
+) -> str:
+    model_clause = f" with model={model}" if model else ""
+    return (
+        f"Use the Task tool{model_clause} to launch a {agent_type} agent "
+        f"with the prompt below (between the BEGIN/END markers):\n"
+        f"<<<AGENT_PROMPT BEGIN>>>\n"
+        f"{prompt_body}\n"
+        f"<<<AGENT_PROMPT END>>>\n\n"
+        f"Report findings only - no positive observations."
+    )
+
+
+def expand_agent_references(
+    prompt: str,
+    *,
+    local_dir: Path | None,
+    warn: Callable[[str], None] | None,
+    base_vars: dict[str, str],
+) -> str:
+    def _sub(match: re.Match[str]) -> str:
+        name = match.group(1)
+        agent = load_agent(name, local_dir=local_dir, warn=warn)
+        if agent is None:
+            if warn is not None:
+                warn(f"agent {name!r} not found, leaving marker in place")
+            return match.group(0)
+        body = replace_base_variables(agent.body, **base_vars)
+        return format_agent_expansion(
+            body, model=agent.model, agent_type=agent.agent_type
+        )
+
+    return _AGENT_REF_RE.sub(_sub, prompt)
+
+
+def replace_prompt_variables(
+    prompt: str,
+    *,
+    plan_file: str,
+    progress_file: str,
+    goal: str,
+    default_branch: str,
+    plans_dir: str,
+    commit_trailer: str,
+    local_dir: Path | None,
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    base_vars: dict[str, str] = {
+        "plan_file": plan_file,
+        "progress_file": progress_file,
+        "goal": goal,
+        "default_branch": default_branch,
+        "plans_dir": plans_dir,
+    }
+    prompt = replace_base_variables(prompt, **base_vars)
+    prompt = expand_agent_references(
+        prompt, local_dir=local_dir, warn=warn, base_vars=base_vars
+    )
+    prompt = append_commit_trailer_instruction(prompt, commit_trailer)
+    return prompt
 
 
 def build_plan_prompt(
@@ -126,3 +194,99 @@ def build_task_prompt(
     )
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
     return prompt
+
+
+def _review_goal(plan_file: str, default_branch: str) -> str:
+    if plan_file:
+        return f"implementation of plan at {plan_file}"
+    return f"review of branch vs {default_branch or 'master'}"
+
+
+def build_review_first_prompt(
+    *,
+    local_dir: Path | None = None,
+    plan_file: str = "",
+    progress_file: str = "",
+    default_branch: str = "",
+    plans_dir: str = "",
+    commit_trailer: str = "",
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    prompt = load_prompt("review_first", local_dir=local_dir)
+    return replace_prompt_variables(
+        prompt,
+        plan_file=plan_file,
+        progress_file=progress_file,
+        goal=_review_goal(plan_file, default_branch),
+        default_branch=default_branch,
+        plans_dir=plans_dir,
+        commit_trailer=commit_trailer,
+        local_dir=local_dir,
+        warn=warn,
+    )
+
+
+def build_review_second_prompt(
+    *,
+    local_dir: Path | None = None,
+    plan_file: str = "",
+    progress_file: str = "",
+    default_branch: str = "",
+    plans_dir: str = "",
+    commit_trailer: str = "",
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    prompt = load_prompt("review_second", local_dir=local_dir)
+    return replace_prompt_variables(
+        prompt,
+        plan_file=plan_file,
+        progress_file=progress_file,
+        goal=_review_goal(plan_file, default_branch),
+        default_branch=default_branch,
+        plans_dir=plans_dir,
+        commit_trailer=commit_trailer,
+        local_dir=local_dir,
+        warn=warn,
+    )
+
+
+def build_finalize_prompt(
+    *,
+    local_dir: Path | None = None,
+    plan_file: str = "",
+    progress_file: str = "",
+    default_branch: str = "",
+    plans_dir: str = "",
+    commit_trailer: str = "",
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    prompt = load_prompt("finalize", local_dir=local_dir)
+    return replace_prompt_variables(
+        prompt,
+        plan_file=plan_file,
+        progress_file=progress_file,
+        goal=_review_goal(plan_file, default_branch),
+        default_branch=default_branch,
+        plans_dir=plans_dir,
+        commit_trailer=commit_trailer,
+        local_dir=local_dir,
+        warn=warn,
+    )
+
+
+__all__ = [
+    "append_commit_trailer_instruction",
+    "build_finalize_prompt",
+    "build_plan_prompt",
+    "build_review_first_prompt",
+    "build_review_second_prompt",
+    "build_task_prompt",
+    "expand_agent_references",
+    "format_agent_expansion",
+    "load_prompt",
+    "normalize_crlf",
+    "replace_base_variables",
+    "replace_prompt_variables",
+    "strip_comments",
+    "strip_leading_comments",
+]

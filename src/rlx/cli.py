@@ -153,6 +153,42 @@ def _build_task_logger(
         raise SystemExit(1) from None
 
 
+def _build_review_logger(
+    colors: Colors, holder: PhaseHolder, branch: str
+) -> Logger:
+    logger_cfg = ProgressLoggerConfig(
+        plan_file="",
+        plan_description="",
+        mode=Mode.REVIEW,
+        branch=branch,
+    )
+    try:
+        return Logger(logger_cfg, colors, holder)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+
+def _build_review_executor(
+    cfg: Config,
+    activity_handler: Callable[[str], None],
+    output_handler: Callable[[str], None],
+    idle_timeout: float,
+) -> ClaudeExecutor | None:
+    if not cfg.review_model or cfg.review_model == cfg.claude_model:
+        return None
+    return ClaudeExecutor(
+        command=cfg.claude_command,
+        args=cfg.claude_args,
+        model=cfg.review_model,
+        error_patterns=cfg.claude_error_patterns,
+        limit_patterns=cfg.claude_limit_patterns,
+        idle_timeout=idle_timeout,
+        activity_handler=activity_handler,
+        output_handler=output_handler,
+    )
+
+
 def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     typer.echo(
         f"branch: {branch}  elapsed: {elapsed}  "
@@ -340,12 +376,16 @@ def run_task_mode(task_file: Path) -> None:
         activity_handler=activity_handler,
         output_handler=output_handler,
     )
+    review_claude = _build_review_executor(
+        cfg, activity_handler, output_handler, idle_timeout
+    )
 
     deps = Dependencies(
         executor=claude,
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
+        review_executor=review_claude,
     )
 
     ctx = RunContext(
@@ -374,6 +414,105 @@ def run_task_mode(task_file: Path) -> None:
                 git_svc_for_log.move_plan_to_completed(plan_path_str)
             except (RuntimeError, FileNotFoundError) as exc:
                 log.warn("could not move plan to completed: %s", exc)
+            display_stats(stats, log.elapsed(), branch)
+    except KeyboardInterrupt:
+        log.print("interrupted by user")
+        return
+    except UserAbortedError:
+        log.print("aborted by user")
+        return
+    except Exception as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        log.close(success=run_success)
+
+
+def run_review_mode() -> None:
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+
+    check_claude_dep(cfg)
+
+    vcs = cfg.vcs_command or "git"
+    _ensure_git_repo(vcs)
+
+    holder = PhaseHolder()
+    colors = Colors(cfg.colors)
+
+    try:
+        git_svc = Service(path=".", log=_StderrLogger(), command=vcs)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    default_branch = cfg.default_branch or git_svc.get_default_branch()
+    branch = git_svc.current_branch()
+
+    log = _build_review_logger(colors, holder, branch)
+
+    log.print("rlx %s", resolve_version())
+    log.print("mode: review")
+    log.print("branch: %s", branch)
+    log.print("progress: %s", log.path)
+
+    git_svc_for_log = Service(path=".", log=log, command=vcs)
+    git_svc_for_log.set_commit_trailer(cfg.commit_trailer)
+
+    idle_timeout = parse_duration(cfg.idle_timeout)
+
+    def activity_handler(tool_name: str) -> None:
+        log.print("claude: %s", tool_name)
+
+    def output_handler(text: str) -> None:
+        log.log_claude_output(text)
+
+    claude = ClaudeExecutor(
+        command=cfg.claude_command,
+        args=cfg.claude_args,
+        model=cfg.claude_model,
+        error_patterns=cfg.claude_error_patterns,
+        limit_patterns=cfg.claude_limit_patterns,
+        idle_timeout=idle_timeout,
+        activity_handler=activity_handler,
+        output_handler=output_handler,
+    )
+    review_claude = _build_review_executor(
+        cfg, activity_handler, output_handler, idle_timeout
+    )
+
+    deps = Dependencies(
+        executor=claude,
+        input_collector=TerminalCollector(),
+        logger=log,
+        holder=holder,
+        review_executor=review_claude,
+    )
+
+    ctx = RunContext(
+        mode=Mode.REVIEW,
+        plan_file="",
+        plan_description="",
+        progress_path=log.path,
+        default_branch=default_branch,
+        local_dir=local_dir,
+    )
+
+    break_event = threading.Event()
+    _install_sigquit(break_event)
+
+    run_success = False
+    try:
+        runner = Runner(ctx, cfg, deps)
+        runner.set_break_event(break_event)
+        runner.set_pause_handler(_make_pause_handler(log))
+        runner.set_git_checker(git_svc_for_log)
+
+        run_success = runner.run()
+        if run_success:
+            stats = git_svc_for_log.diff_stats(default_branch)
             display_stats(stats, log.elapsed(), branch)
     except KeyboardInterrupt:
         log.print("interrupted by user")
@@ -421,6 +560,13 @@ def main(
         typer.echo(f"rlx {resolve_version()}")
         raise SystemExit(0)
 
+    if review and impl:
+        typer.echo(
+            "error: --review is incompatible with --impl",
+            err=True,
+        )
+        raise SystemExit(1)
+
     if impl and plan is None:
         typer.echo(
             "error: --impl requires --plan",
@@ -448,5 +594,4 @@ def main(
         assert task is not None
         run_task_mode(task)
     elif mode == Mode.REVIEW:
-        typer.echo("error: --review mode not implemented in v0.1", err=True)
-        raise SystemExit(1)
+        run_review_mode()

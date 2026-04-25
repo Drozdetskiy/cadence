@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from rlx.processor.signals import (
+    is_all_tasks_done,
     is_plan_ready,
+    is_review_done,
+    is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
 )
-from rlx.status import SignalPlanReady
+from rlx.status import (
+    SignalCompleted,
+    SignalFailed,
+    SignalPlanReady,
+    SignalReviewDone,
+)
 
 
 class TestParseQuestionPayload:
@@ -149,5 +157,41 @@ class TestIsPlanReady:
 
     def test_empty(self) -> None:
         assert is_plan_ready("") is False
+
+
+class TestIsReviewDone:
+    def test_review_done(self) -> None:
+        assert is_review_done(SignalReviewDone) is True
+
+    def test_not_review_done(self) -> None:
+        assert is_review_done(SignalCompleted) is False
+        assert is_review_done(SignalFailed) is False
+
+    def test_empty(self) -> None:
+        assert is_review_done("") is False
+
+
+class TestIsTaskFailed:
+    def test_task_failed(self) -> None:
+        assert is_task_failed(SignalFailed) is True
+
+    def test_not_task_failed(self) -> None:
+        assert is_task_failed(SignalCompleted) is False
+        assert is_task_failed(SignalReviewDone) is False
+
+    def test_empty(self) -> None:
+        assert is_task_failed("") is False
+
+
+class TestIsAllTasksDone:
+    def test_all_tasks_done(self) -> None:
+        assert is_all_tasks_done(SignalCompleted) is True
+
+    def test_not_all_tasks_done(self) -> None:
+        assert is_all_tasks_done(SignalFailed) is False
+        assert is_all_tasks_done(SignalReviewDone) is False
+
+    def test_empty(self) -> None:
+        assert is_all_tasks_done("") is False
 
 
