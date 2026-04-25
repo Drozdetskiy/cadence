@@ -102,6 +102,6 @@ Add a `--base <branch>` CLI flag that overrides the base branch used for the rev
 
 ### Task 5: Update documentation and finalize
 
-- [ ] Update `CLAUDE.md` `cli.py` summary line to mention the `--base` flag for review mode (one-word addition to the existing description; do not expand into prose)
-- [ ] Update `README.md` only if it documents review-mode flags; if it does not mention `--review`, skip
-- [ ] Move this plan to `tasks/0005-review-flags/completed/` (mirrors prior plan layout `tasks/0004-v03/completed/`)
+- [x] Update `CLAUDE.md` `cli.py` summary line to mention the `--base` flag for review mode (one-word addition to the existing description; do not expand into prose)
+- [x] Update `README.md` only if it documents review-mode flags; if it does not mention `--review`, skip
+- [x] Move this plan to `tasks/0005-review-flags/completed/` (mirrors prior plan layout `tasks/0004-v03/completed/`)
