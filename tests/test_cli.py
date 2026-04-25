@@ -1051,6 +1051,174 @@ class TestRunReviewMode:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
+    def test_base_arg_overrides_config_and_autodetect(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, default_branch="main"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "should-not-be-used"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        with (
+            patch("rlx.cli.display_stats"),
+            patch("rlx.cli.Runner") as mock_runner_cls,
+        ):
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode(base="develop")
+
+        mock_svc.diff_stats.assert_called_once_with("develop")
+        mock_svc.get_default_branch.assert_not_called()
+        mock_log.print.assert_any_call("base: %s", "develop")
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_base_none_uses_config_default_branch(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, default_branch="trunk"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "should-not-be-used"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        with (
+            patch("rlx.cli.display_stats"),
+            patch("rlx.cli.Runner") as mock_runner_cls,
+        ):
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode(base=None)
+
+        mock_svc.diff_stats.assert_called_once_with("trunk")
+        mock_svc.get_default_branch.assert_not_called()
+        mock_log.print.assert_any_call("base: %s", "trunk")
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_base_none_falls_back_to_autodetect_when_config_empty(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, default_branch=""
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        with (
+            patch("rlx.cli.display_stats"),
+            patch("rlx.cli.Runner") as mock_runner_cls,
+        ):
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode()
+
+        mock_svc.diff_stats.assert_called_once_with("main")
+        mock_svc.get_default_branch.assert_called_once()
+        mock_log.print.assert_any_call("base: %s", "main")
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
     def test_runner_returns_false_skips_diff_stats(
         self,
         mock_logger_cls: MagicMock,

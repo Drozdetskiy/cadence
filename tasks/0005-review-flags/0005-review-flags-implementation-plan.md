@@ -67,30 +67,30 @@ Add a `--base <branch>` CLI flag that overrides the base branch used for the rev
 **Files:**
 - Modify: `tests/test_cli.py`
 
-- [ ] In `TestRunReviewMode`, add `test_base_arg_overrides_config_and_autodetect`:
+- [x] In `TestRunReviewMode`, add `test_base_arg_overrides_config_and_autodetect`:
       - `Config(iteration_delay_ms=0, default_branch="main")`
       - `mock_svc.get_default_branch.return_value = "should-not-be-used"`
       - invoke `run_review_mode(base="develop")`
       - assert `mock_svc.diff_stats.assert_called_once_with("develop")`
       - assert `mock_svc.get_default_branch.assert_not_called()`
       - assert `mock_log.print` was called with `("base: %s", "develop")`
-- [ ] Add `test_base_none_uses_config_default_branch`:
+- [x] Add `test_base_none_uses_config_default_branch`:
       - `Config(iteration_delay_ms=0, default_branch="trunk")`
       - invoke `run_review_mode(base=None)`
       - assert `diff_stats` called with `"trunk"`
       - assert `get_default_branch` not called
       - assert `log.print` was called with `("base: %s", "trunk")`
-- [ ] Add `test_base_none_falls_back_to_autodetect_when_config_empty`:
+- [x] Add `test_base_none_falls_back_to_autodetect_when_config_empty`:
       - `Config(iteration_delay_ms=0, default_branch="")` (or omit so it's empty)
       - `mock_svc.get_default_branch.return_value = "main"`
       - invoke `run_review_mode()`
       - assert `diff_stats` called with `"main"`
       - assert `get_default_branch` was called once
       - assert `log.print` was called with `("base: %s", "main")` — regression-guards existing behavior
-- [ ] Reuse the mock setup pattern from `test_happy_path_success` (Service, ClaudeExecutor, Logger, Runner, is_git_repo, load_config, detect_local_dir, check_claude_dep, _install_sigquit, TerminalCollector all patched)
-- [ ] run `pdm run pytest tests/test_cli.py::TestRunReviewMode -v` — must pass
-- [ ] run `pdm run ruff check src/ tests/` — must pass
-- [ ] run `pdm run mypy src/` — must pass
+- [x] Reuse the mock setup pattern from `test_happy_path_success` (Service, ClaudeExecutor, Logger, Runner, is_git_repo, load_config, detect_local_dir, check_claude_dep, _install_sigquit, TerminalCollector all patched)
+- [x] run `pdm run pytest tests/test_cli.py::TestRunReviewMode -v` — must pass
+- [x] run `pdm run ruff check src/ tests/` — must pass
+- [x] run `pdm run mypy src/` — must pass
 
 ### Task 4: Verify acceptance criteria
 
