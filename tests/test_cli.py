@@ -402,6 +402,51 @@ class TestMainCommand:
         _, kwargs = mock_run.call_args
         assert kwargs["impl"] is True
 
+    @patch("rlx.cli.run_review_mode")
+    def test_base_with_review_passes(self, mock_run: MagicMock) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--review", "--base", "develop"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with("develop")
+
+    def test_base_without_review_errors(self) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--base", "develop"])
+        assert result.exit_code != 0
+        assert "--base is only valid with --review" in result.output
+
+    def test_base_with_plan_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "prompt.md"
+        f.write_text("implement feature X")
+        result = runner.invoke(app, ["--plan", str(f), "--base", "develop"])
+        assert result.exit_code != 0
+        assert "--base is only valid with --review" in result.output
+
+    def test_base_with_task_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "plan.md"
+        f.write_text("task file")
+        result = runner.invoke(app, ["--task", str(f), "--base", "develop"])
+        assert result.exit_code != 0
+        assert "--base is only valid with --review" in result.output
+
 
 class TestDerivePlanPath:
     def test_replaces_prompt_with_plan(self, tmp_path: Path) -> None:

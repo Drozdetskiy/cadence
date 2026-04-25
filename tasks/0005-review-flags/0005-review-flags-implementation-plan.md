@@ -54,13 +54,13 @@ Add a `--base <branch>` CLI flag that overrides the base branch used for the rev
 **Files:**
 - Modify: `tests/test_cli.py`
 
-- [ ] In `TestMainCommand`, add `test_base_with_review_passes`: patch `rlx.cli.run_review_mode`, invoke `["--review", "--base", "develop"]`, assert `exit_code == 0` and `mock_run.assert_called_once_with("develop")`
-- [ ] Add `test_base_without_review_errors`: invoke `["--base", "develop"]`, assert `exit_code != 0` and `"--base is only valid with --review"` in `result.output`
-- [ ] Add `test_base_with_plan_errors`: write a tmp prompt file, invoke `["--plan", str(f), "--base", "develop"]`, assert `exit_code != 0` and the same error message in output
-- [ ] Add `test_base_with_task_errors`: write a tmp plan file, invoke `["--task", str(f), "--base", "develop"]`, assert `exit_code != 0` and the same error message in output
-- [ ] run `pdm run pytest tests/test_cli.py::TestMainCommand -v` — must pass
-- [ ] run `pdm run ruff check src/ tests/` — must pass
-- [ ] run `pdm run mypy src/` — must pass
+- [x] In `TestMainCommand`, add `test_base_with_review_passes`: patch `rlx.cli.run_review_mode`, invoke `["--review", "--base", "develop"]`, assert `exit_code == 0` and `mock_run.assert_called_once_with("develop")`
+- [x] Add `test_base_without_review_errors`: invoke `["--base", "develop"]`, assert `exit_code != 0` and `"--base is only valid with --review"` in `result.output`
+- [x] Add `test_base_with_plan_errors`: write a tmp prompt file, invoke `["--plan", str(f), "--base", "develop"]`, assert `exit_code != 0` and the same error message in output
+- [x] Add `test_base_with_task_errors`: write a tmp plan file, invoke `["--task", str(f), "--base", "develop"]`, assert `exit_code != 0` and the same error message in output
+- [x] run `pdm run pytest tests/test_cli.py::TestMainCommand -v` — must pass
+- [x] run `pdm run ruff check src/ tests/` — must pass
+- [x] run `pdm run mypy src/` — must pass
 
 ### Task 3: Resolution priority tests for `run_review_mode`
 
