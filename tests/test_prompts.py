@@ -32,6 +32,8 @@ class TestLoadTaskPrompt:
         message = str(excinfo.value)
         assert "does_not_exist" in message
         assert "rlx" in message
+        assert "reinstall" in message
+        assert "pip install" in message
         assert isinstance(excinfo.value.__cause__, FileNotFoundError)
 
     @pytest.mark.parametrize(
@@ -161,6 +163,27 @@ class TestExpandAgentReferences:
         assert "{{agent:nonexistent}}" in result
         assert warnings, "expected at least one warning"
         assert any("nonexistent" in w for w in warnings)
+
+    def test_missing_embedded_agent_surfaces_diagnostic_via_warn(
+        self,
+    ) -> None:
+        warnings: list[str] = []
+        result = expand_agent_references(
+            "x {{agent:not-a-real-agent}} y",
+            local_dir=None,
+            warn=warnings.append,
+            base_vars={},
+        )
+        assert "{{agent:not-a-real-agent}}" in result
+        assert any(
+            "not-a-real-agent" in w
+            and "reinstall" in w
+            and "pip install" in w
+            for w in warnings
+        ), (
+            "expected the load_agent diagnostic to be forwarded "
+            "to the warn callback, not swallowed"
+        )
 
     def test_recursion_guard(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"

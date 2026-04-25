@@ -72,7 +72,7 @@ def load_agent(
     *,
     local_dir: Path | None = None,
     warn: Callable[[str], None] | None = None,
-) -> AgentDef | None:
+) -> AgentDef:
     raw: str | None = None
     if local_dir is not None:
         local_path = local_dir / "agents" / f"{name}.txt"

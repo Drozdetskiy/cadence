@@ -40,6 +40,9 @@ class TestLoadAgentFallback:
         message = str(exc_info.value)
         assert "nonexistent-agent" in message
         assert "rlx" in message
+        assert "reinstall" in message
+        assert "pip install" in message
+        assert isinstance(exc_info.value.__cause__, FileNotFoundError)
 
     def test_missing_embedded_agent_raises_diagnostic(self) -> None:
         with pytest.raises(RuntimeError) as exc_info:
@@ -47,6 +50,9 @@ class TestLoadAgentFallback:
         message = str(exc_info.value)
         assert "definitely-not-a-real-agent" in message
         assert "rlx" in message
+        assert "reinstall" in message
+        assert "pip install" in message
+        assert isinstance(exc_info.value.__cause__, FileNotFoundError)
 
 
 class TestFrontmatter:

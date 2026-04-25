@@ -121,11 +121,9 @@ def expand_agent_references(
         name = match.group(1)
         try:
             agent = load_agent(name, local_dir=local_dir, warn=warn)
-        except RuntimeError:
-            agent = None
-        if agent is None:
+        except RuntimeError as exc:
             if warn is not None:
-                warn(f"agent {name!r} not found, leaving marker in place")
+                warn(str(exc))
             return match.group(0)
         body = replace_base_variables(agent.body, **base_vars)
         return format_agent_expansion(
