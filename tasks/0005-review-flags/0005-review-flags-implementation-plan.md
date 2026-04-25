@@ -94,11 +94,11 @@ Add a `--base <branch>` CLI flag that overrides the base branch used for the rev
 
 ### Task 4: Verify acceptance criteria
 
-- [ ] run `pdm run pytest` — full suite passes
-- [ ] run `pdm run ruff check src/ tests/` — no lint errors
-- [ ] run `pdm run mypy src/` — strict type check passes
-- [ ] confirm new tests cover: parse, validation rejects (plan/task/no-mode), priority over config, priority over autodetect, regression no-flag path
-- [ ] do NOT run `rlx --version` or `rlx --review --help` manually (active session); rely on tests + the unchanged option declaration to confirm typer registration
+- [x] run `pdm run pytest` — full suite passes
+- [x] run `pdm run ruff check src/ tests/` — no lint errors
+- [x] run `pdm run mypy src/` — strict type check passes
+- [x] confirm new tests cover: parse, validation rejects (plan/task/no-mode), priority over config, priority over autodetect, regression no-flag path
+- [x] do NOT run `rlx --version` or `rlx --review --help` manually (active session); rely on tests + the unchanged option declaration to confirm typer registration
 
 ### Task 5: Update documentation and finalize
 
