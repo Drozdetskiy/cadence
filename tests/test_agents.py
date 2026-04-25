@@ -39,6 +39,7 @@ class TestLoadAgentFallback:
             load_agent("nonexistent-agent", local_dir=tmp_path)
         message = str(exc_info.value)
         assert "nonexistent-agent" in message
+        assert "agent" in message
         assert "rlx" in message
         assert "reinstall" in message
         assert "pip install" in message
@@ -49,6 +50,7 @@ class TestLoadAgentFallback:
             load_agent("definitely-not-a-real-agent")
         message = str(exc_info.value)
         assert "definitely-not-a-real-agent" in message
+        assert "agent" in message
         assert "rlx" in message
         assert "reinstall" in message
         assert "pip install" in message

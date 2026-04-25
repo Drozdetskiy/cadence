@@ -1097,6 +1097,8 @@ class TestRunReviewMode:
         mock_svc.diff_stats.assert_called_once_with("develop")
         mock_svc.get_default_branch.assert_not_called()
         mock_log.print.assert_any_call("base: %s", "develop")
+        ctx_arg = mock_runner_cls.call_args.args[0]
+        assert ctx_arg.default_branch == "develop"
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")
@@ -1153,6 +1155,8 @@ class TestRunReviewMode:
         mock_svc.diff_stats.assert_called_once_with("trunk")
         mock_svc.get_default_branch.assert_not_called()
         mock_log.print.assert_any_call("base: %s", "trunk")
+        ctx_arg = mock_runner_cls.call_args.args[0]
+        assert ctx_arg.default_branch == "trunk"
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")
@@ -1209,6 +1213,8 @@ class TestRunReviewMode:
         mock_svc.diff_stats.assert_called_once_with("main")
         mock_svc.get_default_branch.assert_called_once()
         mock_log.print.assert_any_call("base: %s", "main")
+        ctx_arg = mock_runner_cls.call_args.args[0]
+        assert ctx_arg.default_branch == "main"
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")

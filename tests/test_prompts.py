@@ -31,6 +31,7 @@ class TestLoadTaskPrompt:
             load_prompt("does_not_exist")
         message = str(excinfo.value)
         assert "does_not_exist" in message
+        assert "prompt" in message
         assert "rlx" in message
         assert "reinstall" in message
         assert "pip install" in message
