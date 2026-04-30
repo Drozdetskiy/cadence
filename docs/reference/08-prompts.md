@@ -458,7 +458,7 @@ OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain te
 
 ### Отличия от первого ревью
 
-- Запускает только 2 агента (quality + implementation) вместо 5
+- Запускает только 2 агента (quality + implementation) вместо 4
 - Фокус только на critical/major проблемах -- minor/style игнорируются
 
 ### Полный текст

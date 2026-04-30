@@ -138,7 +138,7 @@ set_pause_handler(fn)    -- устанавливает callback pause/resume
 
 2. PhaseReview: run_claude_review(ReviewFirstPrompt)
    - section "claude review 0: all findings"
-   - single pass, 5 агентов
+   - single pass, 4 агента
 
 3. PhaseReview: run_claude_review_loop()
    - review loop (critical/major)
@@ -260,7 +260,7 @@ loop i = 1..max_iterations:
 
 ### Review phase: run_claude_review(prompt)
 
-Одиночный review pass. Используется для "review 0: all findings" с ReviewFirstPrompt (5 агентов).
+Одиночный review pass. Используется для "review 0: all findings" с ReviewFirstPrompt (4 агента).
 
 ```
 1. result = run_with_limit_retry(review_claude.run, prompt, "claude")

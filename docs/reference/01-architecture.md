@@ -126,7 +126,7 @@ rlx.status
    |    no signal -> continue loop
    |
 2. PhaseReview: run_claude_review() -- "claude review 0: all findings"
-   |  single pass with ReviewFirstPrompt (5 agents)
+   |  single pass with ReviewFirstPrompt (4 agents)
    |  check REVIEW_DONE signal
    |
 3. PhaseReview: run_claude_review_loop() -- review loop
