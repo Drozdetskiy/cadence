@@ -4,7 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from rlx.config import ColorConfig, Config, detect_local_dir, load_config, parse_duration
+from rlx.config import (
+    ColorConfig,
+    Config,
+    YamlOverrides,
+    apply_yaml_overrides,
+    detect_local_dir,
+    find_yaml_config,
+    load_config,
+    load_yaml_config,
+    parse_duration,
+    parse_yaml_overrides,
+)
 
 
 class TestColorConfig:
@@ -26,9 +37,9 @@ class TestConfigDefaults:
         assert cfg.claude_args == (
             "--dangerously-skip-permissions --output-format stream-json --verbose"
         )
-        assert cfg.plan_model == "opus4.7"
-        assert cfg.task_model == "opus4.7"
-        assert cfg.review_model == "opus4.7"
+        assert cfg.plan_model == "claude-opus-4-7"
+        assert cfg.task_model == "claude-opus-4-7"
+        assert cfg.review_model == "claude-opus-4-7"
         assert cfg.iteration_delay_ms == 2000
         assert cfg.task_retry_count == 1
         assert cfg.max_iterations == 50
@@ -98,7 +109,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "my-claude"
         assert cfg.plans_dir == "my-plans"
-        assert cfg.task_model == "opus4.7"
+        assert cfg.task_model == "claude-opus-4-7"
 
     def test_load_int_fields(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "config.toml"
@@ -141,6 +152,163 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert not cfg.vcs_command.startswith("~")
         assert cfg.vcs_command.endswith("/bin/git")
+
+
+class TestParseYamlOverrides:
+    def test_empty_text(self) -> None:
+        overrides = parse_yaml_overrides("")
+        assert overrides == YamlOverrides()
+
+    def test_blank_and_comments_only(self) -> None:
+        text = "\n# top-level comment\n\n   # indented comment\n\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides == YamlOverrides()
+
+    def test_all_three_modes(self) -> None:
+        text = (
+            "plan:\n"
+            "  model: opus\n"
+            "task:\n"
+            "  model: sonnet\n"
+            "review:\n"
+            "  model: haiku\n"
+        )
+        overrides = parse_yaml_overrides(text)
+        assert overrides.plan_model == "opus"
+        assert overrides.task_model == "sonnet"
+        assert overrides.review_model == "haiku"
+
+    def test_only_one_mode(self) -> None:
+        text = "task:\n  model: sonnet\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.plan_model is None
+        assert overrides.task_model == "sonnet"
+        assert overrides.review_model is None
+
+    def test_double_quoted_value(self) -> None:
+        text = 'task:\n  model: "sonnet4.5"\n'
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet4.5"
+
+    def test_single_quoted_value(self) -> None:
+        text = "review:\n  model: 'haiku'\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.review_model == "haiku"
+
+    def test_inline_comment_after_value(self) -> None:
+        text = "task:\n  model: sonnet # this is the model\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+
+    def test_extra_whitespace_tolerated(self) -> None:
+        text = "task:   \n     model:    sonnet   \n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+
+    def test_unknown_top_level_key_ignored(self) -> None:
+        text = (
+            "unknown:\n"
+            "  model: ignored\n"
+            "task:\n"
+            "  model: sonnet\n"
+        )
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+        assert overrides.plan_model is None
+        assert overrides.review_model is None
+
+    def test_unknown_nested_key_ignored(self) -> None:
+        text = (
+            "task:\n"
+            "  model: sonnet\n"
+            "  temperature: 0.5\n"
+        )
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+
+    def test_empty_value_does_not_override(self) -> None:
+        text = "task:\n  model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model is None
+
+    def test_value_containing_colon(self) -> None:
+        text = "task:\n  model: org:opus\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "org:opus"
+
+    def test_malformed_no_colon_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"invalid rlx-config\.yaml"):
+            parse_yaml_overrides("some random text\n")
+
+    def test_malformed_nested_without_section_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match="nested key without a top-level section"
+        ):
+            parse_yaml_overrides("  model: sonnet\n")
+
+    def test_malformed_top_level_scalar_raises(self) -> None:
+        with pytest.raises(
+            ValueError, match="must be a section"
+        ):
+            parse_yaml_overrides("task: sonnet\n")
+
+
+class TestLoadYamlConfig:
+    def test_loads_valid_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "rlx-config.yaml"
+        path.write_text("plan:\n  model: opus\n")
+        overrides = load_yaml_config(path)
+        assert overrides.plan_model == "opus"
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            load_yaml_config(tmp_path / "nope.yaml")
+
+    def test_malformed_file_raises_value_error(self, tmp_path: Path) -> None:
+        path = tmp_path / "rlx-config.yaml"
+        path.write_text("not valid yaml without colon\n")
+        with pytest.raises(ValueError, match=r"invalid rlx-config\.yaml"):
+            load_yaml_config(path)
+
+
+class TestApplyYamlOverrides:
+    def test_only_specified_fields_change(self) -> None:
+        cfg = Config(plan_model="P", task_model="T", review_model="R")
+        apply_yaml_overrides(cfg, YamlOverrides(task_model="newT"))
+        assert cfg.plan_model == "P"
+        assert cfg.task_model == "newT"
+        assert cfg.review_model == "R"
+
+    def test_all_fields_override(self) -> None:
+        cfg = Config(plan_model="P", task_model="T", review_model="R")
+        apply_yaml_overrides(
+            cfg,
+            YamlOverrides(plan_model="newP", task_model="newT", review_model="newR"),
+        )
+        assert cfg.plan_model == "newP"
+        assert cfg.task_model == "newT"
+        assert cfg.review_model == "newR"
+
+    def test_empty_overrides_is_no_op(self) -> None:
+        cfg = Config(plan_model="P", task_model="T", review_model="R")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.plan_model == "P"
+        assert cfg.task_model == "T"
+        assert cfg.review_model == "R"
+
+
+class TestFindYamlConfig:
+    def test_returns_path_when_present(self, tmp_path: Path) -> None:
+        yaml = tmp_path / "rlx-config.yaml"
+        yaml.write_text("plan:\n  model: opus\n")
+        assert find_yaml_config(tmp_path) == yaml
+
+    def test_returns_none_when_missing(self, tmp_path: Path) -> None:
+        assert find_yaml_config(tmp_path) is None
+
+    def test_returns_none_when_not_a_file(self, tmp_path: Path) -> None:
+        (tmp_path / "rlx-config.yaml").mkdir()
+        assert find_yaml_config(tmp_path) is None
 
 
 class TestDetectLocalDir:

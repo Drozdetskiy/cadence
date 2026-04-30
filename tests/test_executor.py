@@ -203,12 +203,7 @@ class TestClaudeExecutorWithMockRunner:
         assert result.signal == SignalFailed
 
     def test_error_pattern_detection(self) -> None:
-        lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "API Error: something bad"},
-            }),
-        ]
+        lines = ["API Error: something bad"]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
             cmd_runner=runner,
@@ -219,10 +214,24 @@ class TestClaudeExecutorWithMockRunner:
         assert result.error.pattern == "API Error:"
 
     def test_limit_pattern_takes_priority(self) -> None:
+        lines = ["You've hit your limit"]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert isinstance(result.error, LimitPatternError)
+
+    def test_pattern_in_assistant_content_not_matched(self) -> None:
         lines = [
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "You've hit your limit"},
+                "delta": {
+                    "type": "text_delta",
+                    "text": "discussing You've hit your limit pattern in code",
+                },
             }),
         ]
         runner = MockCommandRunner(lines)
@@ -232,7 +241,8 @@ class TestClaudeExecutorWithMockRunner:
             limit_patterns=["You've hit your limit"],
         )
         result = executor.run("prompt")
-        assert isinstance(result.error, LimitPatternError)
+        assert result.error is None
+        assert "You've hit your limit" in result.output
 
     def test_limit_pattern_skipped_on_clean_signal_exit(self) -> None:
         lines = [
@@ -430,18 +440,13 @@ class TestClaudeExecutorWithMockRunner:
         assert captured == []
 
     def test_recent_text_deque(self) -> None:
-        lines = []
-        for i in range(15):
-            lines.append(json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": f"block{i}"},
-            }))
+        lines = [f"envelope-block{i}" for i in range(15)]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
         result = executor.run("prompt")
-        assert "block5" in result.recent_text
-        assert "block14" in result.recent_text
-        assert "block0" not in result.recent_text
+        assert "envelope-block5" in result.recent_text
+        assert "envelope-block14" in result.recent_text
+        assert "envelope-block0" not in result.recent_text
 
     def test_assistant_event_parsing(self) -> None:
         lines = [
@@ -548,11 +553,7 @@ class TestClaudeExecutorIdleTimeout:
                 r, w = os.pipe()
                 rf = os.fdopen(r, "r")
                 wf = os.fdopen(w, "w")
-                line = json.dumps({
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "You've hit your limit"},
-                })
-                wf.write(line + "\n")
+                wf.write("You've hit your limit\n")
                 wf.flush()
 
                 def close_later() -> None:

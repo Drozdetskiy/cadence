@@ -318,7 +318,8 @@ class ClaudeExecutor:
         text = _extract_text_from_event(event)
         if text:
             output_parts.append(text)
-            recent.append(text)
+            if isinstance(event, ResultEvent):
+                recent.append(text)
             last_output_text = text
             sig = detect_signal(text)
             if sig:
