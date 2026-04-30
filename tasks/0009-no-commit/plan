@@ -54,11 +54,11 @@ Example renames:
 - Modify: `src/rlx/processor/runner.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] in `src/rlx/cli.py` update the call (around line 460) from `move_plan_to_completed` to `mark_plan_completed`; also update the warning string to "could not mark plan completed: %s"
-- [ ] in `src/rlx/processor/runner.py` `_resolve_plan_for_review` (around line 289-303) replace the `parent / "completed" / name` lookup with a check for the `-completed` suffix path produced by the same helper convention (import or duplicate the small helper — keep it tiny); fall back to original path
-- [ ] update `tests/test_cli.py` references: rename `mock_svc.move_plan_to_completed` to `mock_svc.mark_plan_completed` at all five sites (lines 720, 772, 842, 860, 978)
-- [ ] add a runner-level test (or extend an existing one) that constructs a Runner whose plan path no longer exists but the `<stem>-completed<suffix>` sibling does, and verifies `_resolve_plan_for_review` returns that sibling path
-- [ ] run `pytest tests/ -v` — must pass before task 3
+- [x] in `src/rlx/cli.py` update the call (around line 460) from `move_plan_to_completed` to `mark_plan_completed`; also update the warning string to "could not mark plan completed: %s"
+- [x] in `src/rlx/processor/runner.py` `_resolve_plan_for_review` (around line 289-303) replace the `parent / "completed" / name` lookup with a check for the `-completed` suffix path produced by the same helper convention (import or duplicate the small helper — keep it tiny); fall back to original path
+- [x] update `tests/test_cli.py` references: rename `mock_svc.move_plan_to_completed` to `mock_svc.mark_plan_completed` at all five sites (lines 720, 772, 842, 860, 978)
+- [x] add a runner-level test (or extend an existing one) that constructs a Runner whose plan path no longer exists but the `<stem>-completed<suffix>` sibling does, and verifies `_resolve_plan_for_review` returns that sibling path
+- [x] run `pytest tests/ -v` — must pass before task 3
 
 ### Task 3: Update default prompt template and plan selector
 

@@ -295,9 +295,8 @@ class Runner:
                 return plan_file
         except OSError:
             return plan_file
-        parent = Path(plan_file).parent
-        name = Path(plan_file).name
-        completed = parent / "completed" / name
+        p = Path(plan_file)
+        completed = p.with_name(p.stem + "-completed" + p.suffix)
         if completed.exists():
             return str(completed)
         return plan_file
