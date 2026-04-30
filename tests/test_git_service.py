@@ -392,8 +392,8 @@ class TestCreateBranchForPlan:
         assert result.stdout.strip() == "pre-add plan"
 
 
-class TestMovePlanToCompleted:
-    def test_moves_and_commits(self, tmp_path: Path) -> None:
+class TestMarkPlanCompleted:
+    def test_renames_in_place_no_commit(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
         _make_commit(path)
@@ -404,29 +404,66 @@ class TestMovePlanToCompleted:
         _git(path, "add", str(plan.relative_to(tmp_path)))
         _git(path, "commit", "-m", "add plan")
 
+        be = ExternalBackend(path)
+        head_before = be.head_hash()
+
         svc = Service(path, _Log())
-        svc.move_plan_to_completed(str(plan))
+        svc.mark_plan_completed(str(plan))
 
         assert not plan.exists()
-        assert (plans_dir / "completed" / "2024-01-feature.md").exists()
-        result = _git(path, "log", "--format=%s", "-n", "1")
-        assert "move completed plan: 2024-01-feature.md" in result.stdout
+        assert (plans_dir / "2024-01-feature-completed.md").exists()
+        assert be.head_hash() == head_before
 
-    def test_idempotent_if_already_moved(self, tmp_path: Path) -> None:
+    def test_idempotent_if_already_marked(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
         _make_commit(path)
         plans_dir = tmp_path / "plans"
-        completed_dir = plans_dir / "completed"
-        completed_dir.mkdir(parents=True)
-        dest = completed_dir / "feature.md"
+        plans_dir.mkdir()
+        dest = plans_dir / "feature-completed.md"
         dest.write_text("# Plan")
         plan = plans_dir / "feature.md"
 
         log = _Log()
         svc = Service(path, log)
-        svc.move_plan_to_completed(str(plan))
+        svc.mark_plan_completed(str(plan))
         assert dest.exists()
+
+    def test_preserves_extension(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        plan = tmp_path / "plan.md"
+        plan.write_text("# Plan")
+
+        svc = Service(path, _Log())
+        svc.mark_plan_completed(str(plan))
+
+        assert not plan.exists()
+        assert (tmp_path / "plan-completed.md").exists()
+
+    def test_no_extension(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        plan = tmp_path / "preprompt"
+        plan.write_text("# Plan")
+
+        svc = Service(path, _Log())
+        svc.mark_plan_completed(str(plan))
+
+        assert not plan.exists()
+        assert (tmp_path / "preprompt-completed").exists()
+
+    def test_missing_source_and_target_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        plan = tmp_path / "missing.md"
+
+        svc = Service(path, _Log())
+        with pytest.raises(FileNotFoundError):
+            svc.mark_plan_completed(str(plan))
 
 
 class TestEnsureHasCommits:

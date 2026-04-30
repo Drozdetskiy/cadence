@@ -1,0 +1,103 @@
+# Rename completed plans in-place without committing
+
+## Overview
+
+Replace the current "move plan to `completed/` subdirectory + git commit" behavior with an in-place rename that appends `-completed` to the plan filename (preserving extension) and does **not** create a git commit. This matches the common case where the plan file is gitignored and shouldn't be tracked.
+
+Example renames:
+- `tasks/0009-no-commit/preprompt` → `tasks/0009-no-commit/preprompt-completed`
+- `docs/plans/2026-04-30-feature.md` → `docs/plans/2026-04-30-feature-completed.md`
+
+## Context
+
+- Files involved:
+  - `src/rlx/git/service.py` — `move_plan_to_completed()` is the core implementation
+  - `src/rlx/cli.py` — caller after successful `runner.run()` in plan mode
+  - `src/rlx/processor/runner.py` — `_resolve_plan_for_review()` looks up the renamed plan when reviewing existing branches; logic must match the new naming
+  - `src/rlx/plan/plan.py` — `Selector` glob picks `*.md`; would pick up `*-completed.md` files (filter out)
+  - `src/rlx/defaults/prompts/make_plan.txt` — references `completed/` subdir in Step 0 hint and in default Task N+1 checkbox
+  - `tests/test_git_service.py` — `TestMovePlanToCompleted` class
+  - `tests/test_cli.py` — references `mock_svc.move_plan_to_completed`
+  - `docs/reference/06-git-and-plans.md`, `docs/reference/03-cli.md` — documents the move behavior
+- Related patterns:
+  - `Service` already uses `Path.name` and `pathlib` for plan path manipulation
+  - `os.rename` already used as a fallback in current implementation
+- Dependencies: none
+
+## Development Approach
+
+- **Testing approach**: Regular (code first, then tests)
+- Complete each task fully before moving to the next
+- Function will be renamed from `move_plan_to_completed` to `mark_plan_completed` to reflect new semantics
+- Keep the `-completed` suffix logic in one place: a small helper `completed_plan_path(path: str) -> str` next to the method, so prompt updates and runner lookup share the convention
+- **CRITICAL: every task MUST include new/updated tests**
+- **CRITICAL: all tests must pass before starting next task**
+
+## Implementation Steps
+
+### Task 1: Rewrite `Service.move_plan_to_completed` as `mark_plan_completed`
+
+**Files:**
+- Modify: `src/rlx/git/service.py`
+- Modify: `tests/test_git_service.py`
+
+- [x] add module-level helper `_completed_plan_path(plan_file: str) -> Path` that returns the rename target: stem + `-completed` + suffix in the same parent directory (e.g. `plan.md` → `plan-completed.md`, `preprompt` → `preprompt-completed`)
+- [x] rename `move_plan_to_completed` to `mark_plan_completed`; new body: resolve filesystem case, compute target via helper, if target already exists log "plan already marked completed" and return, else `os.rename(src, dst)` and log "marked plan completed: <new path>"; do **not** call `git add`, `git mv`, or `git commit`
+- [x] keep raising `FileNotFoundError` when neither source nor target exists
+- [x] update the `TestMovePlanToCompleted` class in `tests/test_git_service.py`: rename to `TestMarkPlanCompleted`; replace `test_moves_and_commits` with `test_renames_in_place_no_commit` (asserts file renamed, no new commit, head hash unchanged); update `test_idempotent_if_already_moved` to use the new target name; add `test_preserves_extension` (`plan.md` → `plan-completed.md`) and `test_no_extension` (`preprompt` → `preprompt-completed`); add `test_missing_source_and_target_raises`
+- [x] run `pytest tests/test_git_service.py -v` — must pass before task 2
+
+### Task 2: Update CLI and runner call sites
+
+**Files:**
+- Modify: `src/rlx/cli.py`
+- Modify: `src/rlx/processor/runner.py`
+- Modify: `tests/test_cli.py`
+
+- [ ] in `src/rlx/cli.py` update the call (around line 460) from `move_plan_to_completed` to `mark_plan_completed`; also update the warning string to "could not mark plan completed: %s"
+- [ ] in `src/rlx/processor/runner.py` `_resolve_plan_for_review` (around line 289-303) replace the `parent / "completed" / name` lookup with a check for the `-completed` suffix path produced by the same helper convention (import or duplicate the small helper — keep it tiny); fall back to original path
+- [ ] update `tests/test_cli.py` references: rename `mock_svc.move_plan_to_completed` to `mock_svc.mark_plan_completed` at all five sites (lines 720, 772, 842, 860, 978)
+- [ ] add a runner-level test (or extend an existing one) that constructs a Runner whose plan path no longer exists but the `<stem>-completed<suffix>` sibling does, and verifies `_resolve_plan_for_review` returns that sibling path
+- [ ] run `pytest tests/ -v` — must pass before task 3
+
+### Task 3: Update default prompt template and plan selector
+
+**Files:**
+- Modify: `src/rlx/defaults/prompts/make_plan.txt`
+- Modify: `src/rlx/plan/plan.py`
+- Modify: `tests/test_plan_selector.py` (or wherever Selector is tested — discover via `grep -l "Selector" tests/`)
+
+- [ ] in `make_plan.txt` Step 0 line 10 change "Also check {{PLANS_DIR}}/ and {{PLANS_DIR}}/completed/ for previously completed plans." to "Also check {{PLANS_DIR}}/ for previously completed plans (filenames ending in `-completed`)."
+- [ ] in `make_plan.txt` line 103 remove the bullet "- [ ] move this plan to `docs/plans/completed/`" (rlx now does this automatically and without a commit, so the agent shouldn't be instructed to do it manually)
+- [ ] in `src/rlx/plan/plan.py` filter out `*-completed.md` from both `_select_with_numbers` (line 64) and `find_recent` (line 99) so completed plans don't appear in selection or recent-plan discovery
+- [ ] add tests covering: Selector picker excludes `*-completed.md`; `find_recent` ignores `*-completed.md`
+- [ ] run `pytest tests/ -v` — must pass before task 4
+
+### Task 4: Update documentation
+
+**Files:**
+- Modify: `docs/reference/06-git-and-plans.md`
+- Modify: `docs/reference/03-cli.md`
+- Modify: `docs/reference/04-processor.md` (only if it references the `completed/` subdir)
+- Modify: `docs/reference/02-config.md` (only if it references the `completed/` lookup for `{{PLAN_FILE}}`)
+
+- [ ] in `06-git-and-plans.md` rewrite the `move_plan_to_completed` section (around line 94, 151-156, 308, 481): document `mark_plan_completed`, explain that it renames `<stem><ext>` → `<stem>-completed<ext>` in the same directory, performs no `git mv` and creates no commit, motivation = plan files are commonly gitignored
+- [ ] in `03-cli.md` update the call-graph reference (line 115) to use the new method name
+- [ ] update `04-processor.md` (line 542 and any nearby `completed/` mention) so the plan-resolution description reflects the `-completed` suffix lookup
+- [ ] update `02-config.md` (line 172) to describe the new fallback (sibling `*-completed*` file rather than `completed/` subdir)
+- [ ] no test changes required for docs-only edits, but verify docs build/lint if the project has one
+- [ ] run `make check` (pytest + ruff + mypy) — must pass before task 5
+
+### Task 5: Verify acceptance criteria
+
+- [ ] run `pytest tests/ -v` — full suite passes
+- [ ] run `ruff check src/ tests/` — no lint errors
+- [ ] run `mypy src/` — strict type check passes
+- [ ] run `make check` — green
+- [ ] manually verify: create a throwaway plan file in `/tmp`, run `rlx --plan <file>` end-to-end, confirm the file is renamed in place with `-completed` suffix and `git log` shows no "move completed plan" commit
+- [ ] verify test coverage for changed files is at or above 80%
+
+### Task 6: Update internal documentation
+
+- [ ] update `CLAUDE.md` `Package structure` section if the `move plan to completed/` description on the `git/service.py` line is now misleading (change to "rename plan in-place with -completed suffix, no commit")
+- [ ] move this plan to `tasks/0009-no-commit/plan-completed` (or rely on rlx's automatic rename — verify post-run that the file ends up named correctly)

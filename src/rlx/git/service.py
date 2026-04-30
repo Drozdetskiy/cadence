@@ -15,6 +15,11 @@ class Logger(Protocol):
     def error(self, fmt: str, *args: object) -> None: ...
 
 
+def _completed_plan_path(plan_file: str) -> Path:
+    p = Path(plan_file)
+    return p.with_name(p.stem + "-completed" + p.suffix)
+
+
 class Service:
     def __init__(self, path: str, log: Logger, *, command: str = "git") -> None:
         self._repo = ExternalBackend(path, command=command)
@@ -117,33 +122,19 @@ class Service:
         self._repo.add(resolved)
         self._repo.commit(self._append_trailer(f"add plan: {branch}"))
 
-    def move_plan_to_completed(self, plan_file: str) -> None:
-        plan_path = Path(plan_file)
-        parent = plan_path.parent
-        completed_dir = parent / "completed"
-        dest = completed_dir / plan_path.name
+    def mark_plan_completed(self, plan_file: str) -> None:
+        resolved = self._resolve_filesystem_case(plan_file)
+        src = Path(resolved)
+        dst = _completed_plan_path(resolved)
 
-        if not plan_path.exists():
-            if dest.exists():
-                self._log.print(
-                    "plan already moved to %s", str(dest)
-                )
+        if not src.exists():
+            if dst.exists():
+                self._log.print("plan already marked completed: %s", str(dst))
                 return
             raise FileNotFoundError(f"plan file not found: {plan_file}")
 
-        completed_dir.mkdir(exist_ok=True)
-
-        try:
-            self._repo.move_file(str(plan_path), str(dest))
-        except RuntimeError:
-            os.rename(str(plan_path), str(dest))
-            self._repo.add(str(dest))
-
-        msg = self._append_trailer(
-            f"move completed plan: {plan_path.name}"
-        )
-        self._repo.commit(msg)
-        self._log.print("moved completed plan to %s", str(dest))
+        os.rename(str(src), str(dst))
+        self._log.print("marked plan completed: %s", str(dst))
 
     def ensure_has_commits(self, prompt_fn: Callable[[], bool]) -> None:
         if self._repo.has_commits():
