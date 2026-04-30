@@ -64,12 +64,12 @@ Remove the `documentation` review agent from rlx. After this change, `review_fir
 
 ### Task 3: Verify acceptance criteria
 
-- [ ] Run full test suite: `pytest tests/ -v`
-- [ ] Run linter: `ruff check src/ tests/`
-- [ ] Run type checker: `mypy src/`
-- [ ] Run `make check` to confirm everything is green
-- [ ] Grep the repo for any remaining references: `documentation\.txt`, `agent:documentation`, "documentation review", "5 (quality" — only `tasks/0004-v03/...` historical plan files (which are completed historical records, do not modify) and `tasks/0006-no-docs-step/preprompt` should match
-- [ ] Verify `rlx --version` still works
+- [x] Run full test suite: `pytest tests/ -v`
+- [x] Run linter: `ruff check src/ tests/`
+- [x] Run type checker: `mypy src/`
+- [x] Run `make check` to confirm everything is green
+- [x] Grep the repo for any remaining references: `documentation\.txt`, `agent:documentation`, "documentation review", "5 (quality" — only `tasks/0004-v03/...` historical plan files (which are completed historical records, do not modify) and `tasks/0006-no-docs-step/preprompt` should match
+- [x] Verify `rlx --version` still works
 
 ### Task 4: Update plan tracking
 
