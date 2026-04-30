@@ -263,7 +263,7 @@ class TestReplacePromptVariables:
 
 
 class TestBuildReviewFirstPrompt:
-    def test_expands_all_five_agents_and_substitutes(self) -> None:
+    def test_expands_all_four_agents_and_substitutes(self) -> None:
         result = build_review_first_prompt(
             plan_file="/tmp/plan.md",
             progress_file="/tmp/progress.txt",
@@ -274,15 +274,20 @@ class TestBuildReviewFirstPrompt:
             "implementation",
             "testing",
             "simplification",
-            "documentation",
         ):
             assert f"{{{{agent:{name}}}}}" not in result
-        # Five agent expansions - count the fixed emitted sentence
+        # Documentation agent must be fully removed
+        assert "{{agent:documentation}}" not in result
+        assert (
+            "Review code changes and identify missing documentation updates."
+            not in result
+        )
+        # Four agent expansions - count the fixed emitted sentence
         assert (
             result.count(
                 "Report findings only - no positive observations."
             )
-            == 5
+            == 4
         )
         # Variable substitution in outer prompt
         assert "{{DEFAULT_BRANCH}}" not in result
