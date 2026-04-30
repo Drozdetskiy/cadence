@@ -244,6 +244,22 @@ class TestClaudeExecutorWithMockRunner:
         assert result.error is None
         assert "You've hit your limit" in result.output
 
+    def test_pattern_in_result_event_not_matched(self) -> None:
+        lines = [
+            json.dumps({
+                "type": "result",
+                "result": "summary echoing You've hit your limit literal",
+            }),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert result.error is None
+
     def test_limit_pattern_skipped_on_clean_signal_exit(self) -> None:
         lines = [
             json.dumps({

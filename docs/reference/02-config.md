@@ -52,8 +52,9 @@ CLI flags  >  local config (.rlx/config.toml)  >  defaults (in code)
 # Claude executor
 claude_command = "claude"
 claude_args = "--dangerously-skip-permissions --output-format stream-json --verbose"
-claude_model = "sonnet"
-review_model = "opus"
+plan_model = "claude-opus-4-7"
+task_model = "claude-opus-4-7"
+review_model = "claude-opus-4-7"
 
 # Timing
 iteration_delay_ms = 2000
@@ -102,8 +103,11 @@ info = "#808080"
 |----------|------|---------|----------|
 | `claude_command` | string | `"claude"` | Команда для запуска Claude Code |
 | `claude_args` | string | `"--dangerously-skip-permissions --output-format stream-json --verbose"` | Аргументы для claude |
-| `claude_model` | string | `""` (default модель Claude Code) | Модель для task execution (opus/sonnet/haiku или полный ID) |
-| `review_model` | string | `""` (fallback на claude_model) | Модель для review фаз |
+| `plan_model` | string | `"claude-opus-4-7"` | Модель для plan creation phase |
+| `task_model` | string | `"claude-opus-4-7"` | Модель для task execution phase |
+| `review_model` | string | `"claude-opus-4-7"` | Модель для review/finalize фаз |
+
+YAML overrides via `--config <path>` (or auto-discovered `rlx-config.yaml` next to the plan/task file) override these per-mode TOML defaults at load time.
 
 ### Timing и iteration control
 

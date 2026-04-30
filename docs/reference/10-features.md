@@ -250,12 +250,15 @@ Template variables в агентах: `{{DEFAULT_BRANCH}}`, `{{PLAN_FILE}}`, etc
 
 ## Model Configuration
 
-Два уровня модели:
-- `claude_model` / `--claude-model` -- для task execution phase
-- `review_model` / `--review-model` -- для review phases (fallback на claude_model)
+Три уровня модели:
+- `plan_model` -- для plan creation phase
+- `task_model` -- для task execution phase
+- `review_model` -- для review/finalize phases
 - Per-agent model через frontmatter
 
-Приоритет: CLI flag > config > Claude Code default (пустая строка).
+Defaults: все три = `"claude-opus-4-7"`.
+
+Приоритет: YAML overrides (`--config <path>` или авто-обнаружение `rlx-config.yaml` рядом с plan/task файлом) > TOML config > built-in default.
 
 ---
 

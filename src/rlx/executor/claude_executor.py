@@ -279,7 +279,7 @@ class ClaudeExecutor:
                     continue
 
                 last_output_text = self._handle_event(
-                    event, output_parts, recent, result, last_output_text
+                    event, output_parts, result, last_output_text
                 )
 
         except BaseException:
@@ -299,7 +299,6 @@ class ClaudeExecutor:
         self,
         event: ClaudeEvent,
         output_parts: list[str],
-        recent: deque[str],
         result: Result,
         last_output_text: str,
     ) -> str:
@@ -318,8 +317,6 @@ class ClaudeExecutor:
         text = _extract_text_from_event(event)
         if text:
             output_parts.append(text)
-            if isinstance(event, ResultEvent):
-                recent.append(text)
             last_output_text = text
             sig = detect_signal(text)
             if sig:

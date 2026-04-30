@@ -45,7 +45,8 @@ class Config:
     no_color: bool              # отключить цвета
     iteration_delay_ms: int     # задержка между итерациями (ms)
     task_retry_count: int       # retry при FAILED
-    claude_model: str           # модель для task phase
+    plan_model: str             # модель для plan creation phase
+    task_model: str             # модель для task phase
     review_model: str           # модель для review phases
     finalize_enabled: bool      # включен ли finalize step
     default_branch: str         # default branch (из git)
@@ -105,7 +106,7 @@ class Executors:
 
 `Runner(cfg, log, holder)` -- основной конструктор:
 1. Создает `ClaudeExecutor` с параметрами из AppConfig (command, args, error/limit patterns, idle timeout, model)
-2. Если review_model отличается от claude_model, создает отдельный review executor
+2. Если review_model отличается от task_model, создает отдельный review executor
 3. Вызывает `Runner.from_executors()`
 
 `Runner.from_executors(cfg, log, execs, holder)` -- конструктор с готовыми executors (для тестирования):

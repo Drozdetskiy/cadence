@@ -162,8 +162,9 @@ signal.signal(signal.SIGINT, handler)
 Создаёт `processor.Runner` с конфигурацией:
 
 Разрешение параметров (config > default):
-- `claude_model`: config > "" (default)
-- `review_model`: config > "" (fallback to claude_model)
+- `plan_model`: config > `"claude-opus-4-7"`
+- `task_model`: config > `"claude-opus-4-7"`
+- `review_model`: config > `"claude-opus-4-7"`
 - `max_iterations`: config > 50
 - `task_retry_count`: config > 1
 
