@@ -44,5 +44,5 @@ Files:
 
 ### Task 3: Update documentation
 
-- [ ] Update `CLAUDE.md`: change the `--impl` description from "stores intent for auto-implementation after plan creation (not yet implemented)" to reflect that it now chains directly into the full task pipeline after plan creation
-- [ ] Move this plan to `docs/plans/completed/`
+- [x] Update `CLAUDE.md`: change the `--impl` description from "stores intent for auto-implementation after plan creation (not yet implemented)" to reflect that it now chains directly into the full task pipeline after plan creation
+- [x] Move this plan to `docs/plans/completed/`

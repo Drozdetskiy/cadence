@@ -1,6 +1,6 @@
 # rlx
 
-Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <file>` (plan creation), `rlx --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop → finalize), and `rlx --review` (review-only of the current branch: review_first → review_loop → finalize, no plan, no branch creation). The `--impl` flag stores intent for auto-implementation after plan creation (not yet implemented). `--review` is incompatible with `--impl`.
+Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <file>` (plan creation), `rlx --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop → finalize), and `rlx --review` (review-only of the current branch: review_first → review_loop → finalize, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `rlx --plan`, so `rlx --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`.
 
 ## Package structure
 
