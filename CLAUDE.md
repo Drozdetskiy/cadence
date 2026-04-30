@@ -13,6 +13,7 @@ src/cadence/
   executor/
     claude_executor.py - ClaudeExecutor: subprocess + JSON stream parsing, idle timeout, activity callbacks
     process_group.py   - ProcessGroupCleanup: SIGTERM/SIGKILL process group management
+    events.py          - Typed Claude stream event dataclasses (AssistantEvent, ContentBlockDeltaEvent, ResultEvent) + parse_event()
   git/
     __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
     backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
