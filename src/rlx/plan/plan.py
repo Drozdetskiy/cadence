@@ -61,7 +61,11 @@ class Selector:
         if not os.path.isdir(plans_dir):
             raise NoPlansFoundError(f"plans directory not found: {plans_dir}")
 
-        files = sorted(glob.glob(os.path.join(plans_dir, "*.md")))
+        files = sorted(
+            f
+            for f in glob.glob(os.path.join(plans_dir, "*.md"))
+            if not Path(f).stem.endswith("-completed")
+        )
         if not files:
             raise NoPlansFoundError(f"no plan files found in {plans_dir}")
 
@@ -97,6 +101,8 @@ class Selector:
         start_ts = start_time.timestamp()
         best: tuple[float, str] | None = None
         for f in glob.glob(os.path.join(plans_dir, "*.md")):
+            if Path(f).stem.endswith("-completed"):
+                continue
             try:
                 mtime = os.path.getmtime(f)
             except OSError:

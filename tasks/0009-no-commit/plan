@@ -67,11 +67,11 @@ Example renames:
 - Modify: `src/rlx/plan/plan.py`
 - Modify: `tests/test_plan_selector.py` (or wherever Selector is tested — discover via `grep -l "Selector" tests/`)
 
-- [ ] in `make_plan.txt` Step 0 line 10 change "Also check {{PLANS_DIR}}/ and {{PLANS_DIR}}/completed/ for previously completed plans." to "Also check {{PLANS_DIR}}/ for previously completed plans (filenames ending in `-completed`)."
-- [ ] in `make_plan.txt` line 103 remove the bullet "- [ ] move this plan to `docs/plans/completed/`" (rlx now does this automatically and without a commit, so the agent shouldn't be instructed to do it manually)
-- [ ] in `src/rlx/plan/plan.py` filter out `*-completed.md` from both `_select_with_numbers` (line 64) and `find_recent` (line 99) so completed plans don't appear in selection or recent-plan discovery
-- [ ] add tests covering: Selector picker excludes `*-completed.md`; `find_recent` ignores `*-completed.md`
-- [ ] run `pytest tests/ -v` — must pass before task 4
+- [x] in `make_plan.txt` Step 0 line 10 change "Also check {{PLANS_DIR}}/ and {{PLANS_DIR}}/completed/ for previously completed plans." to "Also check {{PLANS_DIR}}/ for previously completed plans (filenames ending in `-completed`)."
+- [x] in `make_plan.txt` line 103 remove the bullet "- [ ] move this plan to `docs/plans/completed/`" (rlx now does this automatically and without a commit, so the agent shouldn't be instructed to do it manually)
+- [x] in `src/rlx/plan/plan.py` filter out `*-completed.md` from both `_select_with_numbers` (line 64) and `find_recent` (line 99) so completed plans don't appear in selection or recent-plan discovery
+- [x] add tests covering: Selector picker excludes `*-completed.md`; `find_recent` ignores `*-completed.md`
+- [x] run `pytest tests/ -v` — must pass before task 4
 
 ### Task 4: Update documentation
 
