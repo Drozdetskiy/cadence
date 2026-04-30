@@ -1,6 +1,6 @@
-# Архитектура rlx
+# Архитектура cadence
 
-Справочный документ по архитектуре rlx -- упрощенного Python-порта ralphex.
+Справочный документ по архитектуре cadence -- упрощенного Python-порта ralphex.
 
 ## Высокоуровневая схема системы
 
@@ -60,42 +60,42 @@ Input
 ## Граф зависимостей модулей
 
 ```
-rlx (CLI entry point)
-  +-- rlx.config     (configuration loading)
-  +-- rlx.processor  (orchestration)
-  +-- rlx.git        (branch management)
-  +-- rlx.plan       (plan file selection/parsing)
-  +-- rlx.input      (terminal user input)
-  +-- rlx.progress   (progress logging)
-  +-- rlx.status     (shared types: signals, phases, sections)
+cadence (CLI entry point)
+  +-- cadence.config     (configuration loading)
+  +-- cadence.processor  (orchestration)
+  +-- cadence.git        (branch management)
+  +-- cadence.plan       (plan file selection/parsing)
+  +-- cadence.input      (terminal user input)
+  +-- cadence.progress   (progress logging)
+  +-- cadence.status     (shared types: signals, phases, sections)
 
-rlx.processor
-  +-- rlx.executor   (CLI execution)
-  +-- rlx.config     (config types for prompts/agents)
-  +-- rlx.plan       (plan parsing for task phase)
-  +-- rlx.status     (phases, signals, sections)
+cadence.processor
+  +-- cadence.executor   (CLI execution)
+  +-- cadence.config     (config types for prompts/agents)
+  +-- cadence.plan       (plan parsing for task phase)
+  +-- cadence.status     (phases, signals, sections)
 
-rlx.executor
-  +-- rlx.status     (signal detection)
+cadence.executor
+  +-- cadence.status     (signal detection)
 
-rlx.progress
-  +-- rlx.status     (sections, phases for color mapping)
-  +-- rlx.config     (ColorConfig for colors)
+cadence.progress
+  +-- cadence.status     (sections, phases for color mapping)
+  +-- cadence.config     (ColorConfig for colors)
 
-rlx.config
+cadence.config
   (leaf module, no internal dependencies)
 
-rlx.git
-  +-- rlx.plan       (extract_branch_name for branch creation)
+cadence.git
+  +-- cadence.plan       (extract_branch_name for branch creation)
 
-rlx.plan
-  +-- rlx.input      (read_line_with_context for prompt_description)
-  +-- rlx.progress   (Colors for formatted output)
+cadence.plan
+  +-- cadence.input      (read_line_with_context for prompt_description)
+  +-- cadence.progress   (Colors for formatted output)
 
-rlx.input
+cadence.input
   (no internal dependencies, uses stdin)
 
-rlx.status
+cadence.status
   (leaf module, no dependencies)
 ```
 
@@ -165,7 +165,7 @@ rlx.status
 
 ## Жизненный цикл фаз (Phase lifecycle)
 
-Фазы определены в `rlx/status.py` как тип `Phase` (string).
+Фазы определены в `cadence/status.py` как тип `Phase` (string).
 
 | Phase constant  | String value   | Цвет    | Описание                                 |
 |-----------------|----------------|---------|------------------------------------------|
@@ -185,21 +185,21 @@ PhaseHolder используется:
 
 ## Модель сигнальной коммуникации
 
-Сигналы -- строки формата `<<<RLX:...>>>`, которые Claude вставляет в свой вывод.
-Определены в `rlx/status.py`, детектируются в `rlx/executor.py` функцией `detect_signal()`.
+Сигналы -- строки формата `<<<CADENCE:...>>>`, которые Claude вставляет в свой вывод.
+Определены в `cadence/status.py`, детектируются в `cadence/executor.py` функцией `detect_signal()`.
 
 | Сигнал     | Строка                           | Фаза         | Значение                              |
 |------------|----------------------------------|--------------|---------------------------------------|
-| Completed  | `<<<RLX:ALL_TASKS_DONE>>>`      | Task         | все задачи выполнены                  |
-| Failed     | `<<<RLX:TASK_FAILED>>>`         | Task         | текущая задача провалена              |
-| ReviewDone | `<<<RLX:REVIEW_DONE>>>`         | Review       | review завершен, нет findings         |
-| Question   | `<<<RLX:QUESTION>>>`            | Plan         | вопрос пользователю (JSON payload)    |
-| PlanReady  | `<<<RLX:PLAN_READY>>>`          | Plan         | план создан и записан в файл          |
-| PlanDraft  | `<<<RLX:PLAN_DRAFT>>>`          | Plan         | черновик плана для review              |
+| Completed  | `<<<CADENCE:ALL_TASKS_DONE>>>`  | Task         | все задачи выполнены                  |
+| Failed     | `<<<CADENCE:TASK_FAILED>>>`     | Task         | текущая задача провалена              |
+| ReviewDone | `<<<CADENCE:REVIEW_DONE>>>`     | Review       | review завершен, нет findings         |
+| Question   | `<<<CADENCE:QUESTION>>>`        | Plan         | вопрос пользователю (JSON payload)    |
+| PlanReady  | `<<<CADENCE:PLAN_READY>>>`      | Plan         | план создан и записан в файл          |
+| PlanDraft  | `<<<CADENCE:PLAN_DRAFT>>>`      | Plan         | черновик плана для review              |
 
 ### Детекция сигналов
 
-`detect_signal(text)` в `rlx/executor.py`:
+`detect_signal(text)` в `cadence/executor.py`:
 - ищет подстроку в тексте вывода Claude
 - возвращает первый найденный сигнал или пустую строку
 - для ClaudeExecutor: проверяется во время streaming (внутри scanner loop), сигнал сохраняется в Result.signal
@@ -210,13 +210,13 @@ PhaseHolder используется:
 {"question": "Текст вопроса?", "options": ["Вариант 1", "Вариант 2", "Вариант 3"]}
 ```
 
-Парсится `parse_question_payload()` в `rlx/processor/signals.py`.
+Парсится `parse_question_payload()` в `cadence/processor/signals.py`.
 Пользователю предлагается выбрать через numbered picker, с опцией "Other" для ввода произвольного ответа.
 
 ### Формат payload для PLAN_DRAFT
 
-Содержимое плана заключено между маркерами `<<<RLX:PLAN_DRAFT>>>` и `<<<RLX:END>>>`.
-Парсится `parse_plan_draft_payload()` в `rlx/processor/signals.py`.
+Содержимое плана заключено между маркерами `<<<CADENCE:PLAN_DRAFT>>>` и `<<<CADENCE:END>>>`.
+Парсится `parse_plan_draft_payload()` в `cadence/processor/signals.py`.
 
 ## Модель управления процессами
 
@@ -232,7 +232,7 @@ PhaseHolder используется:
 
 ### Управление дочерними процессами (process groups)
 
-Реализовано в `rlx/executor/procgroup_unix.py` и `procgroup_windows.py`.
+Реализовано в `cadence/executor/procgroup_unix.py` и `procgroup_windows.py`.
 
 Unix:
 - `setup_process_group(proc)` -- устанавливает `start_new_session=True` для создания новой сессии и группы процессов
@@ -259,7 +259,7 @@ Idle timeout (`--idle-timeout`):
 
 ### Rate limit retry
 
-`run_with_limit_retry()` в `rlx/processor/runner.py`:
+`run_with_limit_retry()` в `cadence/processor/runner.py`:
 - оборачивает вызов executor
 - при `LimitPatternError`: ждет `wait_on_limit` duration, затем retry
 - при `PatternMatchError` (обычная ошибка): возвращает ошибку
@@ -268,7 +268,7 @@ Idle timeout (`--idle-timeout`):
 
 ## Расчет максимальных итераций
 
-Константы в `rlx/processor/runner.py`:
+Константы в `cadence/processor/runner.py`:
 
 ```
 Task iterations:   1..max_iterations (default 50, configurable)
@@ -282,7 +282,7 @@ Divisors: review = 10, plan = 5.
 
 ## Типы секций (Section types)
 
-Определены в `rlx/status.py`, используются для progress logging.
+Определены в `cadence/status.py`, используются для progress logging.
 
 | SectionType             | Формат строки                    |
 |-------------------------|----------------------------------|
@@ -295,7 +295,7 @@ Helper-функции: `new_task_iteration_section(n)`, `new_claude_review_secti
 
 ## Ключевые интерфейсы Runner
 
-Определены в `rlx/processor/runner.py` (Python protocols):
+Определены в `cadence/processor/runner.py` (Python protocols):
 
 ```python
 # Executor -- запуск CLI и получение результата

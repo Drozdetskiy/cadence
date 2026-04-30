@@ -163,10 +163,10 @@ class ClaudeExecutor:
 ### Обнаружение сигналов (detect_signal)
 
 Функция `detect_signal(text)` ищет в тексте известные сигналы через `in`:
-- `<<<RLX:ALL_TASKS_DONE>>>` (Completed)
-- `<<<RLX:TASK_FAILED>>>` (Failed)
-- `<<<RLX:REVIEW_DONE>>>` (ReviewDone)
-- `<<<RLX:PLAN_READY>>>` (PlanReady)
+- `<<<CADENCE:ALL_TASKS_DONE>>>` (Completed)
+- `<<<CADENCE:TASK_FAILED>>>` (Failed)
+- `<<<CADENCE:REVIEW_DONE>>>` (ReviewDone)
+- `<<<CADENCE:PLAN_READY>>>` (PlanReady)
 
 Примечание: `Question` и `PlanDraft` не проверяются в `detect_signal` -- они обрабатываются в processor'е через отдельные signal helpers.
 

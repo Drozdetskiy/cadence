@@ -1,6 +1,6 @@
 # CLI и точка входа
 
-Справочный документ по CLI-слою rlx (Python-порт ralphex).
+Справочный документ по CLI-слою cadence (Python-порт ralphex).
 
 ## Парсинг аргументов
 
@@ -13,14 +13,14 @@
 | `--review` | `bool` | `false` | Только ревью текущей ветки |
 | `--version` | `bool` | `false` | Вывести версию и выйти |
 
-Нет позиционных аргументов. Нет env var для опций (кроме `RLX_CONFIG_DIR` для конфигурации).
+Нет позиционных аргументов. Нет env var для опций (кроме `CADENCE_CONFIG_DIR` для конфигурации).
 
 ### Поведение опций
 
 - `--plan <file>` -- читает содержимое файла, создаёт план. Результат записывается рядом с исходным файлом с суффиксом `-plan.md` (например, `feature.md` -> `feature-plan.md`)
 - `--task <file>` -- принимает путь к файлу плана. Если файл существует, запускает выполнение задач по плану (ModeTasksOnly или ModeFull в зависимости от конфигурации)
 - `--review` -- запуск только review фазы для текущей ветки, без выполнения задач
-- `--version` -- вывод версии через `importlib.metadata.version("rlx")`, затем выход
+- `--version` -- вывод версии через `importlib.metadata.version("cadence")`, затем выход
 
 ## Определение режима (Mode)
 
@@ -52,7 +52,7 @@ main()
   v
 run(plan, task, review, version)
   |-- if version -> print version, sys.exit(0)
-  |-- config.load() -- загрузка конфигурации (.rlx/config.toml + defaults)
+  |-- config.load() -- загрузка конфигурации (.cadence/config.toml + defaults)
   |-- check_claude_dep(cfg) -- claude в PATH
   |-- os.path.isdir(".git") -- проверка корня репо
   |-- open_git_service(cfg.vcs_command)
@@ -155,7 +155,7 @@ signal.signal(signal.SIGINT, handler)
 
 ### applyCLIOverrides
 
-В rlx CLI overrides минимальны -- модели, timeouts и прочее настраиваются только через config. CLI определяет только режим работы (`--plan`, `--task`, `--review`).
+В cadence CLI overrides минимальны -- модели, timeouts и прочее настраиваются только через config. CLI определяет только режим работы (`--plan`, `--task`, `--review`).
 
 ## create_runner
 
@@ -171,10 +171,10 @@ signal.signal(signal.SIGINT, handler)
 ## Версия
 
 `resolve_version()`:
-- `importlib.metadata.version("rlx")` -- версия из package metadata
+- `importlib.metadata.version("cadence")` -- версия из package metadata
 - Fallback: "unknown"
 
-Выводится при запуске: `print(f"rlx {resolve_version()}")`.
+Выводится при запуске: `print(f"cadence {resolve_version()}")`.
 `--version`: после вывода -- `sys.exit(0)`.
 
 ## Вспомогательные функции

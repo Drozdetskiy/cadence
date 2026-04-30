@@ -1,6 +1,6 @@
 # Git-операции и работа с планами
 
-Справочный документ по модулям `git` и `plan` для Python-порта rlx.
+Справочный документ по модулям `git` и `plan` для Python-порта cadence.
 
 ## Обзор
 
@@ -10,10 +10,10 @@
 - `plan` -- парсинг markdown-планов, нумерованный выбор, извлечение имени ветки
 
 Ключевые модули:
-- `rlx/git/service.py` -- Service class, все публичные методы
-- `rlx/git/backend.py` -- ExternalBackend: реализация через CLI (git)
-- `rlx/plan/plan.py` -- Selector, Select(), ExtractBranchName()
-- `rlx/plan/parse.py` -- ParsePlan(), ParsePlanFile(), типы Task/Checkbox/Plan
+- `cadence/git/service.py` -- Service class, все публичные методы
+- `cadence/git/backend.py` -- ExternalBackend: реализация через CLI (git)
+- `cadence/plan/plan.py` -- Selector, Select(), ExtractBranchName()
+- `cadence/plan/parse.py` -- ParsePlan(), ParsePlanFile(), типы Task/Checkbox/Plan
 
 ## Logger интерфейс
 

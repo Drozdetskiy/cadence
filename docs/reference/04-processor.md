@@ -4,7 +4,7 @@
 
 ## Обзор
 
-Модуль processor -- ядро rlx. Содержит `Runner`, который управляет всем жизненным циклом исполнения: от запуска задач до review и finalize. Runner не знает о CLI, конфигурационных файлах или git-операциях напрямую -- он работает через интерфейсы.
+Модуль processor -- ядро cadence. Содержит `Runner`, который управляет всем жизненным циклом исполнения: от запуска задач до review и finalize. Runner не знает о CLI, конфигурационных файлах или git-операциях напрямую -- он работает через интерфейсы.
 
 Ключевые модули:
 - `processor/runner.py` -- Runner class, все run-методы, циклы итераций
@@ -485,21 +485,21 @@ format_agent_expansion(prompt, opts):
 ### Helper-функции
 
 ```
-is_review_done(signal)  -> signal == "<<<RLX:REVIEW_DONE>>>"
-is_plan_ready(signal)   -> signal == "<<<RLX:PLAN_READY>>>"
+is_review_done(signal)  -> signal == "<<<CADENCE:REVIEW_DONE>>>"
+is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
 ```
 
 ### QUESTION signal
 
 Формат в output:
 ```
-<<<RLX:QUESTION>>>
+<<<CADENCE:QUESTION>>>
 {"question": "...", "options": ["...", "..."]}
-<<<RLX:END>>>
+<<<CADENCE:END>>>
 ```
 
 `parse_question_payload(output)`:
-1. Проверить наличие `<<<RLX:QUESTION>>>` подстроки
+1. Проверить наличие `<<<CADENCE:QUESTION>>>` подстроки
 2. Regex extract JSON между QUESTION и END маркерами
 3. json.loads в QuestionPayload dataclass
 4. Валидация: question != "", options не пустой
@@ -508,13 +508,13 @@ is_plan_ready(signal)   -> signal == "<<<RLX:PLAN_READY>>>"
 
 Формат в output:
 ```
-<<<RLX:PLAN_DRAFT>>>
+<<<CADENCE:PLAN_DRAFT>>>
 # Plan content...
-<<<RLX:END>>>
+<<<CADENCE:END>>>
 ```
 
 `parse_plan_draft_payload(output)`:
-1. Проверить наличие `<<<RLX:PLAN_DRAFT>>>` подстроки
+1. Проверить наличие `<<<CADENCE:PLAN_DRAFT>>>` подстроки
 2. Regex extract content между PLAN_DRAFT и END маркерами
 3. strip(), проверить непустоту
 

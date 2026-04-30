@@ -1,6 +1,6 @@
 # Логирование прогресса и система ввода
 
-Справочный документ по модулям `progress` и `input` для Python-порта rlx.
+Справочный документ по модулям `progress` и `input` для Python-порта cadence.
 
 ## Обзор
 
@@ -10,10 +10,10 @@
 - `input` -- терминальный ввод: нумерованные списки, редактор, markdown-рендеринг
 
 Ключевые модули:
-- `rlx/progress/logger.py` -- Logger class, Config, файловый формат, timestamps
-- `rlx/progress/colors.py` -- Colors class, phase-to-color mapping, RGB parsing
-- `rlx/progress/flock.py` -- file locking (Unix fcntl.flock)
-- `rlx/input/input.py` -- TerminalCollector, AskQuestion, AskDraftReview, read_line_with_context
+- `cadence/progress/logger.py` -- Logger class, Config, файловый формат, timestamps
+- `cadence/progress/colors.py` -- Colors class, phase-to-color mapping, RGB parsing
+- `cadence/progress/flock.py` -- file locking (Unix fcntl.flock)
+- `cadence/input/input.py` -- TerminalCollector, AskQuestion, AskDraftReview, read_line_with_context
 
 ---
 
@@ -76,7 +76,7 @@ class Logger:
 
 **Header (свежий старт):**
 ```
-# RLX Progress Log
+# CADENCE Progress Log
 Plan: path/to/plan.md
 Branch: feature-branch
 Mode: full
@@ -100,7 +100,7 @@ Started: 2006-01-02 15:04:05
 
 **Section headers:** `\n--- section label ---\n`
 
-**Сигналы:** `<<<RLX:SIGNAL_NAME>>>` -- рендерятся в signal color
+**Сигналы:** `<<<CADENCE:SIGNAL_NAME>>>` -- рендерятся в signal color
 
 **Restart separator** (при append к незавершённому файлу):
 ```
@@ -159,7 +159,7 @@ def try_lock_file(f: IO) -> bool  # LOCK_EX|LOCK_NB -- non-blocking
 
 Lock приобретённый через try_lock_file немедленно освобождается (цель -- только проверка).
 
-File locking обеспечивает эксклюзивный доступ к progress-файлу -- два процесса rlx не будут писать в один файл одновременно.
+File locking обеспечивает эксклюзивный доступ к progress-файлу -- два процесса cadence не будут писать в один файл одновременно.
 
 ### Colors class
 
@@ -249,7 +249,7 @@ ACTION_REJECT = "reject"
 ```
 
 Interactive review flow:
-1. Открывает $EDITOR с temp файлом (`rlx-plan-*.md`)
+1. Открывает $EDITOR с temp файлом (`cadence-plan-*.md`)
 2. `difflib.unified_diff(original, edited)` -- unified diff с контекстом
 3. Если diff пуст -- "no changes detected", повтор меню
 4. Если diff не пуст -- возвращает `ACTION_REVISE` с diff, обёрнутым в инструкции для Claude
