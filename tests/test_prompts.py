@@ -32,7 +32,7 @@ class TestLoadTaskPrompt:
         message = str(excinfo.value)
         assert "does_not_exist" in message
         assert "prompt" in message
-        assert "rlx" in message
+        assert "cadence" in message
         assert "reinstall" in message
         assert "pip install" in message
         assert isinstance(excinfo.value.__cause__, FileNotFoundError)

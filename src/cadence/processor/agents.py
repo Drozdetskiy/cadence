@@ -84,7 +84,7 @@ def load_agent(
             raw = ref.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             raise RuntimeError(
-                f"default agent {name!r} not found in installed rlx "
+                f"default agent {name!r} not found in installed cadence "
                 "package; the install may be incomplete or out of date — "
                 "reinstall with 'pip install -e .'"
             ) from exc

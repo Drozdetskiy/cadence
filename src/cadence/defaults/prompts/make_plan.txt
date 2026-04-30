@@ -135,7 +135,7 @@ Only after validation passes:
 
 CRITICAL RULES:
 - DO NOT ask "Would you like to proceed?" or "Should I implement this?" or similar
-- DO NOT wait for user approval - rlx handles confirmation externally
+- DO NOT wait for user approval - cadence handles confirmation externally
 - DO NOT use natural language questions - only use <<<CADENCE:QUESTION>>> signal format
 - DO NOT iterate or refine the plan after validation passes
 - The PLAN_READY signal means "plan is complete, session is done"

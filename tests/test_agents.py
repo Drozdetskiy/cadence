@@ -40,7 +40,7 @@ class TestLoadAgentFallback:
         message = str(exc_info.value)
         assert "nonexistent-agent" in message
         assert "agent" in message
-        assert "rlx" in message
+        assert "cadence" in message
         assert "reinstall" in message
         assert "pip install" in message
         assert isinstance(exc_info.value.__cause__, FileNotFoundError)
@@ -51,7 +51,7 @@ class TestLoadAgentFallback:
         message = str(exc_info.value)
         assert "definitely-not-a-real-agent" in message
         assert "agent" in message
-        assert "rlx" in message
+        assert "cadence" in message
         assert "reinstall" in message
         assert "pip install" in message
         assert isinstance(exc_info.value.__cause__, FileNotFoundError)

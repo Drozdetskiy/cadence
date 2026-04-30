@@ -49,7 +49,7 @@ def load_prompt(name: str, local_dir: Path | None = None) -> str:
         content = ref.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise RuntimeError(
-            f"default prompt {name!r} not found in installed rlx "
+            f"default prompt {name!r} not found in installed cadence "
             "package; the install may be incomplete or out of date — "
             "reinstall with 'pip install -e .'"
         ) from exc
