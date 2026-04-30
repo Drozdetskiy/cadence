@@ -67,7 +67,7 @@ Files:
 Files:
 - Modify: `tests/test_cli.py`
 
-- [ ] Add tests under a new `TestConfigFlag` class (or extend existing classes), using the existing `CliRunner` + `@patch("rlx.cli.load_config")` pattern:
+- [x] Add tests under a new `TestConfigFlag` class (or extend existing classes), using the existing `CliRunner` + `@patch("rlx.cli.load_config")` pattern:
   - `--plan` with explicit `--config /path/to/file.yaml`: assert that `cfg.plan_model` / `task_model` / `review_model` reflect the YAML values when the executor is constructed (assert via `ClaudeExecutor` mock or by patching `apply_yaml_overrides` and checking the call).
   - `--plan` without `--config`: when `rlx-config.yaml` exists in the plan file's directory, overrides are applied (use `tmp_path` to create the plan file and the YAML side-by-side).
   - `--plan` without `--config` and no YAML next to the plan file: no overrides applied; defaults from TOML survive.
@@ -77,7 +77,7 @@ Files:
   - `--review` without `--config`: auto-discovery is skipped even if a `rlx-config.yaml` sits in cwd.
   - `--config /missing/path.yaml`: exits non-zero with an error message.
   - `--config <invalid yaml file>`: exits non-zero with an error message.
-- [ ] run project test suite — must pass before Task 3.
+- [x] run project test suite — must pass before Task 3.
 
 ### Task 3: Verify acceptance criteria
 
