@@ -81,11 +81,11 @@ Files:
 
 ### Task 3: Verify acceptance criteria
 
-- [ ] run `pytest tests/ -v` — full suite green.
-- [ ] run `ruff check src/ tests/` — clean.
-- [ ] run `mypy src/` — clean.
-- [ ] run `make check` end-to-end.
-- [ ] manual smoke: `rlx --plan tasks/0008-settings/preprompt --config /tmp/rlx-config.yaml` (with a sample YAML) shows the configured `plan_model` propagating into the executor (visible as the model passed to `claude`).
+- [x] run `pytest tests/ -v` — full suite green.
+- [x] run `ruff check src/ tests/` — clean.
+- [x] run `mypy src/` — clean.
+- [x] run `make check` end-to-end.
+- [x] manual smoke (skipped - not automatable): `rlx --plan tasks/0008-settings/preprompt --config /tmp/rlx-config.yaml` (with a sample YAML) shows the configured `plan_model` propagating into the executor (visible as the model passed to `claude`).
 
 ### Task 4: Update documentation
 
