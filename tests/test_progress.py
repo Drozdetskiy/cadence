@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import os
 
-from rlx.config import ColorConfig
-from rlx.progress.colors import Colors
-from rlx.progress.flock import lock_file, unlock_file
-from rlx.progress.logger import (
+from cadence.config import ColorConfig
+from cadence.progress.colors import Colors
+from cadence.progress.flock import lock_file, unlock_file
+from cadence.progress.logger import (
     Logger,
     ProgressLoggerConfig,
     _is_progress_completed,
     _progress_filename,
     _sanitize_plan_name,
 )
-from rlx.status import (
+from cadence.status import (
     Mode,
     PhaseHolder,
     PhasePlan,

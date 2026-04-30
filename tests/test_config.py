@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rlx.config import (
+from cadence.config import (
     ColorConfig,
     Config,
     YamlOverrides,

@@ -79,7 +79,7 @@ def load_agent(
         if local_path.is_file():
             raw = local_path.read_text(encoding="utf-8")
     if raw is None:
-        ref = importlib.resources.files("rlx.defaults.agents").joinpath(f"{name}.txt")
+        ref = importlib.resources.files("cadence.defaults.agents").joinpath(f"{name}.txt")
         try:
             raw = ref.read_text(encoding="utf-8")
         except FileNotFoundError as exc:

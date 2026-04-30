@@ -10,9 +10,9 @@ from typing import IO
 from rich.console import Console
 from rich.text import Text
 
-from rlx.progress.colors import Colors
-from rlx.progress.flock import lock_file, unlock_file
-from rlx.status import Mode, PhaseHolder, Section
+from cadence.progress.colors import Colors
+from cadence.progress.flock import lock_file, unlock_file
+from cadence.status import Mode, PhaseHolder, Section
 
 
 @dataclass

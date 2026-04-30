@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rlx.processor.prompts import (
+from cadence.processor.prompts import (
     build_finalize_prompt,
     build_review_first_prompt,
     build_review_second_prompt,

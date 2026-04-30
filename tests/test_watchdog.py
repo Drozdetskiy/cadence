@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
-from rlx.executor.claude_executor import _IdleWatchdog
+from cadence.executor.claude_executor import _IdleWatchdog
 
 
 class TestIdleWatchdog:

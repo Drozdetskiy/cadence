@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from rlx.executor.claude_executor import (
+from cadence.executor.claude_executor import (
     ClaudeExecutor,
     LimitPatternError,
     PatternMatchError,
@@ -22,8 +22,8 @@ from rlx.executor.claude_executor import (
     filter_env,
     match_pattern,
 )
-from rlx.executor.process_group import ProcessGroupCleanup
-from rlx.status import (
+from cadence.executor.process_group import ProcessGroupCleanup
+from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
@@ -347,7 +347,7 @@ class TestClaudeExecutorWithMockRunner:
         assert result.signal == SignalPlanReady
 
     def test_limit_pattern_skipped_on_question_turn(self) -> None:
-        from rlx.status import SignalQuestion
+        from cadence.status import SignalQuestion
 
         question_text = (
             '<<<RLX:QUESTION>>>\n'

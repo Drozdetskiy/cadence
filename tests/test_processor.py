@@ -7,26 +7,26 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rlx.config import Config as AppConfig
-from rlx.executor.claude_executor import (
+from cadence.config import Config as AppConfig
+from cadence.executor.claude_executor import (
     LimitPatternError,
     PatternMatchError,
     Result,
 )
-from rlx.processor.prompts import (
+from cadence.processor.prompts import (
     append_commit_trailer_instruction,
     build_plan_prompt,
     load_prompt,
     normalize_crlf,
     replace_base_variables,
 )
-from rlx.processor.runner import (
+from cadence.processor.runner import (
     Dependencies,
     RunContext,
     Runner,
     UserAbortedError,
 )
-from rlx.status import (
+from cadence.status import (
     Mode,
     PhaseHolder,
     SignalCompleted,

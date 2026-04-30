@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rlx.processor.agents import AgentDef, load_agent
+from cadence.processor.agents import AgentDef, load_agent
 
 
 class TestLoadAgentFallback:

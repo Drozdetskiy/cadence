@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from rlx.git import DiffStats, Service
-from rlx.git.backend import ExternalBackend
+from cadence.git import DiffStats, Service
+from cadence.git.backend import ExternalBackend
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "test",

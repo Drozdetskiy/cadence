@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from rlx.status import (
+from cadence.status import (
     PhaseFinalize,
     PhaseHolder,
     PhasePlan,

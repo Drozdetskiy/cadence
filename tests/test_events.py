@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rlx.executor.events import (
+from cadence.executor.events import (
     AssistantEvent,
     ContentBlockDeltaEvent,
     ContentBlockStartEvent,

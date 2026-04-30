@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from rlx.config import (
+from cadence.config import (
     Config,
     apply_yaml_overrides,
     detect_local_dir,
@@ -19,18 +19,18 @@ from rlx.config import (
     load_yaml_config,
     parse_duration,
 )
-from rlx.executor.claude_executor import ClaudeExecutor
-from rlx.git import DiffStats, Service, get_default_branch, is_git_repo
-from rlx.input import TerminalCollector, ask_yes_no
-from rlx.processor.runner import (
+from cadence.executor.claude_executor import ClaudeExecutor
+from cadence.git import DiffStats, Service, get_default_branch, is_git_repo
+from cadence.input import TerminalCollector, ask_yes_no
+from cadence.processor.runner import (
     Dependencies,
     RunContext,
     Runner,
     UserAbortedError,
 )
-from rlx.progress.colors import Colors
-from rlx.progress.logger import Logger, ProgressLoggerConfig
-from rlx.status import Mode, PhaseHolder
+from cadence.progress.colors import Colors
+from cadence.progress.logger import Logger, ProgressLoggerConfig
+from cadence.status import Mode, PhaseHolder
 
 app = typer.Typer(add_completion=False)
 

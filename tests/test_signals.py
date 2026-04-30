@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rlx.processor.signals import (
+from cadence.processor.signals import (
     is_all_tasks_done,
     is_plan_ready,
     is_review_done,
@@ -8,7 +8,7 @@ from rlx.processor.signals import (
     parse_plan_draft_payload,
     parse_question_payload,
 )
-from rlx.status import (
+from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
