@@ -3,15 +3,11 @@ Detect over-engineered and overcomplicated code - code that works but is more co
 ## Excessive Abstraction Layers
 
 - Wrapper adds nothing - method just calls another method with same signature
-- Factory for single implementation - factory pattern when only one concrete type exists
-- Interface on producer side - interface defined where implemented, not where consumed
-- Layer cake anti-pattern - handler -> service -> repository when each just passes through
 - DTO/Mapper overkill - multiple types representing same data with conversion functions
 
 ## Premature Generalization
 
 - Generic solution for specific problem - event bus for one event type
-- Config objects for 2-3 options - options pattern when direct parameters suffice
 - Plugin architecture for fixed functionality - extension points nothing extends
 - Overloaded struct - one type handling all variations with many optional fields
 
