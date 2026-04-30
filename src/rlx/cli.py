@@ -10,7 +10,15 @@ from pathlib import Path
 
 import typer
 
-from rlx.config import Config, detect_local_dir, load_config, parse_duration
+from rlx.config import (
+    Config,
+    apply_yaml_overrides,
+    detect_local_dir,
+    find_yaml_config,
+    load_config,
+    load_yaml_config,
+    parse_duration,
+)
 from rlx.executor.claude_executor import ClaudeExecutor
 from rlx.git import DiffStats, Service, get_default_branch, is_git_repo
 from rlx.input import TerminalCollector, ask_yes_no
@@ -124,6 +132,35 @@ def _ensure_git_repo(vcs_command: str) -> None:
         raise SystemExit(1)
 
 
+def _apply_yaml_overrides(
+    cfg: Config,
+    config_arg: Path | None,
+    anchor: Path | None,
+) -> None:
+    if config_arg is not None:
+        if not config_arg.is_file():
+            typer.echo(
+                f"error: config file not found: {config_arg}", err=True
+            )
+            raise SystemExit(1)
+        yaml_path: Path | None = config_arg
+    elif anchor is not None:
+        yaml_path = find_yaml_config(anchor.parent)
+    else:
+        yaml_path = None
+
+    if yaml_path is None:
+        return
+
+    try:
+        overrides = load_yaml_config(yaml_path)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    apply_yaml_overrides(cfg, overrides)
+
+
 def _build_plan_logger(
     plan_file: Path, content: str, colors: Colors, holder: PhaseHolder
 ) -> Logger:
@@ -199,11 +236,14 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
+def run_plan_mode(
+    plan_file: Path, *, impl: bool = False, config: Path | None = None
+) -> None:
     content = _read_plan_file(plan_file)
 
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, plan_file)
 
     check_claude_dep(cfg)
 
@@ -277,7 +317,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         log.close(success=run_success)
 
     if impl and run_success:
-        run_task_mode(Path(plan_path))
+        run_task_mode(Path(plan_path), config=config)
 
 
 def _install_sigquit(break_event: threading.Event) -> None:
@@ -307,13 +347,14 @@ def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     return pause
 
 
-def run_task_mode(task_file: Path) -> None:
+def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
         raise SystemExit(1)
 
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, task_file)
 
     check_claude_dep(cfg)
 
@@ -433,9 +474,12 @@ def run_task_mode(task_file: Path) -> None:
         log.close(success=run_success)
 
 
-def run_review_mode(base: str | None = None) -> None:
+def run_review_mode(
+    base: str | None = None, *, config: Path | None = None
+) -> None:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, None)
 
     check_claude_dep(cfg)
 
@@ -553,6 +597,11 @@ _BASE_OPT: str | None = typer.Option(
     "--base",
     help="Base branch for review diff (overrides config default_branch)",
 )
+_CONFIG_OPT: Path | None = typer.Option(
+    None,
+    "--config",
+    help="Path to optional rlx-config.yaml model overrides",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -563,6 +612,7 @@ def main(
     review: bool = _REVIEW_OPT,
     impl: bool = _IMPL_OPT,
     base: str | None = _BASE_OPT,
+    config: Path | None = _CONFIG_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
@@ -605,9 +655,9 @@ def main(
 
     if mode == Mode.PLAN:
         assert plan is not None
-        run_plan_mode(plan, impl=impl)
+        run_plan_mode(plan, impl=impl, config=config)
     elif mode == Mode.FULL:
         assert task is not None
-        run_task_mode(task)
+        run_task_mode(task, config=config)
     elif mode == Mode.REVIEW:
-        run_review_mode(base)
+        run_review_mode(base, config=config)

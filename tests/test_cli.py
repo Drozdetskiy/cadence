@@ -332,7 +332,7 @@ class TestMainCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["--review"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with(None)
+        mock_run.assert_called_once_with(None, config=None)
 
     def test_review_with_impl_errors(self) -> None:
         from typer.testing import CliRunner
@@ -411,7 +411,7 @@ class TestMainCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["--review", "--base", "develop"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with("develop")
+        mock_run.assert_called_once_with("develop", config=None)
 
     def test_base_without_review_errors(self) -> None:
         from typer.testing import CliRunner
@@ -536,7 +536,9 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
-        mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)))
+        mock_run_task_mode.assert_called_once_with(
+            Path(derive_plan_path(f)), config=None
+        )
         ordered_names = [c[0] for c in parent.mock_calls]
         assert ordered_names.index("close") < ordered_names.index("task")
 

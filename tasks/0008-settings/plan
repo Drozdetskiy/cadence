@@ -1,0 +1,94 @@
+# Add --config flag for YAML model overrides
+
+## Overview
+
+Add a new `--config` CLI flag (available for `--plan`, `--task`, and `--review` modes) that points to an optional YAML file overriding the per-step Claude model. The default file name is `rlx-config.yaml`. When `--config` is omitted, rlx auto-discovers the YAML next to the plan/task file. The file structure is:
+
+```yaml
+task:
+  model: opus4.7
+review:
+  model: opus4.7
+plan:
+  model: opus4.7
+```
+
+Each section is optional; missing sections fall back to the existing TOML defaults in `Config` (`plan_model`, `task_model`, `review_model`). The YAML purely overrides values already loaded from the global TOML.
+
+The YAML parsing/loading/applying helpers (`parse_yaml_overrides`, `load_yaml_config`, `apply_yaml_overrides`, `find_yaml_config`, `YamlOverrides`) are already implemented and tested in `src/rlx/config.py` + `tests/test_config.py`. This plan only wires them into the CLI.
+
+## Context
+
+- Files involved:
+  - `src/rlx/cli.py` — add `--config` Typer option, plumb into `run_plan_mode`, `run_task_mode`, `run_review_mode`; call `find_yaml_config` / `load_yaml_config` / `apply_yaml_overrides` after `load_config`.
+  - `src/rlx/config.py` — already exports the YAML helpers; no changes expected unless auto-discovery semantics need a tweak.
+  - `tests/test_cli.py` — add coverage for the new flag and auto-discovery behavior across modes.
+  - `README.md` — document the new `--config` flag and the YAML schema.
+- Related patterns:
+  - `Config` dataclass loaded via `load_config(local_dir)`; YAML overrides should be applied immediately after this call so all downstream code (executors, runner) sees the merged values.
+  - Existing flag wiring uses `typer.Option(...)` declared at module scope (see `_PLAN_OPT`, `_TASK_OPT`, `_BASE_OPT`).
+  - `--base` is a precedent for a flag that is mode-restricted; `--config` is allowed in all three modes.
+- Dependencies: none new.
+
+## Development Approach
+
+- Testing approach: Regular (code first, then tests).
+- Complete each task fully before moving to the next.
+- Auto-discovery rule: if `--config` is not provided AND a plan/task file path is available, search only the directory containing that file (no walking up). For `--review` (no plan file), auto-discovery is skipped — only an explicit `--config` is honored.
+- An explicit `--config` path that does not exist is a hard error (exit 1). An auto-discovered path that is missing is silently ignored (no overrides).
+- A YAML parse error is a hard error in both cases.
+- CRITICAL: every task MUST include new/updated tests.
+- CRITICAL: all tests must pass before starting next task.
+
+## Implementation Steps
+
+### Task 1: Wire --config flag into the CLI and apply YAML overrides
+
+Files:
+- Modify: `src/rlx/cli.py`
+
+- [x] Import `apply_yaml_overrides`, `find_yaml_config`, `load_yaml_config` from `rlx.config`.
+- [x] Add a module-level `_CONFIG_OPT: Path | None = typer.Option(None, "--config", help="Path to optional rlx-config.yaml model overrides")`.
+- [x] Add `config: Path | None = _CONFIG_OPT` parameter to `main()` and forward it into `run_plan_mode`, `run_task_mode`, `run_review_mode`.
+- [x] Add a helper `_apply_yaml_overrides(cfg: Config, config_arg: Path | None, anchor: Path | None) -> None` in `cli.py` that:
+  - if `config_arg is not None`: error out with exit 1 when the file does not exist; otherwise call `load_yaml_config(config_arg)` and `apply_yaml_overrides(cfg, ...)`.
+  - else if `anchor is not None`: call `find_yaml_config(anchor.parent)`; if it returns a path, load+apply.
+  - else: no-op.
+  - On YAML parse errors (`ValueError` from `load_yaml_config`), echo an error and exit 1.
+- [x] In `run_plan_mode(plan_file, *, impl, config)`: call the helper with `anchor=plan_file` after `load_config(local_dir)`.
+- [x] In `run_task_mode(task_file, *, config)`: call the helper with `anchor=task_file` after `load_config(local_dir)`.
+- [x] In `run_review_mode(base, *, config)`: call the helper with `anchor=None` (auto-discovery skipped).
+- [x] Run `make check` to confirm typing and lint pass.
+- [x] write tests for this task (Task 2 — placed separately for clarity).
+- [x] run project test suite — must pass before Task 2 (existing suite).
+
+### Task 2: CLI tests for --config and auto-discovery
+
+Files:
+- Modify: `tests/test_cli.py`
+
+- [ ] Add tests under a new `TestConfigFlag` class (or extend existing classes), using the existing `CliRunner` + `@patch("rlx.cli.load_config")` pattern:
+  - `--plan` with explicit `--config /path/to/file.yaml`: assert that `cfg.plan_model` / `task_model` / `review_model` reflect the YAML values when the executor is constructed (assert via `ClaudeExecutor` mock or by patching `apply_yaml_overrides` and checking the call).
+  - `--plan` without `--config`: when `rlx-config.yaml` exists in the plan file's directory, overrides are applied (use `tmp_path` to create the plan file and the YAML side-by-side).
+  - `--plan` without `--config` and no YAML next to the plan file: no overrides applied; defaults from TOML survive.
+  - `--task` with explicit `--config`: same assertion path as plan.
+  - `--task` auto-discovery: YAML next to the task file is honored.
+  - `--review` with explicit `--config`: overrides applied.
+  - `--review` without `--config`: auto-discovery is skipped even if a `rlx-config.yaml` sits in cwd.
+  - `--config /missing/path.yaml`: exits non-zero with an error message.
+  - `--config <invalid yaml file>`: exits non-zero with an error message.
+- [ ] run project test suite — must pass before Task 3.
+
+### Task 3: Verify acceptance criteria
+
+- [ ] run `pytest tests/ -v` — full suite green.
+- [ ] run `ruff check src/ tests/` — clean.
+- [ ] run `mypy src/` — clean.
+- [ ] run `make check` end-to-end.
+- [ ] manual smoke: `rlx --plan tasks/0008-settings/preprompt --config /tmp/rlx-config.yaml` (with a sample YAML) shows the configured `plan_model` propagating into the executor (visible as the model passed to `claude`).
+
+### Task 4: Update documentation
+
+- [ ] update `README.md`: document the `--config` flag under each mode subsection and add a short YAML schema example showing the three optional sections.
+- [ ] update `CLAUDE.md` only if the high-level package summary needs to mention the YAML override layer (probably one line under the `cli.py` bullet noting the new flag).
+- [ ] move this plan to `docs/plans/completed/`.
