@@ -55,12 +55,12 @@ Remove the `documentation` review agent from rlx. After this change, `review_fir
 - Modify: `docs/reference/10-features.md`
 - Modify: `docs/reference/02-config.md`
 
-- [ ] In `CLAUDE.md`, remove `, documentation.txt` from the `defaults/agents/` line so the list reads `quality.txt, implementation.txt, testing.txt, simplification.txt`
-- [ ] In `docs/reference/09-agents.md`: delete the entire `## documentation.txt -- Агент документации` section (and its trailing `---`); remove the `documentation` row from both summary tables (the "Где используются агенты" table and the "Сводная таблица агентов" table at the end); update "Первое ревью: 5 агентов параллельно" to "Первое ревью: 4 агента параллельно"
-- [ ] In `docs/reference/08-prompts.md`: remove the `{{agent:documentation}}` bullet from the agent list; remove the `{{agent:documentation}}` line from the prompt excerpt; in the PhaseReview (1st) table row change `5 (quality, implementation, testing, simplification, documentation)` to `4 (quality, implementation, testing, simplification)`
-- [ ] In `docs/reference/10-features.md`: remove the `- ``documentation.txt`` -- необходимость обновления документации` bullet
-- [ ] In `docs/reference/02-config.md`: remove the `documentation.txt` line from the agents directory tree
-- [ ] No code tests needed for this task — docs only. Re-run `pytest tests/ -v` to confirm Task 1 still passes.
+- [x] In `CLAUDE.md`, remove `, documentation.txt` from the `defaults/agents/` line so the list reads `quality.txt, implementation.txt, testing.txt, simplification.txt`
+- [x] In `docs/reference/09-agents.md`: delete the entire `## documentation.txt -- Агент документации` section (and its trailing `---`); remove the `documentation` row from both summary tables (the "Где используются агенты" table and the "Сводная таблица агентов" table at the end); update "Первое ревью: 5 агентов параллельно" to "Первое ревью: 4 агента параллельно"
+- [x] In `docs/reference/08-prompts.md`: remove the `{{agent:documentation}}` bullet from the agent list; remove the `{{agent:documentation}}` line from the prompt excerpt; in the PhaseReview (1st) table row change `5 (quality, implementation, testing, simplification, documentation)` to `4 (quality, implementation, testing, simplification)`
+- [x] In `docs/reference/10-features.md`: remove the `- ``documentation.txt`` -- необходимость обновления документации` bullet
+- [x] In `docs/reference/02-config.md`: remove the `documentation.txt` line from the agents directory tree
+- [x] No code tests needed for this task — docs only. Re-run `pytest tests/ -v` to confirm Task 1 still passes.
 
 ### Task 3: Verify acceptance criteria
 

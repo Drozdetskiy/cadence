@@ -59,9 +59,8 @@ Report findings only - no positive observations.
 | implementation | да | да |
 | testing | да | нет |
 | simplification | да | нет |
-| documentation | да | нет |
 
-Первое ревью: 5 агентов параллельно (полный анализ).
+Первое ревью: 4 агента параллельно (полный анализ).
 Второе ревью: 2 агента параллельно (только critical/major issues).
 
 ---
@@ -330,82 +329,6 @@ Report problems only - no positive observations.
 
 ---
 
-## documentation.txt -- Агент документации
-
-**Используется в:** review_first.txt (не используется в review_second.txt)
-**Frontmatter по умолчанию:** нет (model=default, agent=general-purpose)
-
-### Области анализа
-
-- README.md: новые фичи, CLI-флаги, API endpoints, конфигурация, изменения поведения, зависимости, breaking changes
-- CLAUDE.md: архитектурные паттерны, соглашения, команды сборки/тестирования, новые библиотеки, структура проекта
-- Plan Files: отметка завершённых пунктов, обновление статуса
-
-### Формат вывода
-
-Для каждого пропуска: Missing, Section, Suggested content.
-
-### Полный текст
-
-```
-Review code changes and identify missing documentation updates.
-
-## README.md (Human Documentation)
-
-Check if changes require README updates:
-
-Must document:
-- New features or capabilities
-- New CLI flags or command-line options
-- New API endpoints or interfaces
-- New configuration options
-- Changed behavior that affects users
-- New dependencies or system requirements
-- Breaking changes
-
-Skip:
-- Internal refactoring with no user-visible changes
-- Bug fixes that restore documented behavior
-- Test additions
-- Code style changes
-
-## CLAUDE.md (AI Knowledge Base)
-
-Check if changes require CLAUDE.md updates:
-
-Must document:
-- New architectural patterns discovered/established
-- New conventions or coding standards
-- New build/test commands
-- New libraries or tools integrated
-- Project structure changes
-- Workflow changes
-- Non-obvious debugging techniques
-
-Skip:
-- Standard code additions following existing patterns
-- Simple bug fixes
-- Test additions using existing patterns
-
-## Plan Files
-
-If changes relate to an existing plan:
-- Mark completed items as done
-- Update plan status if needed
-- Note which plan items this change addresses
-
-## What to Report
-
-For each gap:
-- Missing: what needs to be documented
-- Section: where in the documentation it should go
-- Suggested content: draft text or outline
-
-Report problems only - no positive observations.
-```
-
----
-
 ## Сводная таблица агентов
 
 | Агент | Фокус | review_first | review_second | Формат вывода |
@@ -414,7 +337,6 @@ Report problems only - no positive observations.
 | implementation | Корректность реализации требований | да | да | Issue, Impact, Location, Fix |
 | testing | Покрытие и качество тестов | да | нет | Location, Issue, Impact, Fix |
 | simplification | Over-engineering и сложность | да | нет | Location, Pattern, Problem, Simplification, Effort |
-| documentation | Пропущенные обновления документации | да | нет | Missing, Section, Suggested content |
 
 ## Кастомизация для Python-порта
 

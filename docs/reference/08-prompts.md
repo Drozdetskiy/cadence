@@ -328,7 +328,7 @@ OUTPUT FORMAT: No markdown formatting in your response text (no **bold**, `code`
 
 ---
 
-## review_first.txt -- Промпт первого ревью (5 агентов)
+## review_first.txt -- Промпт первого ревью (4 агента)
 
 **Фаза:** PhaseReview (phase 2)
 **Используется в:** run_claude_review() с ReviewFirst prompt
@@ -343,7 +343,6 @@ OUTPUT FORMAT: No markdown formatting in your response text (no **bold**, `code`
 - `{{agent:implementation}}` -- агент корректности реализации
 - `{{agent:testing}}` -- агент тестирования
 - `{{agent:simplification}}` -- агент упрощения
-- `{{agent:documentation}}` -- агент документации
 
 ### Сигналы
 
@@ -364,19 +363,18 @@ Run both commands to understand what was done:
 - `git log {{DEFAULT_BRANCH}}..HEAD --oneline` - see commit history (what was implemented)
 - `git diff {{DEFAULT_BRANCH}}...HEAD` - see actual code changes
 
-## Step 2: Launch ALL 5 Review Agents IN PARALLEL
+## Step 2: Launch ALL 4 Review Agents IN PARALLEL
 
 All Task tool calls MUST be in the same message for parallel foreground execution.
 Do NOT use run_in_background. Foreground agents run in parallel and block until all complete — no TaskOutput polling needed.
 
-CRITICAL: Do NOT proceed to Step 3 until ALL 5 agents have returned results.
+CRITICAL: Do NOT proceed to Step 3 until ALL 4 agents have returned results.
 
 Agents to launch:
 {{agent:quality}}
 {{agent:implementation}}
 {{agent:testing}}
 {{agent:simplification}}
-{{agent:documentation}}
 
 Each agent prompt should be short — do NOT paste the diff into it. Instead, instruct each agent to:
 1. Run `git diff {{DEFAULT_BRANCH}}...HEAD` and `git diff --stat {{DEFAULT_BRANCH}}...HEAD` to get the changes
@@ -592,7 +590,7 @@ OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain te
 |---|---|---|---|
 | PhaseTask | task.txt | 0 | ALL_TASKS_DONE, TASK_FAILED |
 | PhasePlan | make_plan.txt | 0 | QUESTION, PLAN_DRAFT, PLAN_READY, TASK_FAILED |
-| PhaseReview (1st) | review_first.txt | 5 (quality, implementation, testing, simplification, documentation) | REVIEW_DONE, TASK_FAILED |
+| PhaseReview (1st) | review_first.txt | 4 (quality, implementation, testing, simplification) | REVIEW_DONE, TASK_FAILED |
 | PhaseReview (2nd) | review_second.txt | 2 (quality, implementation) | REVIEW_DONE, TASK_FAILED |
 | PhaseFinalize | finalize.txt | 0 | нет (best-effort) |
 
@@ -600,7 +598,7 @@ OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain te
 
 ```
 task.txt
-  └─ [ALL_TASKS_DONE] ──> review_first.txt (5 agents)
+  └─ [ALL_TASKS_DONE] ──> review_first.txt (4 agents)
                               └─ [REVIEW_DONE] ──> review_second.txt (2 agents)
                                                       └─ [REVIEW_DONE] ──> finalize.txt
 ```

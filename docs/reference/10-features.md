@@ -12,7 +12,7 @@
 
 ### ModeFull (по умолчанию)
 
-Полный автономный пайплайн: задачи -> первый ревью (5 агентов) -> второй ревью (2 агента) -> finalize.
+Полный автономный пайплайн: задачи -> первый ревью (4 агента) -> второй ревью (2 агента) -> finalize.
 
 - CLI: `rlx docs/plans/feature.md` (без специальных флагов)
 - Требуется: план-файл (или выбор через нумерованный список)
@@ -224,10 +224,9 @@ Merge strategy:
 
 ## Configurable Agents с Frontmatter
 
-5 default agents, встроенных в пакет:
+4 default agents, встроенных в пакет:
 - `implementation.txt` -- корректность реализации
 - `quality.txt` -- баги, безопасность, race conditions
-- `documentation.txt` -- необходимость обновления документации
 - `simplification.txt` -- over-engineering
 - `testing.txt` -- покрытие и качество тестов
 

@@ -316,7 +316,6 @@ rlx/
     agents/
       implementation.txt
       quality.txt
-      documentation.txt
       simplification.txt
       testing.txt
 ```
