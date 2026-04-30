@@ -42,11 +42,11 @@ The fix is to only include truly non-JSON lines in `recent`. Genuine CLI errors 
 
 ### Task 2: Verify acceptance criteria
 
-- [ ] run full test suite: `pytest tests/ -v`
-- [ ] run linter: `ruff check src/ tests/`
-- [ ] run type checker: `mypy src/`
-- [ ] run `make check` (combines all three) and confirm clean
-- [ ] verify no test was disabled or skipped to make this pass
+- [x] run full test suite: `pytest tests/ -v`
+- [x] run linter: `ruff check src/ tests/`
+- [x] run type checker: `mypy src/`
+- [x] run `make check` (combines all three) and confirm clean
+- [x] verify no test was disabled or skipped to make this pass
 
 ### Task 3: Update documentation
 
