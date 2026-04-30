@@ -50,6 +50,6 @@ The fix is to only include truly non-JSON lines in `recent`. Genuine CLI errors 
 
 ### Task 3: Update documentation
 
-- [ ] In `docs/reference/02-config.md`, near the `claude_error_patterns` / `claude_limit_patterns` description, add one short sentence clarifying that pattern matching applies to raw non-JSON CLI output only, not to data inside stream-json events. Avoid restating implementation; one line is enough so users understand why a literal in code/docs/tests does not trigger the matcher.
-- [ ] In `docs/reference/10-features.md`, mirror the same one-line clarification next to the existing pattern config mention.
-- [ ] CLAUDE.md: no change — package structure and conventions are unchanged.
+- [x] In `docs/reference/02-config.md`, near the `claude_error_patterns` / `claude_limit_patterns` description, add one short sentence clarifying that pattern matching applies to raw non-JSON CLI output only, not to data inside stream-json events. Avoid restating implementation; one line is enough so users understand why a literal in code/docs/tests does not trigger the matcher.
+- [x] In `docs/reference/10-features.md`, mirror the same one-line clarification next to the existing pattern config mention.
+- [x] CLAUDE.md: no change — package structure and conventions are unchanged.

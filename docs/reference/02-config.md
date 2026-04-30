@@ -149,6 +149,8 @@ YAML overrides via `--config <path>` (or auto-discovered `rlx-config.yaml` next 
 
 Приоритет проверки: limit patterns проверяются первыми. Если match + `wait_on_limit > 0` -> wait и retry. Если match + `wait_on_limit == 0` -> fallthrough к error pattern behavior (exit). Limit patterns намеренно пересекаются с error patterns; `wait_on_limit` работает как toggle.
 
+Pattern matching применяется только к raw non-JSON выводу CLI -- литералы паттернов внутри stream-json событий (assistant/user/tool_result и др.) не проверяются, поэтому совпадения в коде/документации/тестах не вызывают ложных срабатываний.
+
 ### Output colors
 
 | TOML key | Default hex | Default RGB | Описание |

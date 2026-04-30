@@ -136,6 +136,7 @@ Signals: QUESTION (JSON payload с options), PLAN_DRAFT (plan content between ma
   - `claude_error_patterns = "You've hit your limit,API Error:,cannot be launched inside another Claude Code session,Not logged in"`
 - Matching: case-insensitive substring
 - Claude: проверяются последние 10 текстовых блоков (не весь вывод) -- предотвращает false positive
+- Scope: только raw non-JSON вывод CLI; литералы внутри stream-json событий игнорируются (в т.ч. совпадения в коде/документации/тестах)
 - Пересечение с limit patterns намеренное -- `wait_on_limit` выступает переключателем поведения
 
 При match: graceful exit с именем паттерна и подсказкой команды (e.g., "claude /usage").
