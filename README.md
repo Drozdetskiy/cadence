@@ -30,6 +30,11 @@ rlx --review
 # Review against an explicit base branch (overrides config default_branch)
 rlx --review --base develop
 
+# Override per-step Claude models via YAML (works with --plan, --task, --review)
+rlx --plan task.md --config rlx-config.yaml
+rlx --task plan.md --config rlx-config.yaml
+rlx --review --config rlx-config.yaml
+
 # Show version
 rlx --version
 ```
@@ -43,6 +48,21 @@ When you run `rlx --plan task.md`, the tool:
 ### `--review`
 
 `rlx --review` runs the review phase against the current branch without creating a plan or executing tasks. It performs a first-pass review, then iterates a critical/major review loop until no further commits are produced (or the iteration cap is reached), and runs the finalize step when `finalize_enabled` is set in config. Set `review_model` in config to use a distinct Claude model for review/finalize. Pass `--base <branch>` to override the base branch used for the review diff for the current run only (resolution priority: `--base` > config `default_branch` > git auto-detect); the flag does not modify `.rlx/config.toml`. `--review` is incompatible with `--impl` and `--plan` / `--task`; `--base` is only valid with `--review`.
+
+### `--config`
+
+`--config <path>` points to an optional YAML file that overrides the per-step Claude model loaded from `.rlx/config.toml`. Available with `--plan`, `--task`, and `--review`. Each section is optional and only overrides the matching TOML default (`plan_model`, `task_model`, `review_model`):
+
+```yaml
+task:
+  model: opus4.7
+review:
+  model: opus4.7
+plan:
+  model: opus4.7
+```
+
+When `--config` is omitted, rlx auto-discovers `rlx-config.yaml` in the directory containing the plan/task file (no parent walk). For `--review` (no plan/task file), auto-discovery is skipped — only an explicit `--config` is honored. An explicit path that does not exist is a hard error; an auto-discovered path that is missing is silently ignored. YAML parse errors are always a hard error.
 
 ## Development
 

@@ -89,6 +89,6 @@ Files:
 
 ### Task 4: Update documentation
 
-- [ ] update `README.md`: document the `--config` flag under each mode subsection and add a short YAML schema example showing the three optional sections.
-- [ ] update `CLAUDE.md` only if the high-level package summary needs to mention the YAML override layer (probably one line under the `cli.py` bullet noting the new flag).
-- [ ] move this plan to `docs/plans/completed/`.
+- [x] update `README.md`: document the `--config` flag under each mode subsection and add a short YAML schema example showing the three optional sections.
+- [x] update `CLAUDE.md` only if the high-level package summary needs to mention the YAML override layer (probably one line under the `cli.py` bullet noting the new flag).
+- [x] move this plan to `docs/plans/completed/`.
