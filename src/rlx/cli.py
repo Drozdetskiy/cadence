@@ -92,12 +92,15 @@ def to_rel_path(p: Path) -> str:
 
 def derive_plan_path(prompt_file: Path) -> str:
     name = prompt_file.name
-    idx = name.rfind("prompt")
-    if idx != -1:
-        plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+    if "preprompt" in name:
+        plan_name = name.replace("preprompt", "plan", 1)
     else:
-        stem = prompt_file.stem
-        plan_name = f"{stem}-plan{prompt_file.suffix}"
+        idx = name.rfind("prompt")
+        if idx != -1:
+            plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+        else:
+            stem = prompt_file.stem
+            plan_name = f"{stem}-plan{prompt_file.suffix}"
     return str(prompt_file.parent / plan_name)
 
 
@@ -218,6 +221,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
     log.print("plan file: %s", to_rel_path(plan_file))
     log.print("progress: %s", log.path)
 
+    plan_path = derive_plan_path(plan_file)
     ctx = RunContext(
         mode=Mode.PLAN,
         plan_file=to_rel_path(plan_file),
@@ -225,6 +229,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         progress_path=log.path,
         default_branch=default_branch,
         local_dir=local_dir,
+        derived_plan_path=plan_path,
     )
 
     idle_timeout = parse_duration(cfg.idle_timeout)
@@ -253,7 +258,6 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         holder=holder,
     )
 
-    plan_path = derive_plan_path(plan_file)
     run_success = False
     try:
         runner = Runner(ctx, cfg, deps)

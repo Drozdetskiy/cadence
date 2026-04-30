@@ -234,6 +234,52 @@ class TestClaudeExecutorWithMockRunner:
         result = executor.run("prompt")
         assert isinstance(result.error, LimitPatternError)
 
+    def test_limit_pattern_skipped_on_clean_signal_exit(self) -> None:
+        lines = [
+            json.dumps({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "plan body <<<RLX:PLAN_READY>>>"},
+            }),
+            json.dumps({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "quoting You've hit your limit pattern"},
+            }),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert result.error is None
+        assert result.signal == SignalPlanReady
+
+    def test_limit_pattern_skipped_on_question_turn(self) -> None:
+        from rlx.status import SignalQuestion
+
+        question_text = (
+            '<<<RLX:QUESTION>>>\n'
+            '{"question": "How does YAML override TOML?", '
+            '"options": ["a quoting You\'ve hit your limit", "b"]}\n'
+            '<<<RLX:END>>>'
+        )
+        lines = [
+            json.dumps({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": question_text},
+            }),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert result.error is None
+        assert result.signal == SignalQuestion
+
     def test_nonzero_exit_no_output(self) -> None:
         runner = MockCommandRunner([], exit_code=1)
         executor = ClaudeExecutor(cmd_runner=runner)

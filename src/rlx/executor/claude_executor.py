@@ -26,7 +26,9 @@ from rlx.executor.process_group import ProcessGroupCleanup
 from rlx.status import (
     SignalCompleted,
     SignalFailed,
+    SignalPlanDraft,
     SignalPlanReady,
+    SignalQuestion,
     SignalReviewDone,
 )
 
@@ -63,7 +65,14 @@ class CommandRunner(Protocol):
 
 
 def detect_signal(text: str) -> str:
-    for sig in (SignalCompleted, SignalFailed, SignalReviewDone, SignalPlanReady):
+    for sig in (
+        SignalCompleted,
+        SignalFailed,
+        SignalReviewDone,
+        SignalPlanReady,
+        SignalQuestion,
+        SignalPlanDraft,
+    ):
         if sig in text:
             return sig
     return ""
@@ -342,6 +351,9 @@ class ClaudeExecutor:
                     f"claude exited with code {exit_code} without completing"
                 )
                 return result
+
+        if exit_code == 0 and result.signal:
+            return result
 
         limit_pat = match_pattern(result.recent_text, self._limit_patterns)
         if limit_pat:

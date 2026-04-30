@@ -163,6 +163,19 @@ class TestBuildPlanPrompt:
         )
         assert result == "Custom: my feature"
 
+    def test_substitutes_derived_plan_path(self) -> None:
+        result = build_plan_prompt(
+            "desc",
+            derived_plan_path="tasks/0008-settings/plan",
+        )
+        assert "tasks/0008-settings/plan" in result
+        assert "{{DERIVED_PLAN_PATH}}" not in result
+
+    def test_derived_plan_path_fallback_when_empty(self) -> None:
+        result = build_plan_prompt("desc")
+        assert "{{DERIVED_PLAN_PATH}}" not in result
+        assert "(next to the prompt file)" in result
+
 
 def _make_runner(
     executor: object,

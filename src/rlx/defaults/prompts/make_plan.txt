@@ -49,7 +49,9 @@ After emitting QUESTION, STOP immediately. Do not continue. The loop will collec
 
 When you have enough information to create a plan, write it directly to disk:
 
-1. Create the plan file next to the prompt file (the file that was passed to --plan)
+1. Write the plan file to exactly this path: {{DERIVED_PLAN_PATH}}
+   - Use this exact path verbatim — do not invent a different filename, date stamp, or directory.
+   - The downstream `--impl` chain looks for the plan at this exact path; any deviation causes "file not found".
 2. Use this structure:
 
 ---
