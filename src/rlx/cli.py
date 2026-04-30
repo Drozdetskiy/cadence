@@ -253,13 +253,12 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         holder=holder,
     )
 
+    plan_path = derive_plan_path(plan_file)
     run_success = False
-    plan_path: str | None = None
     try:
         runner = Runner(ctx, cfg, deps)
         run_success = runner.run()
         if run_success:
-            plan_path = derive_plan_path(plan_file)
             typer.echo(f"run: rlx --task {plan_path}")
     except KeyboardInterrupt:
         log.print("interrupted by user")
@@ -273,7 +272,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
     finally:
         log.close(success=run_success)
 
-    if impl and run_success and plan_path is not None:
+    if impl and run_success:
         run_task_mode(Path(plan_path))
 
 

@@ -512,12 +512,18 @@ class TestRunPlanModeImplFlag:
         f = tmp_path / "prompt.md"
         f.write_text("implement feature X")
 
+        parent = MagicMock()
+        parent.attach_mock(mock_log.close, "close")
+        parent.attach_mock(mock_run_task_mode, "task")
+
         run_plan_mode(f, impl=True)
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
         mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)))
+        ordered_names = [c[0] for c in parent.mock_calls]
+        assert ordered_names.index("close") < ordered_names.index("task")
 
     @patch("rlx.cli.run_task_mode")
     @patch("rlx.cli.typer.echo")
@@ -611,6 +617,8 @@ class TestRunPlanModeImplFlag:
         run_plan_mode(f, impl=True)
 
         mock_run_task_mode.assert_not_called()
+        echo_calls = [str(c) for c in mock_echo.call_args_list]
+        assert not any("rlx --task" in c for c in echo_calls)
 
 
 class TestDisplayStats:
