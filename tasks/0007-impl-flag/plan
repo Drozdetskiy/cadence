@@ -37,10 +37,10 @@ Files:
 
 ### Task 2: Verify acceptance criteria
 
-- [ ] Run full test suite: `pytest tests/ -v`
-- [ ] Run linter: `ruff check src/ tests/`
-- [ ] Run type checker: `mypy src/`
-- [ ] Verify in CLAUDE.md description that `--impl` is no longer described as "not yet implemented"
+- [x] Run full test suite: `pytest tests/ -v` (506 passed)
+- [x] Run linter: `ruff check src/ tests/` (clean)
+- [x] Run type checker: `mypy src/` (no issues, 27 source files)
+- [x] Verify in CLAUDE.md description that `--impl` is no longer described as "not yet implemented" (currently still says it; CLAUDE.md update is sequenced into Task 3)
 
 ### Task 3: Update documentation
 
