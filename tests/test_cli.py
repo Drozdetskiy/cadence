@@ -471,6 +471,7 @@ class TestDerivePlanPath:
 
 
 class TestRunPlanModeImplFlag:
+    @patch("rlx.cli.run_task_mode")
     @patch("rlx.cli.typer.echo")
     @patch("rlx.cli.TerminalCollector")
     @patch("rlx.cli.ClaudeExecutor")
@@ -480,7 +481,7 @@ class TestRunPlanModeImplFlag:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_impl_flag_shows_not_available(
+    def test_impl_flag_chains_to_task_mode(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -491,6 +492,7 @@ class TestRunPlanModeImplFlag:
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
+        mock_run_task_mode: MagicMock,
         tmp_path: Path,
     ) -> None:
         from rlx.config import Config
@@ -514,8 +516,10 @@ class TestRunPlanModeImplFlag:
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
-        assert any("not available in v0.1" in c for c in echo_calls)
+        assert not any("not available in v0.1" in c for c in echo_calls)
+        mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)))
 
+    @patch("rlx.cli.run_task_mode")
     @patch("rlx.cli.typer.echo")
     @patch("rlx.cli.TerminalCollector")
     @patch("rlx.cli.ClaudeExecutor")
@@ -536,6 +540,7 @@ class TestRunPlanModeImplFlag:
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
+        mock_run_task_mode: MagicMock,
         tmp_path: Path,
     ) -> None:
         from rlx.config import Config
@@ -560,6 +565,52 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
+        mock_run_task_mode.assert_not_called()
+
+    @patch("rlx.cli.run_task_mode")
+    @patch("rlx.cli.typer.echo")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    @patch("rlx.cli.Runner")
+    def test_impl_flag_does_not_chain_on_plan_failure(
+        self,
+        mock_runner_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_echo: MagicMock,
+        mock_run_task_mode: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = False
+        mock_runner_cls.return_value = mock_runner
+
+        f = tmp_path / "prompt.md"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f, impl=True)
+
+        mock_run_task_mode.assert_not_called()
 
 
 class TestDisplayStats:
