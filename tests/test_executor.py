@@ -260,6 +260,67 @@ class TestClaudeExecutorWithMockRunner:
         result = executor.run("prompt")
         assert result.error is None
 
+    def test_pattern_in_unrecognized_json_event_not_matched(self) -> None:
+        lines = [
+            json.dumps({
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": "matched: You've hit your limit",
+                        }
+                    ]
+                },
+            }),
+            json.dumps({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "done <<<RLX:ALL_TASKS_DONE>>>"},
+            }),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert result.error is None
+
+    def test_pattern_in_unrecognized_json_event_no_signal_not_matched(self) -> None:
+        lines = [
+            json.dumps({
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "content": "matched: You've hit your limit",
+                        }
+                    ]
+                },
+            }),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert result.error is None
+
+    def test_pattern_in_non_json_line_still_matches(self) -> None:
+        lines = ["You've hit your limit"]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(
+            cmd_runner=runner,
+            error_patterns=["You've hit your limit"],
+            limit_patterns=["You've hit your limit"],
+        )
+        result = executor.run("prompt")
+        assert isinstance(result.error, LimitPatternError)
+
     def test_limit_pattern_skipped_on_clean_signal_exit(self) -> None:
         lines = [
             json.dumps({
