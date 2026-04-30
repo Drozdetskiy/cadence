@@ -73,4 +73,4 @@ Remove the `documentation` review agent from rlx. After this change, `review_fir
 
 ### Task 4: Update plan tracking
 
-- [ ] Move this plan to `docs/plans/completed/` with a date prefix (e.g. `2026-04-30-remove-documentation-review-agent.md`)
+- [x] Move this plan to `docs/plans/completed/` with a date prefix (e.g. `2026-04-30-remove-documentation-review-agent.md`)
