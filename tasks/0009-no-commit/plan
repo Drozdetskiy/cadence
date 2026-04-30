@@ -99,5 +99,5 @@ Example renames:
 
 ### Task 6: Update internal documentation
 
-- [ ] update `CLAUDE.md` `Package structure` section if the `move plan to completed/` description on the `git/service.py` line is now misleading (change to "rename plan in-place with -completed suffix, no commit")
-- [ ] move this plan to `tasks/0009-no-commit/plan-completed` (or rely on rlx's automatic rename — verify post-run that the file ends up named correctly)
+- [x] update `CLAUDE.md` `Package structure` section if the `move plan to completed/` description on the `git/service.py` line is now misleading (change to "rename plan in-place with -completed suffix, no commit")
+- [x] move this plan to `tasks/0009-no-commit/plan-completed` (or rely on rlx's automatic rename — verify post-run that the file ends up named correctly)
