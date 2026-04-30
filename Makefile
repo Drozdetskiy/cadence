@@ -7,7 +7,7 @@ test:
 	pytest tests/ -v
 
 test-cov:
-	pytest tests/ --cov=src/rlx --cov-report=term-missing
+	pytest tests/ --cov=src/cadence --cov-report=term-missing
 
 lint:
 	ruff check src/ tests/
