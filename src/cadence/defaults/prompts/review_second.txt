@@ -47,7 +47,7 @@ REVIEW_DONE means "this iteration found ZERO issues" - NOT "I finished fixing is
 
 Path A - NO issues found in this iteration:
 - You reviewed the code and found nothing critical/major to fix
-- Output: <<<RLX:REVIEW_DONE>>>
+- Output: <<<CADENCE:REVIEW_DONE>>>
 
 Path B - Issues found AND fixed:
 1. Fix verified critical/major issues only
@@ -58,6 +58,6 @@ Path B - Issues found AND fixed:
    Your fixes might have introduced new issues - another iteration must check.
 
 Path C - Issues found but cannot fix:
-- Output: <<<RLX:TASK_FAILED>>>
+- Output: <<<CADENCE:TASK_FAILED>>>
 
 OUTPUT FORMAT: No markdown formatting (no **bold**, `code`, # headers). Plain text and - lists are fine.

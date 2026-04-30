@@ -33,15 +33,15 @@ class TestPhaseConstants:
 
 class TestSignalConstants:
     def test_signal_format(self) -> None:
-        assert SignalCompleted == "<<<RLX:ALL_TASKS_DONE>>>"
-        assert SignalFailed == "<<<RLX:TASK_FAILED>>>"
-        assert SignalReviewDone == "<<<RLX:REVIEW_DONE>>>"
-        assert SignalQuestion == "<<<RLX:QUESTION>>>"
-        assert SignalPlanReady == "<<<RLX:PLAN_READY>>>"
-        assert SignalPlanDraft == "<<<RLX:PLAN_DRAFT>>>"
-        assert SignalEnd == "<<<RLX:END>>>"
+        assert SignalCompleted == "<<<CADENCE:ALL_TASKS_DONE>>>"
+        assert SignalFailed == "<<<CADENCE:TASK_FAILED>>>"
+        assert SignalReviewDone == "<<<CADENCE:REVIEW_DONE>>>"
+        assert SignalQuestion == "<<<CADENCE:QUESTION>>>"
+        assert SignalPlanReady == "<<<CADENCE:PLAN_READY>>>"
+        assert SignalPlanDraft == "<<<CADENCE:PLAN_DRAFT>>>"
+        assert SignalEnd == "<<<CADENCE:END>>>"
 
-    def test_all_signals_have_rlx_prefix(self) -> None:
+    def test_all_signals_have_cadence_prefix(self) -> None:
         for sig in [
             SignalCompleted,
             SignalFailed,
@@ -51,7 +51,7 @@ class TestSignalConstants:
             SignalPlanDraft,
             SignalEnd,
         ]:
-            assert sig.startswith("<<<RLX:")
+            assert sig.startswith("<<<CADENCE:")
             assert sig.endswith(">>>")
 
 

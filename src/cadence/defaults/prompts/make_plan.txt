@@ -9,7 +9,7 @@ IMPORTANT: Read the progress file first to see any questions you already asked a
 FIRST, check if a plan file already exists next to the prompt file (the file passed to --plan) matching this request.
 Also check {{PLANS_DIR}}/ for previously completed plans (filenames ending in `-completed`).
 If a plan file for this feature already exists:
-- Output <<<RLX:PLAN_READY>>> immediately
+- Output <<<CADENCE:PLAN_READY>>> immediately
 - Do NOT modify the existing plan
 - STOP - do not output anything else
 
@@ -32,9 +32,9 @@ If this is your first iteration (no Q&A in progress file):
 
 If you need user input to create a good plan, emit a QUESTION signal:
 
-<<<RLX:QUESTION>>>
+<<<CADENCE:QUESTION>>>
 {"question": "Your question here?", "options": ["Option 1", "Option 2", "Option 3"]}
-<<<RLX:END>>>
+<<<CADENCE:END>>>
 
 Rules for questions:
 - Ask ONE question at a time
@@ -130,13 +130,13 @@ If validation fails, fix the plan before writing.
 Only after validation passes:
 1. Write the plan file to disk (Step 4)
 2. After writing the file, emit PLAN_READY:
-   - Output exactly: <<<RLX:PLAN_READY>>>
+   - Output exactly: <<<CADENCE:PLAN_READY>>>
    - STOP IMMEDIATELY - do not output anything else after this signal
 
 CRITICAL RULES:
 - DO NOT ask "Would you like to proceed?" or "Should I implement this?" or similar
 - DO NOT wait for user approval - rlx handles confirmation externally
-- DO NOT use natural language questions - only use <<<RLX:QUESTION>>> signal format
+- DO NOT use natural language questions - only use <<<CADENCE:QUESTION>>> signal format
 - DO NOT iterate or refine the plan after validation passes
 - The PLAN_READY signal means "plan is complete, session is done"
 

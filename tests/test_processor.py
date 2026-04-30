@@ -54,7 +54,7 @@ class TestLoadPrompt:
     def test_loads_embedded_make_plan(self) -> None:
         prompt = load_prompt("make_plan")
         assert "{{PLAN_DESCRIPTION}}" in prompt
-        assert "<<<RLX:QUESTION>>>" in prompt
+        assert "<<<CADENCE:QUESTION>>>" in prompt
 
     def test_local_override(self, tmp_path: Path) -> None:
         prompts_dir = tmp_path / "prompts"
@@ -210,10 +210,10 @@ class TestRunnerPlanCreationQuestionFlow:
     def test_question_then_plan_ready(self) -> None:
         executor = MagicMock()
         q_output = (
-            '<<<RLX:QUESTION>>>\n'
+            '<<<CADENCE:QUESTION>>>\n'
             '{"question": "Which DB?", '
             '"options": ["Postgres", "SQLite"]}\n'
-            '<<<RLX:END>>>'
+            '<<<CADENCE:END>>>'
         )
         executor.run.side_effect = [
             Result(output=q_output, signal=""),
@@ -234,11 +234,11 @@ class TestRunnerPlanCreationDraftFlow:
     def test_draft_auto_accepted_then_plan_ready(self) -> None:
         executor = MagicMock()
         draft_output = (
-            '<<<RLX:PLAN_DRAFT>>>\n'
+            '<<<CADENCE:PLAN_DRAFT>>>\n'
             '# My Plan\n'
             '## Overview\n'
             'Implementation details\n'
-            '<<<RLX:END>>>'
+            '<<<CADENCE:END>>>'
         )
         executor.run.side_effect = [
             Result(output=draft_output, signal=""),
@@ -254,7 +254,7 @@ class TestRunnerPlanCreationDraftFlow:
     def test_draft_auto_accept_no_feedback_in_next_prompt(self) -> None:
         executor = MagicMock()
         draft = (
-            '<<<RLX:PLAN_DRAFT>>>\nDraft 1\n<<<RLX:END>>>'
+            '<<<CADENCE:PLAN_DRAFT>>>\nDraft 1\n<<<CADENCE:END>>>'
         )
         executor.run.side_effect = [
             Result(output=draft, signal=""),
