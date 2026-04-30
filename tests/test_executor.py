@@ -286,6 +286,8 @@ class TestClaudeExecutorWithMockRunner:
         )
         result = executor.run("prompt")
         assert result.error is None
+        assert result.signal == SignalCompleted
+        assert "You've hit your limit" in result.output
 
     def test_pattern_in_unrecognized_json_event_no_signal_not_matched(self) -> None:
         lines = [
@@ -309,6 +311,8 @@ class TestClaudeExecutorWithMockRunner:
         )
         result = executor.run("prompt")
         assert result.error is None
+        assert result.signal == ""
+        assert "You've hit your limit" in result.output
 
     def test_pattern_in_non_json_line_still_matches(self) -> None:
         lines = ["You've hit your limit"]
