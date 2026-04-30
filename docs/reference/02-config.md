@@ -169,7 +169,7 @@ YAML overrides via `--config <path>` (or auto-discovered `rlx-config.yaml` next 
 
 | Variable | Fallback | Source |
 |----------|----------|--------|
-| `{{PLAN_FILE}}` | `"(no plan file - reviewing current branch)"` | Проверяет original path, затем completed/ |
+| `{{PLAN_FILE}}` | `"(no plan file - reviewing current branch)"` | Проверяет original path, затем sibling `<stem>-completed<ext>` |
 | `{{PROGRESS_FILE}}` | `"(no progress file available)"` | Путь к файлу прогресса |
 | `{{GOAL}}` | -- | `"implementation of plan at <path>"` или `"current branch vs <branch>"` |
 | `{{DEFAULT_BRANCH}}` | `"master"` | config `default_branch` или auto-detected |

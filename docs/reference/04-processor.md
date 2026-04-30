@@ -539,7 +539,7 @@ is_plan_ready(signal)   -> signal == "<<<RLX:PLAN_READY>>>"
 2. Проверить Path(plan_file).exists():
    - exists: return plan_file
    - permission error: return plan_file
-3. Проверить completed/ subdirectory
+3. Проверить sibling-файл с суффиксом `-completed` (например, `plan.md` -> `plan-completed.md`, `preprompt` -> `preprompt-completed`)
 4. Fallback: return original plan_file
 
 ### has_uncompleted_tasks()

@@ -112,7 +112,7 @@ execute_plan(plan_file, mode)
   |
   |-- при успехе:
   |     |-- git_svc.diff_stats(base_ref)
-  |     |-- move_plan_to_completed()
+  |     |-- mark_plan_completed()  -- in-place rename, no commit
   |     |-- display_stats()
   |
   |-- при ошибке:

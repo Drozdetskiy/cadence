@@ -91,8 +91,9 @@ def _append_trailer(self, msg: str) -> str  # private
 Если `trailer` не пуст, `_append_trailer()` добавляет `"\n\n" + trailer` к сообщению коммита. Применяется ко всем коммитам через Service:
 - `create_branch_for_plan()` -- "add plan: <branch>"
 - `commit_plan_file()` -- "add plan: <branch>"
-- `move_plan_to_completed()` -- "move completed plan: <filename>"
 - `ensure_has_commits()` -- "initial commit"
+
+`mark_plan_completed()` коммитов не создаёт -- это in-place rename без обращения к git.
 
 ### Методы состояния репозитория
 
@@ -148,12 +149,14 @@ def _append_trailer(self, msg: str) -> str  # private
 - Коммитит plan-файл
 - `git add` + `git commit "add plan: <branch>"`
 
-**move_plan_to_completed(plan_file: str) -> None**
-- Перемещает план в `completed/` поддиректорию
-- Создаёт `completed/` если не существует
-- Если source не существует, но dest существует -- log + return (idempotent)
-- Пробует `git mv` -- если ошибка (untracked файл), fallback на `os.rename` + `git add`
-- Коммитит: "move completed plan: <filename>"
+**mark_plan_completed(plan_file: str) -> None**
+- Переименовывает plan-файл in-place: `<stem><ext>` -> `<stem>-completed<ext>` в той же директории (например, `plan.md` -> `plan-completed.md`, `preprompt` -> `preprompt-completed`)
+- Не вызывает `git add`, `git mv` или `git commit` -- plan-файлы обычно gitignored, поэтому коммит не нужен
+- Резолвит регистр имени файла через `_resolve_filesystem_case()` перед переименованием
+- Целевой путь вычисляется через module-level helper `_completed_plan_path(plan_file)`
+- Если source не существует, но target уже существует -- log "plan already marked completed" + return (idempotent)
+- Если ни source, ни target не существуют -- raise `FileNotFoundError`
+- При успехе использует `os.rename(src, dst)` и логирует "marked plan completed: <new path>"
 
 ### Вспомогательные операции
 
@@ -439,7 +442,7 @@ class Selector:
 
 Интерактивный выбор через нумерованный список:
 1. Проверяет существование `plans_dir`
-2. `glob.glob(plans_dir + "/*.md")` -- ищет plan-файлы (исключая `completed/` неявно -- glob не рекурсивный)
+2. `glob.glob(plans_dir + "/*.md")` -- ищет plan-файлы, исключая файлы с суффиксом `-completed.md` (это уже завершённые планы)
 3. Нет файлов -> `NoPlansFoundError`
 4. Один файл -> auto-select
 5. Несколько файлов:
@@ -449,7 +452,7 @@ class Selector:
 
 ### find_recent(start_time: datetime) -> str
 
-Находит последний модифицированный plan-файл после `start_time`. Используется plan creation mode для нахождения только что созданного плана. Возвращает `""` если не найден.
+Находит последний модифицированный plan-файл после `start_time`. Используется plan creation mode для нахождения только что созданного плана. Возвращает `""` если не найден. Файлы с суффиксом `-completed.md` исключаются.
 
 ### extract_branch_name(plan_file: str) -> str
 
@@ -478,7 +481,7 @@ Sentinel error. Проверяется через `isinstance()` в caller'е д
 
 Модуль `git` импортирует `plan` для одной функции: `plan.extract_branch_name()` используется в `_prepare_plan_branch()` для извлечения имени ветки из plan-файла. Это единственная зависимость.
 
-`move_plan_to_completed()` находится в модуле `git` (а не `plan`), потому что операция включает `git mv` + `git commit` -- это git-операция, не plan-парсинг.
+`mark_plan_completed()` исторически находится в модуле `git` (как замена `move_plan_to_completed`); сейчас это просто `os.rename` без обращения к git, но метод оставлен в `Service` рядом с другими операциями над plan-файлами (`commit_plan_file`, `create_branch_for_plan`).
 
 ## Соображения для Python-порта
 

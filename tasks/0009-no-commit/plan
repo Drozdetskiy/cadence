@@ -81,12 +81,12 @@ Example renames:
 - Modify: `docs/reference/04-processor.md` (only if it references the `completed/` subdir)
 - Modify: `docs/reference/02-config.md` (only if it references the `completed/` lookup for `{{PLAN_FILE}}`)
 
-- [ ] in `06-git-and-plans.md` rewrite the `move_plan_to_completed` section (around line 94, 151-156, 308, 481): document `mark_plan_completed`, explain that it renames `<stem><ext>` → `<stem>-completed<ext>` in the same directory, performs no `git mv` and creates no commit, motivation = plan files are commonly gitignored
-- [ ] in `03-cli.md` update the call-graph reference (line 115) to use the new method name
-- [ ] update `04-processor.md` (line 542 and any nearby `completed/` mention) so the plan-resolution description reflects the `-completed` suffix lookup
-- [ ] update `02-config.md` (line 172) to describe the new fallback (sibling `*-completed*` file rather than `completed/` subdir)
-- [ ] no test changes required for docs-only edits, but verify docs build/lint if the project has one
-- [ ] run `make check` (pytest + ruff + mypy) — must pass before task 5
+- [x] in `06-git-and-plans.md` rewrite the `move_plan_to_completed` section (around line 94, 151-156, 308, 481): document `mark_plan_completed`, explain that it renames `<stem><ext>` → `<stem>-completed<ext>` in the same directory, performs no `git mv` and creates no commit, motivation = plan files are commonly gitignored
+- [x] in `03-cli.md` update the call-graph reference (line 115) to use the new method name
+- [x] update `04-processor.md` (line 542 and any nearby `completed/` mention) so the plan-resolution description reflects the `-completed` suffix lookup
+- [x] update `02-config.md` (line 172) to describe the new fallback (sibling `*-completed*` file rather than `completed/` subdir)
+- [x] no test changes required for docs-only edits, but verify docs build/lint if the project has one
+- [x] run `make check` (pytest + ruff + mypy) — must pass before task 5
 
 ### Task 5: Verify acceptance criteria
 
