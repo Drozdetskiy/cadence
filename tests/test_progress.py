@@ -154,7 +154,7 @@ class TestLogger:
             logger.close()
             with open(logger.path) as f:
                 content = f.read()
-            assert "# RLX Progress Log" in content
+            assert "# CADENCE Progress Log" in content
             assert "Plan: plan.md" in content
             assert "Branch: feat" in content
             assert "Mode: full" in content
@@ -365,7 +365,7 @@ class TestLogger:
         p = pathlib.Path(str(tmp_path))
         os.chdir(p)
         try:
-            progress_dir = p / ".rlx" / "progress"
+            progress_dir = p / ".cadence" / "progress"
             progress_dir.mkdir(parents=True, exist_ok=True)
             progress_file = progress_dir / "progress-incomplete.txt"
             progress_file.write_text("some incomplete data\n")

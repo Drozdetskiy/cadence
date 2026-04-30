@@ -1,5 +1,5 @@
 [project]
-name = "rlx"
+name = "cadence"
 dynamic = ["version"]
 description = "CLI tool for autonomous task execution via Claude Code"
 requires-python = ">=3.14"
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rlx = "rlx.cli:app"
+cadence = "cadence.cli:app"
 
 [build-system]
 requires = ["pdm-backend"]
@@ -17,7 +17,7 @@ build-backend = "pdm.backend"
 
 [tool.pdm.version]
 source = "file"
-path = "src/rlx/__init__.py"
+path = "src/cadence/__init__.py"
 
 [tool.pdm.dev-dependencies]
 dev = [

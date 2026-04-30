@@ -186,7 +186,7 @@ class TestRunPlanMode:
         mock_executor.run.assert_called_once()
         mock_log.close.assert_called_once()
         mock_log.print.assert_any_call("plan is ready")
-        mock_echo.assert_any_call(f"run: rlx --task {tmp_path / 'plan.md'}")
+        mock_echo.assert_any_call(f"run: cadence --task {tmp_path / 'plan.md'}")
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
@@ -286,7 +286,7 @@ class TestMainCommand:
 
         runner = CliRunner()
         result = runner.invoke(app, ["--version"])
-        assert "rlx" in result.output
+        assert "cadence" in result.output
         assert __version__ in result.output
 
     def test_mutual_exclusivity(self, tmp_path: Path) -> None:
@@ -534,7 +534,7 @@ class TestRunPlanModeImplFlag:
         run_plan_mode(f, impl=True)
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert any("rlx --task" in c for c in echo_calls)
+        assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
         mock_run_task_mode.assert_called_once_with(
             Path(derive_plan_path(f)), config=None
@@ -586,7 +586,7 @@ class TestRunPlanModeImplFlag:
         run_plan_mode(f, impl=False)
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert any("rlx --task" in c for c in echo_calls)
+        assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
         mock_run_task_mode.assert_not_called()
 
@@ -635,7 +635,7 @@ class TestRunPlanModeImplFlag:
 
         mock_run_task_mode.assert_not_called()
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert not any("rlx --task" in c for c in echo_calls)
+        assert not any("cadence --task" in c for c in echo_calls)
 
 
 class TestDisplayStats:
@@ -1586,7 +1586,7 @@ class TestConfigFlag:
 
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
-        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path = tmp_path / "cadence-config.yaml"
         yaml_path.write_text("plan:\n  model: discovered-plan\n")
 
         run_plan_mode(plan_file)
@@ -1739,7 +1739,7 @@ class TestConfigFlag:
 
         task_file = tmp_path / "plan.md"
         task_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
-        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path = tmp_path / "cadence-config.yaml"
         yaml_path.write_text("task:\n  model: discovered-task\n")
 
         with patch("cadence.cli.Runner") as mock_runner_cls:
@@ -1931,7 +1931,7 @@ class TestConfigFlag:
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
 
-        sibling_yaml = tmp_path / "rlx-config.yaml"
+        sibling_yaml = tmp_path / "cadence-config.yaml"
         sibling_yaml.write_text("plan:\n  model: sibling-plan\n")
 
         explicit_yaml = tmp_path / "explicit.yaml"
@@ -1979,7 +1979,7 @@ class TestConfigFlag:
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
-        parent_yaml = tmp_path / "rlx-config.yaml"
+        parent_yaml = tmp_path / "cadence-config.yaml"
         parent_yaml.write_text("plan:\n  model: parent-yaml\n")
 
         subdir = tmp_path / "subdir"

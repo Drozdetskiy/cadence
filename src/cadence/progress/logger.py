@@ -80,7 +80,7 @@ class _ProgressFile:
 
     def __init__(self, cfg: ProgressLoggerConfig) -> None:
         filename = _progress_filename(cfg)
-        progress_dir = os.path.join(".rlx", "progress")
+        progress_dir = os.path.join(".cadence", "progress")
         os.makedirs(progress_dir, mode=0o750, exist_ok=True)
         self._path = os.path.abspath(os.path.join(progress_dir, filename))
 
@@ -116,7 +116,7 @@ class _ProgressFile:
             self._file.close()
 
     def _write_header(self, cfg: ProgressLoggerConfig) -> None:
-        self.write("# RLX Progress Log")
+        self.write("# CADENCE Progress Log")
         self.write(f"Plan: {cfg.plan_file}")
         self.write(f"Branch: {cfg.branch}")
         self.write(f"Mode: {cfg.mode}")
