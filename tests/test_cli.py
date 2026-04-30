@@ -1892,3 +1892,171 @@ class TestConfigFlag:
         )
         assert result.exit_code != 0
         assert "error" in result.output.lower()
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_explicit_config_wins_over_autodiscovery(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        sibling_yaml = tmp_path / "rlx-config.yaml"
+        sibling_yaml.write_text("plan:\n  model: sibling-plan\n")
+
+        explicit_yaml = tmp_path / "explicit.yaml"
+        explicit_yaml.write_text("plan:\n  model: explicit-plan\n")
+
+        run_plan_mode(plan_file, config=explicit_yaml)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "explicit-plan"
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_autodiscovery_does_not_walk_to_parent(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, plan_model="toml-plan-default"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        parent_yaml = tmp_path / "rlx-config.yaml"
+        parent_yaml.write_text("plan:\n  model: parent-yaml\n")
+
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        plan_file = subdir / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        run_plan_mode(plan_file)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "toml-plan-default"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_impl_propagates_config_to_task_mode(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+        derived_plan = tmp_path / "plan.md"
+        derived_plan.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        explicit_yaml = tmp_path / "explicit.yaml"
+        explicit_yaml.write_text(
+            "plan:\n  model: yaml-plan\ntask:\n  model: yaml-task\n"
+        )
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_plan_mode(plan_file, impl=True, config=explicit_yaml)
+
+        models_used = [
+            call.kwargs["model"] for call in mock_executor_cls.call_args_list
+        ]
+        assert "yaml-plan" in models_used
+        assert "yaml-task" in models_used

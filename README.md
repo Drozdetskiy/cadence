@@ -55,11 +55,11 @@ When you run `rlx --plan task.md`, the tool:
 
 ```yaml
 task:
-  model: opus4.7
+  model: claude-opus-4-7
 review:
-  model: opus4.7
+  model: claude-opus-4-7
 plan:
-  model: opus4.7
+  model: claude-opus-4-7
 ```
 
 When `--config` is omitted, rlx auto-discovers `rlx-config.yaml` in the directory containing the plan/task file (no parent walk). For `--review` (no plan/task file), auto-discovery is skipped — only an explicit `--config` is honored. An explicit path that does not exist is a hard error; an auto-discovered path that is missing is silently ignored. YAML parse errors are always a hard error.
