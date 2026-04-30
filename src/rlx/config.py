@@ -22,8 +22,9 @@ class ColorConfig:
 class Config:
     claude_command: str = "claude"
     claude_args: str = "--dangerously-skip-permissions --output-format stream-json --verbose"
-    claude_model: str = ""
-    review_model: str = ""
+    plan_model: str = "opus4.7"
+    task_model: str = "opus4.7"
+    review_model: str = "opus4.7"
     iteration_delay_ms: int = 2000
     task_retry_count: int = 1
     max_iterations: int = 50
@@ -82,7 +83,8 @@ def load_config(config_dir: Path | None) -> Config:
     _STR_FIELDS = {
         "claude_command",
         "claude_args",
-        "claude_model",
+        "plan_model",
+        "task_model",
         "review_model",
         "session_timeout",
         "idle_timeout",

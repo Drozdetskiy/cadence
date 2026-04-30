@@ -26,8 +26,9 @@ class TestConfigDefaults:
         assert cfg.claude_args == (
             "--dangerously-skip-permissions --output-format stream-json --verbose"
         )
-        assert cfg.claude_model == ""
-        assert cfg.review_model == ""
+        assert cfg.plan_model == "opus4.7"
+        assert cfg.task_model == "opus4.7"
+        assert cfg.review_model == "opus4.7"
         assert cfg.iteration_delay_ms == 2000
         assert cfg.task_retry_count == 1
         assert cfg.max_iterations == 50
@@ -97,7 +98,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "my-claude"
         assert cfg.plans_dir == "my-plans"
-        assert cfg.claude_model == ""
+        assert cfg.task_model == "opus4.7"
 
     def test_load_int_fields(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "config.toml"

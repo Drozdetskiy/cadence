@@ -178,7 +178,7 @@ def _build_review_executor(
     output_handler: Callable[[str], None],
     idle_timeout: float,
 ) -> ClaudeExecutor | None:
-    if not cfg.review_model or cfg.review_model == cfg.claude_model:
+    if cfg.review_model == cfg.task_model:
         return None
     return ClaudeExecutor(
         command=cfg.claude_command,
@@ -243,7 +243,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.plan_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
@@ -374,7 +374,7 @@ def run_task_mode(task_file: Path) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.task_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
@@ -478,15 +478,12 @@ def run_review_mode(base: str | None = None) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.review_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
         activity_handler=activity_handler,
         output_handler=output_handler,
-    )
-    review_claude = _build_review_executor(
-        cfg, activity_handler, output_handler, idle_timeout
     )
 
     deps = Dependencies(
@@ -494,7 +491,7 @@ def run_review_mode(base: str | None = None) -> None:
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
-        review_executor=review_claude,
+        review_executor=None,
     )
 
     ctx = RunContext(

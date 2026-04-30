@@ -881,22 +881,10 @@ class TestInstallSigquit:
 
 
 class TestBuildReviewExecutor:
-    def test_returns_none_when_review_model_empty(self) -> None:
+    def test_returns_none_when_review_matches_task(self) -> None:
         from rlx.config import Config
 
-        cfg = Config(claude_model="sonnet", review_model="")
-        result = _build_review_executor(
-            cfg,
-            activity_handler=lambda _t: None,
-            output_handler=lambda _t: None,
-            idle_timeout=0.0,
-        )
-        assert result is None
-
-    def test_returns_none_when_review_matches_claude(self) -> None:
-        from rlx.config import Config
-
-        cfg = Config(claude_model="sonnet", review_model="sonnet")
+        cfg = Config(task_model="sonnet", review_model="sonnet")
         result = _build_review_executor(
             cfg,
             activity_handler=lambda _t: None,
@@ -911,7 +899,7 @@ class TestBuildReviewExecutor:
     ) -> None:
         from rlx.config import Config
 
-        cfg = Config(claude_model="sonnet", review_model="opus")
+        cfg = Config(task_model="sonnet", review_model="opus")
         mock_executor_cls.return_value = MagicMock()
         result = _build_review_executor(
             cfg,
@@ -1000,7 +988,7 @@ class TestRunReviewMode:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_review_model_distinct_builds_two_executors(
+    def test_review_mode_uses_single_executor_with_review_model(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1017,7 +1005,7 @@ class TestRunReviewMode:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="opus",
         )
 
@@ -1033,8 +1021,7 @@ class TestRunReviewMode:
         mock_service_cls.return_value = mock_svc
 
         primary = MagicMock(name="primary")
-        secondary = MagicMock(name="secondary")
-        mock_executor_cls.side_effect = [primary, secondary]
+        mock_executor_cls.return_value = primary
 
         mock_terminal_cls.return_value = MagicMock()
 
@@ -1045,17 +1032,13 @@ class TestRunReviewMode:
 
             run_review_mode()
 
-            assert mock_executor_cls.call_count == 2
-            models = [
-                call.kwargs["model"]
-                for call in mock_executor_cls.call_args_list
-            ]
-            assert "sonnet" in models
-            assert "opus" in models
+            assert mock_executor_cls.call_count == 1
+            kwargs = mock_executor_cls.call_args.kwargs
+            assert kwargs["model"] == "opus"
 
             deps = mock_runner_cls.call_args.args[2]
             assert deps.executor is primary
-            assert deps.review_executor is secondary
+            assert deps.review_executor is None
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")
@@ -1066,7 +1049,7 @@ class TestRunReviewMode:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_review_model_equal_to_claude_uses_single_executor(
+    def test_review_model_equal_to_task_uses_single_executor(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1083,7 +1066,7 @@ class TestRunReviewMode:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="sonnet",
         )
 
@@ -1111,6 +1094,8 @@ class TestRunReviewMode:
             run_review_mode()
 
             assert mock_executor_cls.call_count == 1
+            kwargs = mock_executor_cls.call_args.kwargs
+            assert kwargs["model"] == "sonnet"
 
             deps = mock_runner_cls.call_args.args[2]
             assert deps.executor is primary
@@ -1415,7 +1400,7 @@ class TestRunTaskModeReviewExecutor:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="opus",
         )
 
@@ -1460,7 +1445,7 @@ class TestRunTaskModeReviewExecutor:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_no_review_model_leaves_review_executor_none(
+    def test_matching_review_model_leaves_review_executor_none(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1477,8 +1462,8 @@ class TestRunTaskModeReviewExecutor:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
-            review_model="",
+            task_model="sonnet",
+            review_model="sonnet",
         )
 
         mock_log = MagicMock()
