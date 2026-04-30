@@ -458,7 +458,7 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
             stats = git_svc_for_log.diff_stats(default_branch)
             try:
                 git_svc_for_log.mark_plan_completed(plan_path_str)
-            except (RuntimeError, FileNotFoundError) as exc:
+            except (RuntimeError, OSError) as exc:
                 log.warn("could not mark plan completed: %s", exc)
             display_stats(stats, log.elapsed(), branch)
     except KeyboardInterrupt:

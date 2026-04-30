@@ -427,7 +427,27 @@ class TestMarkPlanCompleted:
         log = _Log()
         svc = Service(path, log)
         svc.mark_plan_completed(str(plan))
-        assert dest.exists()
+        assert dest.read_text() == "# Plan"
+        assert not plan.exists()
+        assert any("plan already marked completed" in m for m in log.messages)
+
+    def test_collision_when_both_exist_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+        plan = plans_dir / "feature.md"
+        plan.write_text("# new")
+        dest = plans_dir / "feature-completed.md"
+        dest.write_text("# old")
+
+        svc = Service(path, _Log())
+        with pytest.raises(FileExistsError):
+            svc.mark_plan_completed(str(plan))
+
+        assert plan.read_text() == "# new"
+        assert dest.read_text() == "# old"
 
     def test_preserves_extension(self, tmp_path: Path) -> None:
         path = str(tmp_path)

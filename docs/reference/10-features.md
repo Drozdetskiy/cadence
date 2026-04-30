@@ -194,7 +194,7 @@ Signals: QUESTION (JSON payload с options), PLAN_DRAFT (plan content between ma
 Автоматический выбор плана при запуске без указания файла.
 
 - Когда: нет позиционного аргумента и не в review-only режиме
-- Поиск: `plans_dir` (default: `docs/plans/`), исключая `completed/` subdirectory
+- Поиск: `plans_dir` (default: `docs/plans/`), исключая файлы с суффиксом `-completed` в stem
 - 1 файл: auto-select с сообщением "auto-selected: <path>"
 - Несколько файлов: нумерованный список с промптом "Enter number (1-N):"
 

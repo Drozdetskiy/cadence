@@ -15,7 +15,7 @@ class Logger(Protocol):
     def error(self, fmt: str, *args: object) -> None: ...
 
 
-def _completed_plan_path(plan_file: str) -> Path:
+def completed_plan_path(plan_file: str) -> Path:
     p = Path(plan_file)
     return p.with_name(p.stem + "-completed" + p.suffix)
 
@@ -125,13 +125,18 @@ class Service:
     def mark_plan_completed(self, plan_file: str) -> None:
         resolved = self._resolve_filesystem_case(plan_file)
         src = Path(resolved)
-        dst = _completed_plan_path(resolved)
+        dst = completed_plan_path(resolved)
 
         if not src.exists():
             if dst.exists():
                 self._log.print("plan already marked completed: %s", str(dst))
                 return
             raise FileNotFoundError(f"plan file not found: {plan_file}")
+
+        if dst.exists():
+            raise FileExistsError(
+                f"completed plan already exists, refusing to overwrite: {dst}"
+            )
 
         os.rename(str(src), str(dst))
         self._log.print("marked plan completed: %s", str(dst))

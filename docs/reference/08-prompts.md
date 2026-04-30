@@ -15,7 +15,7 @@
 
 | Переменная | Описание | Fallback |
 |---|---|---|
-| `{{PLAN_FILE}}` | Путь к файлу плана (проверяет completed/) | "(no plan file - reviewing current branch)" |
+| `{{PLAN_FILE}}` | Путь к файлу плана (fallback: sibling `<stem>-completed<ext>`) | "(no plan file - reviewing current branch)" |
 | `{{PROGRESS_FILE}}` | Путь к файлу прогресса | "(no progress file available)" |
 | `{{GOAL}}` | Описание цели работы | "current branch vs {default_branch}" |
 | `{{DEFAULT_BRANCH}}` | Имя default-ветки (main, master и т.д.) | "master" |
@@ -281,7 +281,6 @@ Write the accepted plan to disk:
 
 - [ ] update README.md if user-facing changes
 - [ ] update CLAUDE.md if internal patterns changed
-- [ ] move this plan to `docs/plans/completed/`
 ---
 
 ## Step 4.5: Validate Plan Before Draft

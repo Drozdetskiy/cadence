@@ -26,6 +26,10 @@ def extract_branch_name(plan_file: str) -> str:
     return stripped
 
 
+def _is_completed_plan(path: str) -> bool:
+    return Path(path).stem.endswith("-completed")
+
+
 class _StdIO(Protocol):
     def readline(self) -> str: ...
 
@@ -64,7 +68,7 @@ class Selector:
         files = sorted(
             f
             for f in glob.glob(os.path.join(plans_dir, "*.md"))
-            if not Path(f).stem.endswith("-completed")
+            if not _is_completed_plan(f)
         )
         if not files:
             raise NoPlansFoundError(f"no plan files found in {plans_dir}")
@@ -101,7 +105,7 @@ class Selector:
         start_ts = start_time.timestamp()
         best: tuple[float, str] | None = None
         for f in glob.glob(os.path.join(plans_dir, "*.md")):
-            if Path(f).stem.endswith("-completed"):
+            if _is_completed_plan(f):
                 continue
             try:
                 mtime = os.path.getmtime(f)

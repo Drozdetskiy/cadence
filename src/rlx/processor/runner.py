@@ -14,6 +14,7 @@ from rlx.executor.claude_executor import (
     PatternMatchError,
     Result,
 )
+from rlx.git.service import completed_plan_path
 from rlx.plan import (
     file_has_uncompleted_checkbox,
     parse_plan_file,
@@ -295,8 +296,7 @@ class Runner:
                 return plan_file
         except OSError:
             return plan_file
-        p = Path(plan_file)
-        completed = p.with_name(p.stem + "-completed" + p.suffix)
+        completed = completed_plan_path(plan_file)
         if completed.exists():
             return str(completed)
         return plan_file
