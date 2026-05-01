@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from rlx.status import (
+from cadence.status import (
     SignalCompleted,
     SignalEnd,
     SignalFailed,

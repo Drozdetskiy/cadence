@@ -5,8 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from rlx.git.backend import DiffStats, ExternalBackend
-from rlx.plan import extract_branch_name
+from cadence.git.backend import DiffStats, ExternalBackend
+from cadence.plan import extract_branch_name
 
 
 class Logger(Protocol):

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rlx.processor.prompts import (
+from cadence.processor.prompts import (
     build_finalize_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
@@ -21,8 +21,8 @@ class TestLoadTaskPrompt:
         prompt = load_prompt("task")
         assert "{{PLAN_FILE}}" in prompt
         assert "{{PROGRESS_FILE}}" in prompt
-        assert "<<<RLX:ALL_TASKS_DONE>>>" in prompt
-        assert "<<<RLX:TASK_FAILED>>>" in prompt
+        assert "<<<CADENCE:ALL_TASKS_DONE>>>" in prompt
+        assert "<<<CADENCE:TASK_FAILED>>>" in prompt
 
     def test_missing_prompt_raises_runtime_error_with_diagnostic(
         self,
@@ -32,7 +32,7 @@ class TestLoadTaskPrompt:
         message = str(excinfo.value)
         assert "does_not_exist" in message
         assert "prompt" in message
-        assert "rlx" in message
+        assert "cadence" in message
         assert "reinstall" in message
         assert "pip install" in message
         assert isinstance(excinfo.value.__cause__, FileNotFoundError)
@@ -94,8 +94,8 @@ class TestBuildTaskPrompt:
             plan_file="/tmp/plan.md",
             progress_file="/tmp/progress.txt",
         )
-        assert "<<<RLX:ALL_TASKS_DONE>>>" in result
-        assert "<<<RLX:TASK_FAILED>>>" in result
+        assert "<<<CADENCE:ALL_TASKS_DONE>>>" in result
+        assert "<<<CADENCE:TASK_FAILED>>>" in result
 
     def test_local_override(self, tmp_path: Path) -> None:
         prompts_dir = tmp_path / "prompts"
@@ -296,8 +296,8 @@ class TestBuildReviewFirstPrompt:
         assert "main" in result
         assert "/tmp/progress.txt" in result
         # Expected signals present
-        assert "<<<RLX:REVIEW_DONE>>>" in result
-        assert "<<<RLX:TASK_FAILED>>>" in result
+        assert "<<<CADENCE:REVIEW_DONE>>>" in result
+        assert "<<<CADENCE:TASK_FAILED>>>" in result
 
     def test_trailer_once_when_configured(self) -> None:
         trailer = "Co-Authored-By: Bot"
@@ -370,7 +370,7 @@ class TestBuildReviewSecondPrompt:
             )
             == 2
         )
-        assert "<<<RLX:REVIEW_DONE>>>" in result
+        assert "<<<CADENCE:REVIEW_DONE>>>" in result
 
 
 class TestBuildFinalizePrompt:
@@ -382,8 +382,8 @@ class TestBuildFinalizePrompt:
         )
         assert "{{DEFAULT_BRANCH}}" not in result
         assert "main" in result
-        # No RLX signals expected in finalize
-        assert "<<<RLX:" not in result
+        # No CADENCE signals expected in finalize
+        assert "<<<CADENCE:" not in result
 
     def test_no_agent_refs(self) -> None:
         result = build_finalize_prompt(

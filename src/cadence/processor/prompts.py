@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-from rlx.processor.agents import load_agent
+from cadence.processor.agents import load_agent
 
 
 def normalize_crlf(text: str) -> str:
@@ -42,14 +42,14 @@ def load_prompt(name: str, local_dir: Path | None = None) -> str:
             else:
                 return strip_leading_comments(raw)
 
-    ref = importlib.resources.files("rlx.defaults.prompts").joinpath(
+    ref = importlib.resources.files("cadence.defaults.prompts").joinpath(
         f"{name}.txt"
     )
     try:
         content = ref.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise RuntimeError(
-            f"default prompt {name!r} not found in installed rlx "
+            f"default prompt {name!r} not found in installed cadence "
             "package; the install may be incomplete or out of date — "
             "reinstall with 'pip install -e .'"
         ) from exc

@@ -79,12 +79,12 @@ def load_agent(
         if local_path.is_file():
             raw = local_path.read_text(encoding="utf-8")
     if raw is None:
-        ref = importlib.resources.files("rlx.defaults.agents").joinpath(f"{name}.txt")
+        ref = importlib.resources.files("cadence.defaults.agents").joinpath(f"{name}.txt")
         try:
             raw = ref.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             raise RuntimeError(
-                f"default agent {name!r} not found in installed rlx "
+                f"default agent {name!r} not found in installed cadence "
                 "package; the install may be incomplete or out of date — "
                 "reinstall with 'pip install -e .'"
             ) from exc

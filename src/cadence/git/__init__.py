@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import subprocess
 
-from rlx.git.backend import DiffStats, ExternalBackend
-from rlx.git.service import Service
+from cadence.git.backend import DiffStats, ExternalBackend
+from cadence.git.service import Service
 
 
 def is_git_repo(path: str = ".", *, vcs_command: str = "git") -> bool:

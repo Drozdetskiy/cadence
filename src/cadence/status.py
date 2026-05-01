@@ -12,13 +12,13 @@ PhaseReview: Phase = "review"
 PhasePlan: Phase = "plan"
 PhaseFinalize: Phase = "finalize"
 
-SignalCompleted = "<<<RLX:ALL_TASKS_DONE>>>"
-SignalFailed = "<<<RLX:TASK_FAILED>>>"
-SignalReviewDone = "<<<RLX:REVIEW_DONE>>>"
-SignalQuestion = "<<<RLX:QUESTION>>>"
-SignalPlanReady = "<<<RLX:PLAN_READY>>>"
-SignalPlanDraft = "<<<RLX:PLAN_DRAFT>>>"
-SignalEnd = "<<<RLX:END>>>"
+SignalCompleted = "<<<CADENCE:ALL_TASKS_DONE>>>"
+SignalFailed = "<<<CADENCE:TASK_FAILED>>>"
+SignalReviewDone = "<<<CADENCE:REVIEW_DONE>>>"
+SignalQuestion = "<<<CADENCE:QUESTION>>>"
+SignalPlanReady = "<<<CADENCE:PLAN_READY>>>"
+SignalPlanDraft = "<<<CADENCE:PLAN_DRAFT>>>"
+SignalEnd = "<<<CADENCE:END>>>"
 
 
 class Mode(StrEnum):

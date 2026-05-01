@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from rlx.config import (
+from cadence.config import (
     Config,
     apply_yaml_overrides,
     detect_local_dir,
@@ -19,18 +19,18 @@ from rlx.config import (
     load_yaml_config,
     parse_duration,
 )
-from rlx.executor.claude_executor import ClaudeExecutor
-from rlx.git import DiffStats, Service, get_default_branch, is_git_repo
-from rlx.input import TerminalCollector, ask_yes_no
-from rlx.processor.runner import (
+from cadence.executor.claude_executor import ClaudeExecutor
+from cadence.git import DiffStats, Service, get_default_branch, is_git_repo
+from cadence.input import TerminalCollector, ask_yes_no
+from cadence.processor.runner import (
     Dependencies,
     RunContext,
     Runner,
     UserAbortedError,
 )
-from rlx.progress.colors import Colors
-from rlx.progress.logger import Logger, ProgressLoggerConfig
-from rlx.status import Mode, PhaseHolder
+from cadence.progress.colors import Colors
+from cadence.progress.logger import Logger, ProgressLoggerConfig
+from cadence.status import Mode, PhaseHolder
 
 app = typer.Typer(add_completion=False)
 
@@ -63,7 +63,7 @@ def resolve_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("rlx")
+        return version("cadence")
     except Exception:
         return "unknown"
 
@@ -256,7 +256,7 @@ def run_plan_mode(
     colors = Colors(cfg.colors)
     log = _build_plan_logger(plan_file, content, colors, holder)
 
-    log.print("rlx %s", resolve_version())
+    log.print("cadence %s", resolve_version())
     log.print("mode: plan")
     log.print("plan file: %s", to_rel_path(plan_file))
     log.print("progress: %s", log.path)
@@ -303,7 +303,7 @@ def run_plan_mode(
         runner = Runner(ctx, cfg, deps)
         run_success = runner.run()
         if run_success:
-            typer.echo(f"run: rlx --task {plan_path}")
+            typer.echo(f"run: cadence --task {plan_path}")
     except KeyboardInterrupt:
         log.print("interrupted by user")
         return
@@ -395,7 +395,7 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
 
     log = _build_task_logger(task_file, colors, holder, branch)
 
-    log.print("rlx %s", resolve_version())
+    log.print("cadence %s", resolve_version())
     log.print("mode: full")
     log.print("plan file: %s", plan_path_str)
     log.print("branch: %s", branch)
@@ -502,7 +502,7 @@ def run_review_mode(
 
     log = _build_review_logger(colors, holder, branch)
 
-    log.print("rlx %s", resolve_version())
+    log.print("cadence %s", resolve_version())
     log.print("mode: review")
     log.print("branch: %s", branch)
     log.print("base: %s", default_branch)
@@ -600,7 +600,7 @@ _BASE_OPT: str | None = typer.Option(
 _CONFIG_OPT: Path | None = typer.Option(
     None,
     "--config",
-    help="Path to optional rlx-config.yaml model overrides",
+    help="Path to optional cadence-config.yaml model overrides",
 )
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
@@ -616,7 +616,7 @@ def main(
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
-        typer.echo(f"rlx {resolve_version()}")
+        typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
     if review and impl:

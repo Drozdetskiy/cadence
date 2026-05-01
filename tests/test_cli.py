@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer import BadParameter
 
-from rlx.cli import (
+from cadence.cli import (
     _build_review_executor,
     _sigint,
     check_claude_dep,
@@ -21,15 +21,15 @@ from rlx.cli import (
     run_task_mode,
     to_rel_path,
 )
-from rlx.executor.claude_executor import Result
-from rlx.git import DiffStats
-from rlx.processor.runner import UserAbortedError
-from rlx.status import Mode, SignalCompleted, SignalPlanReady, SignalReviewDone
+from cadence.executor.claude_executor import Result
+from cadence.git import DiffStats
+from cadence.processor.runner import UserAbortedError
+from cadence.status import Mode, SignalCompleted, SignalPlanReady, SignalReviewDone
 
 
 class TestResolveVersion:
     def test_returns_version_string(self) -> None:
-        from rlx import __version__
+        from cadence import __version__
 
         v = resolve_version()
         assert v == __version__
@@ -59,16 +59,16 @@ class TestDetermineMode:
 
 class TestCheckClaudeDep:
     def test_passes_when_found(self) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
-        with patch("rlx.cli.shutil.which", return_value="/usr/bin/claude"):
+        with patch("cadence.cli.shutil.which", return_value="/usr/bin/claude"):
             check_claude_dep(Config())
 
     def test_fails_when_not_found(self) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         with (
-            patch("rlx.cli.shutil.which", return_value=None),
+            patch("cadence.cli.shutil.which", return_value=None),
             pytest.raises(SystemExit),
         ):
             check_claude_dep(Config())
@@ -81,13 +81,13 @@ class TestToRelPath:
         target = cwd / "src" / "file.py"
         target.parent.mkdir(parents=True)
         target.touch()
-        with patch("rlx.cli.Path.cwd", return_value=cwd):
+        with patch("cadence.cli.Path.cwd", return_value=cwd):
             result = to_rel_path(target)
         assert result == "src/file.py"
 
     def test_absolute_fallback(self, tmp_path: Path) -> None:
         target = tmp_path / "other" / "file.py"
-        with patch("rlx.cli.Path.cwd", return_value=tmp_path / "project"):
+        with patch("cadence.cli.Path.cwd", return_value=tmp_path / "project"):
             result = to_rel_path(target)
         assert str(target) in result
 
@@ -119,10 +119,10 @@ class TestRunPlanMode:
         with pytest.raises(SystemExit):
             run_plan_mode(f)
 
-    @patch("rlx.cli.is_git_repo", return_value=False)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
+    @patch("cadence.cli.is_git_repo", return_value=False)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
     def test_not_git_repo(
         self,
         _check: MagicMock,
@@ -131,7 +131,7 @@ class TestRunPlanMode:
         _git: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config()
         f = tmp_path / "plan.md"
@@ -139,15 +139,15 @@ class TestRunPlanMode:
         with pytest.raises(SystemExit):
             run_plan_mode(f)
 
-    @patch("rlx.cli.typer.echo")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_full_wiring_plan_ready(
         self,
         mock_logger_cls: MagicMock,
@@ -161,7 +161,7 @@ class TestRunPlanMode:
         mock_echo: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -186,16 +186,16 @@ class TestRunPlanMode:
         mock_executor.run.assert_called_once()
         mock_log.close.assert_called_once()
         mock_log.print.assert_any_call("plan is ready")
-        mock_echo.assert_any_call(f"run: rlx --task {tmp_path / 'plan.md'}")
+        mock_echo.assert_any_call(f"run: cadence --task {tmp_path / 'plan.md'}")
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_executor_created_with_handlers(
         self,
         mock_logger_cls: MagicMock,
@@ -208,7 +208,7 @@ class TestRunPlanMode:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -234,14 +234,14 @@ class TestRunPlanMode:
         assert call_kwargs.kwargs.get("activity_handler") is not None
         assert call_kwargs.kwargs.get("output_handler") is not None
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_user_aborted(
         self,
         mock_logger_cls: MagicMock,
@@ -254,7 +254,7 @@ class TestRunPlanMode:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -281,18 +281,18 @@ class TestMainCommand:
     def test_version_flag(self) -> None:
         from typer.testing import CliRunner
 
-        from rlx import __version__
-        from rlx.cli import app
+        from cadence import __version__
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--version"])
-        assert "rlx" in result.output
+        assert "cadence" in result.output
         assert __version__ in result.output
 
     def test_mutual_exclusivity(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f1 = tmp_path / "a.md"
@@ -304,13 +304,13 @@ class TestMainCommand:
         )
         assert result.exit_code != 0
 
-    @patch("rlx.cli.run_task_mode")
+    @patch("cadence.cli.run_task_mode")
     def test_task_flag_calls_run_task_mode(
         self, mock_run: MagicMock, tmp_path: Path
     ) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "plan.md"
@@ -321,13 +321,13 @@ class TestMainCommand:
         args, _ = mock_run.call_args
         assert args[0] == f
 
-    @patch("rlx.cli.run_review_mode")
+    @patch("cadence.cli.run_review_mode")
     def test_review_flag_calls_run_review_mode(
         self, mock_run: MagicMock
     ) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--review"])
@@ -337,7 +337,7 @@ class TestMainCommand:
     def test_review_with_impl_errors(self) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--review", "--impl"])
@@ -347,7 +347,7 @@ class TestMainCommand:
     def test_review_with_task_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "plan.md"
@@ -358,7 +358,7 @@ class TestMainCommand:
     def test_no_args_shows_error(self) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, [])
@@ -367,7 +367,7 @@ class TestMainCommand:
     def test_impl_without_plan_errors(self) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--impl"])
@@ -377,7 +377,7 @@ class TestMainCommand:
     def test_impl_with_task_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "plan.md"
@@ -385,13 +385,13 @@ class TestMainCommand:
         result = runner.invoke(app, ["--task", str(f), "--impl"])
         assert result.exit_code != 0
 
-    @patch("rlx.cli.run_plan_mode")
+    @patch("cadence.cli.run_plan_mode")
     def test_impl_with_plan_passes(
         self, mock_run: MagicMock, tmp_path: Path
     ) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "prompt.md"
@@ -402,11 +402,11 @@ class TestMainCommand:
         _, kwargs = mock_run.call_args
         assert kwargs["impl"] is True
 
-    @patch("rlx.cli.run_review_mode")
+    @patch("cadence.cli.run_review_mode")
     def test_base_with_review_passes(self, mock_run: MagicMock) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--review", "--base", "develop"])
@@ -416,7 +416,7 @@ class TestMainCommand:
     def test_base_without_review_errors(self) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         result = runner.invoke(app, ["--base", "develop"])
@@ -426,7 +426,7 @@ class TestMainCommand:
     def test_base_with_plan_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "prompt.md"
@@ -438,7 +438,7 @@ class TestMainCommand:
     def test_base_with_task_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         f = tmp_path / "plan.md"
@@ -486,16 +486,16 @@ class TestDerivePlanPath:
 
 
 class TestRunPlanModeImplFlag:
-    @patch("rlx.cli.run_task_mode")
-    @patch("rlx.cli.typer.echo")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_impl_flag_chains_to_task_mode(
         self,
         mock_logger_cls: MagicMock,
@@ -510,7 +510,7 @@ class TestRunPlanModeImplFlag:
         mock_run_task_mode: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -534,7 +534,7 @@ class TestRunPlanModeImplFlag:
         run_plan_mode(f, impl=True)
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert any("rlx --task" in c for c in echo_calls)
+        assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
         mock_run_task_mode.assert_called_once_with(
             Path(derive_plan_path(f)), config=None
@@ -542,16 +542,16 @@ class TestRunPlanModeImplFlag:
         ordered_names = [c[0] for c in parent.mock_calls]
         assert ordered_names.index("close") < ordered_names.index("task")
 
-    @patch("rlx.cli.run_task_mode")
-    @patch("rlx.cli.typer.echo")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_no_impl_flag_no_not_available_message(
         self,
         mock_logger_cls: MagicMock,
@@ -566,7 +566,7 @@ class TestRunPlanModeImplFlag:
         mock_run_task_mode: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -586,21 +586,21 @@ class TestRunPlanModeImplFlag:
         run_plan_mode(f, impl=False)
 
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert any("rlx --task" in c for c in echo_calls)
+        assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
         mock_run_task_mode.assert_not_called()
 
-    @patch("rlx.cli.run_task_mode")
-    @patch("rlx.cli.typer.echo")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
-    @patch("rlx.cli.Runner")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Runner")
     def test_impl_flag_does_not_chain_on_plan_failure(
         self,
         mock_runner_cls: MagicMock,
@@ -616,7 +616,7 @@ class TestRunPlanModeImplFlag:
         mock_run_task_mode: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -635,7 +635,7 @@ class TestRunPlanModeImplFlag:
 
         mock_run_task_mode.assert_not_called()
         echo_calls = [str(c) for c in mock_echo.call_args_list]
-        assert not any("rlx --task" in c for c in echo_calls)
+        assert not any("cadence --task" in c for c in echo_calls)
 
 
 class TestDisplayStats:
@@ -661,15 +661,15 @@ class TestRunTaskMode:
         with pytest.raises(SystemExit):
             run_task_mode(tmp_path / "nonexistent.md")
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_happy_path_success(
         self,
         mock_logger_cls: MagicMock,
@@ -683,7 +683,7 @@ class TestRunTaskMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -720,15 +720,15 @@ class TestRunTaskMode:
         mock_svc.mark_plan_completed.assert_called_once()
         mock_log.close.assert_called_once()
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_user_aborted(
         self,
         mock_logger_cls: MagicMock,
@@ -742,7 +742,7 @@ class TestRunTaskMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -771,15 +771,15 @@ class TestRunTaskMode:
         mock_svc.diff_stats.assert_not_called()
         mock_svc.mark_plan_completed.assert_not_called()
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_service_init_failure(
         self,
         mock_logger_cls: MagicMock,
@@ -793,7 +793,7 @@ class TestRunTaskMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
         mock_service_cls.side_effect = RuntimeError("not a repo")
@@ -804,15 +804,15 @@ class TestRunTaskMode:
         with pytest.raises(SystemExit):
             run_task_mode(f)
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_move_plan_failure_warns_but_succeeds(
         self,
         mock_logger_cls: MagicMock,
@@ -826,7 +826,7 @@ class TestRunTaskMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -864,7 +864,7 @@ class TestRunTaskMode:
 
 class TestInstallSigquit:
     def test_install_sigquit_sets_event_when_signal_fires(self) -> None:
-        from rlx.cli import _install_sigquit
+        from cadence.cli import _install_sigquit
 
         event = threading.Event()
         sigquit = getattr(signal, "SIGQUIT", None)
@@ -884,7 +884,7 @@ class TestInstallSigquit:
 
 class TestBuildReviewExecutor:
     def test_returns_none_when_review_matches_task(self) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         cfg = Config(task_model="sonnet", review_model="sonnet")
         result = _build_review_executor(
@@ -895,11 +895,11 @@ class TestBuildReviewExecutor:
         )
         assert result is None
 
-    @patch("rlx.cli.ClaudeExecutor")
+    @patch("cadence.cli.ClaudeExecutor")
     def test_builds_distinct_executor_when_review_differs(
         self, mock_executor_cls: MagicMock
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         cfg = Config(task_model="sonnet", review_model="opus")
         mock_executor_cls.return_value = MagicMock()
@@ -916,15 +916,15 @@ class TestBuildReviewExecutor:
 
 
 class TestRunReviewMode:
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_happy_path_success(
         self,
         mock_logger_cls: MagicMock,
@@ -938,7 +938,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -964,8 +964,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("rlx.cli.display_stats") as mock_display,
-            patch("rlx.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli.display_stats") as mock_display,
+            patch("cadence.cli.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -981,15 +981,15 @@ class TestRunReviewMode:
         mock_display.assert_called_once()
         mock_log.close.assert_called_once()
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_review_mode_uses_single_executor_with_review_model(
         self,
         mock_logger_cls: MagicMock,
@@ -1003,7 +1003,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
@@ -1027,7 +1027,7 @@ class TestRunReviewMode:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1042,15 +1042,15 @@ class TestRunReviewMode:
             assert deps.executor is primary
             assert deps.review_executor is None
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_review_model_equal_to_task_uses_single_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -1064,7 +1064,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
@@ -1088,7 +1088,7 @@ class TestRunReviewMode:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1103,15 +1103,15 @@ class TestRunReviewMode:
             assert deps.executor is primary
             assert deps.review_executor is None
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_base_arg_overrides_config_and_autodetect(
         self,
         mock_logger_cls: MagicMock,
@@ -1125,7 +1125,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, default_branch="main"
@@ -1146,8 +1146,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("rlx.cli.display_stats"),
-            patch("rlx.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli.display_stats"),
+            patch("cadence.cli.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1161,15 +1161,15 @@ class TestRunReviewMode:
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "develop"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_base_none_uses_config_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -1183,7 +1183,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, default_branch="trunk"
@@ -1204,8 +1204,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("rlx.cli.display_stats"),
-            patch("rlx.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli.display_stats"),
+            patch("cadence.cli.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1219,15 +1219,15 @@ class TestRunReviewMode:
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "trunk"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_base_none_falls_back_to_autodetect_when_config_empty(
         self,
         mock_logger_cls: MagicMock,
@@ -1241,7 +1241,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, default_branch=""
@@ -1262,8 +1262,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("rlx.cli.display_stats"),
-            patch("rlx.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli.display_stats"),
+            patch("cadence.cli.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1277,15 +1277,15 @@ class TestRunReviewMode:
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "main"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_runner_returns_false_skips_diff_stats(
         self,
         mock_logger_cls: MagicMock,
@@ -1299,7 +1299,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1315,7 +1315,7 @@ class TestRunReviewMode:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = False
             mock_runner_cls.return_value = mock_runner
@@ -1325,15 +1325,15 @@ class TestRunReviewMode:
         mock_svc.diff_stats.assert_not_called()
         mock_log.close.assert_called_once()
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_user_aborted(
         self,
         mock_logger_cls: MagicMock,
@@ -1347,7 +1347,7 @@ class TestRunReviewMode:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1363,7 +1363,7 @@ class TestRunReviewMode:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.side_effect = UserAbortedError("aborted")
             mock_runner_cls.return_value = mock_runner
@@ -1376,15 +1376,15 @@ class TestRunReviewMode:
 
 
 class TestRunTaskModeReviewExecutor:
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_distinct_review_model_passes_review_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -1398,7 +1398,7 @@ class TestRunTaskModeReviewExecutor:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
@@ -1426,7 +1426,7 @@ class TestRunTaskModeReviewExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1438,15 +1438,15 @@ class TestRunTaskModeReviewExecutor:
             assert deps.executor is primary
             assert deps.review_executor is secondary
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_matching_review_model_leaves_review_executor_none(
         self,
         mock_logger_cls: MagicMock,
@@ -1460,7 +1460,7 @@ class TestRunTaskModeReviewExecutor:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
@@ -1487,7 +1487,7 @@ class TestRunTaskModeReviewExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1501,14 +1501,14 @@ class TestRunTaskModeReviewExecutor:
 
 
 class TestConfigFlag:
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_plan_explicit_config_applies_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -1521,7 +1521,7 @@ class TestConfigFlag:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1549,14 +1549,14 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "yaml-plan"
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_plan_autodiscovers_yaml_next_to_plan(
         self,
         mock_logger_cls: MagicMock,
@@ -1569,7 +1569,7 @@ class TestConfigFlag:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1586,7 +1586,7 @@ class TestConfigFlag:
 
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
-        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path = tmp_path / "cadence-config.yaml"
         yaml_path.write_text("plan:\n  model: discovered-plan\n")
 
         run_plan_mode(plan_file)
@@ -1594,14 +1594,14 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "discovered-plan"
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_plan_no_yaml_no_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -1614,7 +1614,7 @@ class TestConfigFlag:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, plan_model="toml-plan-default"
@@ -1639,15 +1639,15 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "toml-plan-default"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_task_explicit_config_applies_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -1661,7 +1661,7 @@ class TestConfigFlag:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1687,7 +1687,7 @@ class TestConfigFlag:
         yaml_path = yaml_dir / "explicit.yaml"
         yaml_path.write_text("task:\n  model: yaml-task\n")
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1697,15 +1697,15 @@ class TestConfigFlag:
         primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
         assert primary_kwargs["model"] == "yaml-task"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_task_autodiscovers_yaml_next_to_task(
         self,
         mock_logger_cls: MagicMock,
@@ -1719,7 +1719,7 @@ class TestConfigFlag:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1739,10 +1739,10 @@ class TestConfigFlag:
 
         task_file = tmp_path / "plan.md"
         task_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
-        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path = tmp_path / "cadence-config.yaml"
         yaml_path.write_text("task:\n  model: discovered-task\n")
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1752,15 +1752,15 @@ class TestConfigFlag:
         primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
         assert primary_kwargs["model"] == "discovered-task"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_review_explicit_config_applies_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -1774,7 +1774,7 @@ class TestConfigFlag:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1795,7 +1795,7 @@ class TestConfigFlag:
         yaml_path = tmp_path / "explicit.yaml"
         yaml_path.write_text("review:\n  model: yaml-review\n")
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1805,16 +1805,16 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "yaml-review"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
-    @patch("rlx.cli.find_yaml_config")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.find_yaml_config")
     def test_review_skips_autodiscovery(
         self,
         mock_find: MagicMock,
@@ -1829,7 +1829,7 @@ class TestConfigFlag:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, review_model="toml-review-default"
@@ -1849,7 +1849,7 @@ class TestConfigFlag:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1863,7 +1863,7 @@ class TestConfigFlag:
     def test_explicit_missing_config_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         plan_file = tmp_path / "prompt.md"
@@ -1879,7 +1879,7 @@ class TestConfigFlag:
     def test_invalid_yaml_errors(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
-        from rlx.cli import app
+        from cadence.cli import app
 
         runner = CliRunner()
         plan_file = tmp_path / "prompt.md"
@@ -1893,14 +1893,14 @@ class TestConfigFlag:
         assert result.exit_code != 0
         assert "error" in result.output.lower()
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_explicit_config_wins_over_autodiscovery(
         self,
         mock_logger_cls: MagicMock,
@@ -1913,7 +1913,7 @@ class TestConfigFlag:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -1931,7 +1931,7 @@ class TestConfigFlag:
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
 
-        sibling_yaml = tmp_path / "rlx-config.yaml"
+        sibling_yaml = tmp_path / "cadence-config.yaml"
         sibling_yaml.write_text("plan:\n  model: sibling-plan\n")
 
         explicit_yaml = tmp_path / "explicit.yaml"
@@ -1942,14 +1942,14 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "explicit-plan"
 
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_autodiscovery_does_not_walk_to_parent(
         self,
         mock_logger_cls: MagicMock,
@@ -1962,7 +1962,7 @@ class TestConfigFlag:
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(
             iteration_delay_ms=0, plan_model="toml-plan-default"
@@ -1979,7 +1979,7 @@ class TestConfigFlag:
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
-        parent_yaml = tmp_path / "rlx-config.yaml"
+        parent_yaml = tmp_path / "cadence-config.yaml"
         parent_yaml.write_text("plan:\n  model: parent-yaml\n")
 
         subdir = tmp_path / "subdir"
@@ -1992,16 +1992,16 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "toml-plan-default"
 
-    @patch("rlx.cli._install_sigquit")
-    @patch("rlx.cli.TerminalCollector")
-    @patch("rlx.cli.ClaudeExecutor")
-    @patch("rlx.cli.Service")
-    @patch("rlx.cli.is_git_repo", return_value=True)
-    @patch("rlx.cli.get_default_branch", return_value="main")
-    @patch("rlx.cli.load_config")
-    @patch("rlx.cli.detect_local_dir", return_value=None)
-    @patch("rlx.cli.check_claude_dep")
-    @patch("rlx.cli.Logger")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
     def test_impl_propagates_config_to_task_mode(
         self,
         mock_logger_cls: MagicMock,
@@ -2016,7 +2016,7 @@ class TestConfigFlag:
         _sigquit: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from rlx.config import Config
+        from cadence.config import Config
 
         mock_config.return_value = Config(iteration_delay_ms=0)
 
@@ -2048,7 +2048,7 @@ class TestConfigFlag:
             "plan:\n  model: yaml-plan\ntask:\n  model: yaml-task\n"
         )
 
-        with patch("rlx.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner

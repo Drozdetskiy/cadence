@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from rlx.executor.claude_executor import (
+from cadence.executor.claude_executor import (
     ClaudeExecutor,
     LimitPatternError,
     PatternMatchError,
@@ -22,8 +22,8 @@ from rlx.executor.claude_executor import (
     filter_env,
     match_pattern,
 )
-from rlx.executor.process_group import ProcessGroupCleanup
-from rlx.status import (
+from cadence.executor.process_group import ProcessGroupCleanup
+from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
@@ -33,16 +33,16 @@ from rlx.status import (
 
 class TestDetectSignal:
     def test_completed(self) -> None:
-        assert detect_signal("some text <<<RLX:ALL_TASKS_DONE>>> more") == SignalCompleted
+        assert detect_signal("some text <<<CADENCE:ALL_TASKS_DONE>>> more") == SignalCompleted
 
     def test_failed(self) -> None:
-        assert detect_signal("<<<RLX:TASK_FAILED>>>") == SignalFailed
+        assert detect_signal("<<<CADENCE:TASK_FAILED>>>") == SignalFailed
 
     def test_review_done(self) -> None:
-        assert detect_signal("output <<<RLX:REVIEW_DONE>>>") == SignalReviewDone
+        assert detect_signal("output <<<CADENCE:REVIEW_DONE>>>") == SignalReviewDone
 
     def test_plan_ready(self) -> None:
-        assert detect_signal("<<<RLX:PLAN_READY>>>") == SignalPlanReady
+        assert detect_signal("<<<CADENCE:PLAN_READY>>>") == SignalPlanReady
 
     def test_no_signal(self) -> None:
         assert detect_signal("just some text without any signals") == ""
@@ -51,11 +51,11 @@ class TestDetectSignal:
         assert detect_signal("") == ""
 
     def test_multiple_signals_returns_first(self) -> None:
-        text = "<<<RLX:ALL_TASKS_DONE>>> <<<RLX:TASK_FAILED>>>"
+        text = "<<<CADENCE:ALL_TASKS_DONE>>> <<<CADENCE:TASK_FAILED>>>"
         assert detect_signal(text) == SignalCompleted
 
     def test_partial_signal_not_matched(self) -> None:
-        assert detect_signal("<<<RLX:ALL_TASKS") == ""
+        assert detect_signal("<<<CADENCE:ALL_TASKS") == ""
 
 
 class TestMatchPattern:
@@ -182,7 +182,7 @@ class TestClaudeExecutorWithMockRunner:
         lines = [
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done <<<RLX:ALL_TASKS_DONE>>>"},
+                "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
             }),
         ]
         runner = MockCommandRunner(lines)
@@ -194,7 +194,7 @@ class TestClaudeExecutorWithMockRunner:
         lines = [
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "<<<RLX:TASK_FAILED>>>"},
+                "delta": {"type": "text_delta", "text": "<<<CADENCE:TASK_FAILED>>>"},
             }),
         ]
         runner = MockCommandRunner(lines)
@@ -275,7 +275,7 @@ class TestClaudeExecutorWithMockRunner:
             }),
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done <<<RLX:ALL_TASKS_DONE>>>"},
+                "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
             }),
         ]
         runner = MockCommandRunner(lines)
@@ -329,7 +329,7 @@ class TestClaudeExecutorWithMockRunner:
         lines = [
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "plan body <<<RLX:PLAN_READY>>>"},
+                "delta": {"type": "text_delta", "text": "plan body <<<CADENCE:PLAN_READY>>>"},
             }),
             json.dumps({
                 "type": "content_block_delta",
@@ -347,13 +347,13 @@ class TestClaudeExecutorWithMockRunner:
         assert result.signal == SignalPlanReady
 
     def test_limit_pattern_skipped_on_question_turn(self) -> None:
-        from rlx.status import SignalQuestion
+        from cadence.status import SignalQuestion
 
         question_text = (
-            '<<<RLX:QUESTION>>>\n'
+            '<<<CADENCE:QUESTION>>>\n'
             '{"question": "How does YAML override TOML?", '
             '"options": ["a quoting You\'ve hit your limit", "b"]}\n'
-            '<<<RLX:END>>>'
+            '<<<CADENCE:END>>>'
         )
         lines = [
             json.dumps({
@@ -382,7 +382,7 @@ class TestClaudeExecutorWithMockRunner:
         lines = [
             json.dumps({
                 "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "work done <<<RLX:ALL_TASKS_DONE>>>"},
+                "delta": {"type": "text_delta", "text": "work done <<<CADENCE:ALL_TASKS_DONE>>>"},
             }),
         ]
         runner = MockCommandRunner(lines, exit_code=1)

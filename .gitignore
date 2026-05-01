@@ -207,5 +207,7 @@ marimo/_lsp/
 __marimo__/
 .claude/
 .ralphex/
-.rlx/
+.cadence/
 .idea/
+
+cdc-tasks/

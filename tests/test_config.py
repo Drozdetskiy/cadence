@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from rlx.config import (
+from cadence.config import (
     ColorConfig,
     Config,
     YamlOverrides,
@@ -237,7 +237,7 @@ class TestParseYamlOverrides:
         assert overrides.task_model == "org:opus"
 
     def test_malformed_no_colon_raises(self) -> None:
-        with pytest.raises(ValueError, match=r"invalid rlx-config\.yaml"):
+        with pytest.raises(ValueError, match=r"invalid cadence-config\.yaml"):
             parse_yaml_overrides("some random text\n")
 
     def test_malformed_nested_without_section_raises(self) -> None:
@@ -255,7 +255,7 @@ class TestParseYamlOverrides:
 
 class TestLoadYamlConfig:
     def test_loads_valid_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "rlx-config.yaml"
+        path = tmp_path / "cadence-config.yaml"
         path.write_text("plan:\n  model: opus\n")
         overrides = load_yaml_config(path)
         assert overrides.plan_model == "opus"
@@ -265,9 +265,9 @@ class TestLoadYamlConfig:
             load_yaml_config(tmp_path / "nope.yaml")
 
     def test_malformed_file_raises_value_error(self, tmp_path: Path) -> None:
-        path = tmp_path / "rlx-config.yaml"
+        path = tmp_path / "cadence-config.yaml"
         path.write_text("not valid yaml without colon\n")
-        with pytest.raises(ValueError, match=r"invalid rlx-config\.yaml"):
+        with pytest.raises(ValueError, match=r"invalid cadence-config\.yaml"):
             load_yaml_config(path)
 
 
@@ -299,7 +299,7 @@ class TestApplyYamlOverrides:
 
 class TestFindYamlConfig:
     def test_returns_path_when_present(self, tmp_path: Path) -> None:
-        yaml = tmp_path / "rlx-config.yaml"
+        yaml = tmp_path / "cadence-config.yaml"
         yaml.write_text("plan:\n  model: opus\n")
         assert find_yaml_config(tmp_path) == yaml
 
@@ -307,7 +307,7 @@ class TestFindYamlConfig:
         assert find_yaml_config(tmp_path) is None
 
     def test_returns_none_when_not_a_file(self, tmp_path: Path) -> None:
-        (tmp_path / "rlx-config.yaml").mkdir()
+        (tmp_path / "cadence-config.yaml").mkdir()
         assert find_yaml_config(tmp_path) is None
 
 
@@ -321,9 +321,9 @@ class TestDetectLocalDir:
     def test_returns_path_when_exists(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        rlx_dir = tmp_path / ".rlx"
-        rlx_dir.mkdir()
+        cadence_dir = tmp_path / ".cadence"
+        cadence_dir.mkdir()
         monkeypatch.chdir(tmp_path)
         result = detect_local_dir()
         assert result is not None
-        assert result.name == ".rlx"
+        assert result.name == ".cadence"
