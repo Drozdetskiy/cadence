@@ -80,29 +80,26 @@ class TestLoadPrompt:
 
 class TestReplaceBaseVariables:
     def test_replaces_all_variables(self) -> None:
-        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
+        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}}"
         result = replace_base_variables(
             prompt,
             plan_file="/tmp/plan.md",
             progress_file="/tmp/progress.txt",
             goal="implement feature X",
             default_branch="main",
-            plans_dir="docs/plans",
         )
         assert "/tmp/plan.md" in result
         assert "/tmp/progress.txt" in result
         assert "implement feature X" in result
         assert "main" in result
-        assert "docs/plans" in result
 
     def test_fallback_values(self) -> None:
-        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
+        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}}"
         result = replace_base_variables(prompt)
         assert "(no plan file" in result
         assert "(no progress file" in result
-        assert "current branch vs master" in result
-        assert "master" in result
-        assert "docs/plans" in result
+        assert "current branch vs main" in result
+        assert "main" in result
 
 
 class TestAppendCommitTrailer:
@@ -741,7 +738,6 @@ def _make_review_runner(
     executor: object,
     *,
     plan_file: str = "",
-    finalize_enabled: bool = False,
     review_executor: object | None = None,
     max_iterations: int = 10,
     mode: Mode = Mode.REVIEW,
@@ -764,7 +760,6 @@ def _make_review_runner(
     cfg = AppConfig(
         max_iterations=max_iterations,
         iteration_delay_ms=0,
-        finalize_enabled=finalize_enabled,
     )
     runner = Runner(ctx, cfg, deps)
     return runner, log, input_mock
@@ -902,72 +897,22 @@ class TestRunClaudeReviewLoop:
         assert runner.run_claude_review_loop() is False
 
 
-class TestRunFinalize:
-    def test_disabled_no_executor_call(self) -> None:
-        executor = MagicMock()
-        runner, _log, _ = _make_review_runner(executor, finalize_enabled=False)
-        runner.run_finalize()
-        executor.run.assert_not_called()
-
-    def test_enabled_success(self) -> None:
-        executor = MagicMock()
-        executor.run.return_value = Result(output="", signal=SignalReviewDone)
-        runner, log, _ = _make_review_runner(executor, finalize_enabled=True)
-        runner.run_finalize()
-        executor.run.assert_called_once()
-        log.print.assert_any_call("finalize step completed")
-
-    def test_enabled_generic_error_swallowed(self) -> None:
-        executor = MagicMock()
-        executor.run.side_effect = RuntimeError("boom")
-        runner, log, _ = _make_review_runner(executor, finalize_enabled=True)
-        runner.run_finalize()
-        log.warn.assert_called()
-
-    def test_enabled_keyboard_interrupt_propagates(self) -> None:
-        executor = MagicMock()
-        executor.run.side_effect = KeyboardInterrupt()
-        runner, _log, _ = _make_review_runner(executor, finalize_enabled=True)
-        with pytest.raises(KeyboardInterrupt):
-            runner.run_finalize()
-
-    def test_enabled_pattern_match_error_swallowed(self) -> None:
-        executor = MagicMock()
-        executor.run.return_value = Result(
-            output="",
-            signal="",
-            error=PatternMatchError("API Error:", "claude /usage"),
-        )
-        runner, log, _ = _make_review_runner(executor, finalize_enabled=True)
-        runner.run_finalize()
-        log.error.assert_called()
-
-    def test_enabled_failed_signal_swallowed(self) -> None:
-        executor = MagicMock()
-        executor.run.return_value = Result(output="", signal=SignalFailed)
-        runner, log, _ = _make_review_runner(executor, finalize_enabled=True)
-        runner.run_finalize()
-        log.warn.assert_any_call("finalize reported failure")
-
-
 class TestRunFullPipeline:
-    def test_task_then_review_then_finalize(self, tmp_path: Path) -> None:
+    def test_task_then_review(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_DONE)
         executor = MagicMock()
         executor.run.side_effect = [
             Result(output="", signal=SignalCompleted),  # task phase
             Result(output="", signal=SignalReviewDone),  # review_first
             Result(output="", signal=SignalReviewDone),  # review_loop
-            Result(output="", signal=SignalReviewDone),  # finalize
         ]
         runner, _log, _ = _make_review_runner(
             executor,
             plan_file=str(plan),
-            finalize_enabled=True,
             mode=Mode.FULL,
         )
         assert runner.run_full() is True
-        assert executor.run.call_count == 4
+        assert executor.run.call_count == 3
 
     def test_task_phase_failure_short_circuits(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
@@ -980,11 +925,10 @@ class TestRunFullPipeline:
         runner, _log, _ = _make_review_runner(
             executor,
             plan_file=str(plan),
-            finalize_enabled=True,
             mode=Mode.FULL,
         )
         assert runner.run_full() is False
-        # Only the task phase invocation; no review/finalize calls.
+        # Only the task phase invocation; no review calls.
         assert executor.run.call_count == 1
 
 
@@ -994,16 +938,14 @@ class TestRunReviewOnly:
         executor.run.side_effect = [
             Result(output="", signal=SignalReviewDone),  # review_first
             Result(output="", signal=SignalReviewDone),  # review_loop
-            Result(output="", signal=SignalReviewDone),  # finalize
         ]
         runner, _log, _ = _make_review_runner(
             executor,
             plan_file="",
-            finalize_enabled=True,
             mode=Mode.REVIEW,
         )
         assert runner.run_review_only() is True
-        assert executor.run.call_count == 3
+        assert executor.run.call_count == 2
 
 
 class TestReviewExecutorRouting:
@@ -1015,18 +957,16 @@ class TestReviewExecutorRouting:
         review.run.side_effect = [
             Result(output="", signal=SignalReviewDone),  # review_first
             Result(output="", signal=SignalReviewDone),  # review_loop
-            Result(output="", signal=SignalReviewDone),  # finalize
         ]
         runner, _log, _ = _make_review_runner(
             primary,
             plan_file=str(plan),
-            finalize_enabled=True,
             review_executor=review,
             mode=Mode.FULL,
         )
         assert runner.run_full() is True
         assert primary.run.call_count == 1
-        assert review.run.call_count == 3
+        assert review.run.call_count == 2
 
     def test_review_falls_back_to_primary_executor(self) -> None:
         executor = MagicMock()

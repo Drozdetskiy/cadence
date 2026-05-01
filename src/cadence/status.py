@@ -10,7 +10,6 @@ type Phase = str
 PhaseTask: Phase = "task"
 PhaseReview: Phase = "review"
 PhasePlan: Phase = "plan"
-PhaseFinalize: Phase = "finalize"
 
 SignalCompleted = "<<<CADENCE:ALL_TASKS_DONE>>>"
 SignalFailed = "<<<CADENCE:TASK_FAILED>>>"
@@ -42,14 +41,6 @@ def new_claude_review_section(n: int, suffix: str) -> Section:
 
 def new_plan_iteration_section(n: int) -> Section:
     return Section(label=f"plan iteration {n}")
-
-
-def new_generic_section(label: str) -> Section:
-    return Section(label=label)
-
-
-def new_finalize_section() -> Section:
-    return Section(label="finalize step")
 
 
 class PhaseHolder:

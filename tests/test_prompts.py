@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from cadence.processor.prompts import (
-    build_finalize_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
     build_task_prompt,
@@ -44,7 +43,6 @@ class TestLoadTaskPrompt:
             "task",
             "review_first",
             "review_second",
-            "finalize",
         ],
     )
     def test_all_shipped_prompts_load(self, name: str) -> None:
@@ -197,7 +195,6 @@ class TestExpandAgentReferences:
                 "progress_file": "",
                 "goal": "custom goal",
                 "default_branch": "develop",
-                "plans_dir": "",
             },
         )
         assert "review branch develop goal custom goal" in result
@@ -215,7 +212,6 @@ class TestReplacePromptVariables:
             progress_file="",
             goal="some goal",
             default_branch="main",
-            plans_dir="",
             commit_trailer=trailer,
             local_dir=None,
         )
@@ -233,7 +229,6 @@ class TestReplacePromptVariables:
             progress_file="",
             goal="",
             default_branch="main",
-            plans_dir="",
             commit_trailer="",
             local_dir=None,
         )
@@ -331,26 +326,3 @@ class TestBuildReviewSecondPrompt:
             assert f"{{{{agent:{name}}}}}" not in result
         assert result.count("Report findings only - no positive observations.") == 2
         assert "<<<CADENCE:REVIEW_DONE>>>" in result
-
-
-class TestBuildFinalizePrompt:
-    def test_loads_and_substitutes(self) -> None:
-        result = build_finalize_prompt(
-            plan_file="",
-            progress_file="",
-            default_branch="main",
-        )
-        assert "{{DEFAULT_BRANCH}}" not in result
-        assert "main" in result
-        # No CADENCE signals expected in finalize
-        assert "<<<CADENCE:" not in result
-
-    def test_no_agent_refs(self) -> None:
-        result = build_finalize_prompt(
-            plan_file="",
-            progress_file="",
-            default_branch="main",
-        )
-        # Finalize has no agent markers so regex no-ops
-        assert "{{agent:" not in result
-        assert "Use the Task tool" not in result

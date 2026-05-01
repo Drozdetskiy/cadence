@@ -20,7 +20,6 @@ from cadence.plan import (
     parse_plan_file,
 )
 from cadence.processor.prompts import (
-    build_finalize_prompt,
     build_plan_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
@@ -36,14 +35,12 @@ from cadence.processor.signals import (
 )
 from cadence.status import (
     Mode,
-    PhaseFinalize,
     PhaseHolder,
     PhasePlan,
     PhaseReview,
     PhaseTask,
     Section,
     new_claude_review_section,
-    new_finalize_section,
     new_plan_iteration_section,
     new_task_iteration_section,
 )
@@ -170,10 +167,7 @@ class Runner:
         )
         if not self.run_claude_review(review_prompt):
             return False
-        if not self.run_claude_review_loop():
-            return False
-        self.run_finalize()
-        return True
+        return self.run_claude_review_loop()
 
     def run_tasks_only(self) -> bool:
         if not self._ctx.plan_file:
@@ -357,43 +351,6 @@ class Runner:
         log.warn("max review iterations reached")
         return True
 
-    def run_finalize(self) -> None:
-        if not self._app.finalize_enabled:
-            return
-        log = self._deps.logger
-        self._deps.holder.set(PhaseFinalize)
-        log.print_section(new_finalize_section())
-
-        prompt = build_finalize_prompt(
-            local_dir=self._ctx.local_dir,
-            plan_file=self._ctx.plan_file,
-            progress_file=self._ctx.progress_path or log.path,
-            default_branch=self._ctx.default_branch,
-            commit_trailer=self._app.commit_trailer,
-            warn=log.warn,
-        )
-
-        try:
-            result = self._run_with_limit_retry(self._review_executor, prompt)
-        except KeyboardInterrupt:
-            raise
-        except Exception as exc:
-            log.warn("finalize error: %s", exc)
-            return
-
-        if result.error is not None:
-            if isinstance(result.error, (PatternMatchError, LimitPatternError)):
-                self._handle_pattern_match_error(result.error)
-                return
-            log.warn("finalize error: %s", str(result.error))
-            return
-
-        if is_task_failed(result.signal):
-            log.warn("finalize reported failure")
-            return
-
-        log.print("finalize step completed")
-
     def run_plan_creation(self) -> bool:
         log = self._deps.logger
         claude = self._deps.executor
@@ -413,7 +370,6 @@ class Runner:
                 plan_file=self._ctx.plan_file,
                 progress_file=self._ctx.progress_path or log.path,
                 default_branch=self._ctx.default_branch,
-                plans_dir=self._app.plans_dir,
                 commit_trailer=self._app.commit_trailer,
                 derived_plan_path=self._ctx.derived_plan_path,
             )

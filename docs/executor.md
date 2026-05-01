@@ -66,7 +66,7 @@ class LimitPatternError(Exception):
 
 ## ClaudeExecutor
 
-Единственный executor для всех фаз (task, review first, review second, finalize, plan creation).
+Единственный executor для всех фаз (task, review first, review second, plan creation).
 
 ### Поля класса
 
@@ -89,10 +89,9 @@ class ClaudeExecutor:
 2. Если `args` не пуст, парсится через `split_args()` (поддержка кавычек и escape) или `shlex.split()`
 3. Если `args` пуст, используются дефолтные флаги:
    - `--dangerously-skip-permissions`
-   - `--output-format stream-json`
    - `--verbose`
 4. Если `model` не пуст, добавляются `--model <value>`
-5. Всегда добавляется `--print` в конец (non-interactive mode)
+5. Всегда добавляются `--output-format stream-json --print` в конец (stream-json формат и non-interactive mode)
 6. Prompt передаётся через stdin (не через `-p` аргумент) -- обходит лимит Windows 8191 символов
 
 ### split_args()

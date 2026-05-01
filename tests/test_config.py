@@ -34,9 +34,7 @@ class TestConfigDefaults:
     def test_all_defaults(self) -> None:
         cfg = Config()
         assert cfg.claude_command == "claude"
-        assert cfg.claude_args == (
-            "--dangerously-skip-permissions --output-format stream-json --verbose"
-        )
+        assert cfg.claude_args == "--dangerously-skip-permissions --verbose"
         assert cfg.plan_model == "claude-opus-4-7"
         assert cfg.task_model == "claude-opus-4-7"
         assert cfg.review_model == "claude-opus-4-7"
@@ -46,8 +44,6 @@ class TestConfigDefaults:
         assert cfg.session_timeout == "0"
         assert cfg.idle_timeout == "5m"
         assert cfg.wait_on_limit == "0"
-        assert cfg.finalize_enabled is False
-        assert cfg.plans_dir == "docs/plans"
         assert cfg.tasks_root == "cdc-tasks"
         assert cfg.default_branch == "main"
         assert cfg.commit_trailer == ""
@@ -105,10 +101,10 @@ class TestLoadConfig:
 
     def test_load_string_fields(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
-        yaml_path.write_text("claude_command: my-claude\nplans_dir: my-plans\n")
+        yaml_path.write_text("claude_command: my-claude\ncommit_trailer: my-trailer\n")
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "my-claude"
-        assert cfg.plans_dir == "my-plans"
+        assert cfg.commit_trailer == "my-trailer"
         assert cfg.task_model == "claude-opus-4-7"
 
     def test_load_tasks_root_override(self, tmp_path: Path) -> None:
@@ -123,12 +119,6 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.max_iterations == 100
         assert cfg.iteration_delay_ms == 500
-
-    def test_load_bool_fields(self, tmp_path: Path) -> None:
-        yaml_path = tmp_path / "config.yaml"
-        yaml_path.write_text("finalize_enabled: true\n")
-        cfg = load_config(tmp_path)
-        assert cfg.finalize_enabled is True
 
     def test_load_list_fields(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -150,7 +140,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "custom"
         assert cfg.max_iterations == 50
-        assert cfg.finalize_enabled is False
+        assert cfg.tasks_root == "cdc-tasks"
 
     def test_invalid_yaml_raises_value_error(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

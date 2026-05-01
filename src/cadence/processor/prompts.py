@@ -61,19 +61,16 @@ def replace_base_variables(
     progress_file: str = "",
     goal: str = "",
     default_branch: str = "",
-    plans_dir: str = "",
 ) -> str:
     pf = plan_file or "(no plan file - reviewing current branch)"
     pr = progress_file or "(no progress file available)"
-    gl = goal or f"current branch vs {default_branch or 'master'}"
-    db = default_branch or "master"
-    pd = plans_dir or "docs/plans"
+    gl = goal or f"current branch vs {default_branch or 'main'}"
+    db = default_branch or "main"
 
     prompt = prompt.replace("{{PLAN_FILE}}", pf)
     prompt = prompt.replace("{{PROGRESS_FILE}}", pr)
     prompt = prompt.replace("{{GOAL}}", gl)
     prompt = prompt.replace("{{DEFAULT_BRANCH}}", db)
-    prompt = prompt.replace("{{PLANS_DIR}}", pd)
     return prompt
 
 
@@ -132,7 +129,6 @@ def replace_prompt_variables(
     progress_file: str,
     goal: str,
     default_branch: str,
-    plans_dir: str,
     commit_trailer: str,
     local_dir: Path | None,
     warn: Callable[[str], None] | None = None,
@@ -142,7 +138,6 @@ def replace_prompt_variables(
         "progress_file": progress_file,
         "goal": goal,
         "default_branch": default_branch,
-        "plans_dir": plans_dir,
     }
     prompt = replace_base_variables(prompt, **base_vars)
     prompt = expand_agent_references(prompt, local_dir=local_dir, warn=warn, base_vars=base_vars)
@@ -157,7 +152,6 @@ def build_plan_prompt(
     plan_file: str = "",
     progress_file: str = "",
     default_branch: str = "",
-    plans_dir: str = "",
     commit_trailer: str = "",
     derived_plan_path: str = "",
 ) -> str:
@@ -167,7 +161,6 @@ def build_plan_prompt(
         plan_file=plan_file,
         progress_file=progress_file,
         default_branch=default_branch,
-        plans_dir=plans_dir,
     )
     prompt = prompt.replace(_PLAN_DESC_PLACEHOLDER, plan_description)
     prompt = prompt.replace(
@@ -202,7 +195,7 @@ def build_task_prompt(
 def _review_goal(plan_file: str, default_branch: str) -> str:
     if plan_file:
         return f"implementation of plan at {plan_file}"
-    return f"review of branch vs {default_branch or 'master'}"
+    return f"review of branch vs {default_branch or 'main'}"
 
 
 def build_review_first_prompt(
@@ -211,7 +204,6 @@ def build_review_first_prompt(
     plan_file: str = "",
     progress_file: str = "",
     default_branch: str = "",
-    plans_dir: str = "",
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
 ) -> str:
@@ -222,7 +214,6 @@ def build_review_first_prompt(
         progress_file=progress_file,
         goal=_review_goal(plan_file, default_branch),
         default_branch=default_branch,
-        plans_dir=plans_dir,
         commit_trailer=commit_trailer,
         local_dir=local_dir,
         warn=warn,
@@ -235,7 +226,6 @@ def build_review_second_prompt(
     plan_file: str = "",
     progress_file: str = "",
     default_branch: str = "",
-    plans_dir: str = "",
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
 ) -> str:
@@ -246,31 +236,6 @@ def build_review_second_prompt(
         progress_file=progress_file,
         goal=_review_goal(plan_file, default_branch),
         default_branch=default_branch,
-        plans_dir=plans_dir,
-        commit_trailer=commit_trailer,
-        local_dir=local_dir,
-        warn=warn,
-    )
-
-
-def build_finalize_prompt(
-    *,
-    local_dir: Path | None = None,
-    plan_file: str = "",
-    progress_file: str = "",
-    default_branch: str = "",
-    plans_dir: str = "",
-    commit_trailer: str = "",
-    warn: Callable[[str], None] | None = None,
-) -> str:
-    prompt = load_prompt("finalize", local_dir=local_dir)
-    return replace_prompt_variables(
-        prompt,
-        plan_file=plan_file,
-        progress_file=progress_file,
-        goal=_review_goal(plan_file, default_branch),
-        default_branch=default_branch,
-        plans_dir=plans_dir,
         commit_trailer=commit_trailer,
         local_dir=local_dir,
         warn=warn,
@@ -279,7 +244,6 @@ def build_finalize_prompt(
 
 __all__ = [
     "append_commit_trailer_instruction",
-    "build_finalize_prompt",
     "build_plan_prompt",
     "build_review_first_prompt",
     "build_review_second_prompt",

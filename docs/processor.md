@@ -4,7 +4,7 @@
 
 ## Обзор
 
-Модуль processor -- ядро cadence. Содержит `Runner`, который управляет всем жизненным циклом исполнения: от запуска задач до review и finalize. Runner не знает о CLI, конфигурационных файлах или git-операциях напрямую -- он работает через интерфейсы.
+Модуль processor -- ядро cadence. Содержит `Runner`, который управляет всем жизненным циклом исполнения: от запуска задач до review. Runner не знает о CLI, конфигурационных файлах или git-операциях напрямую -- он работает через интерфейсы.
 
 Ключевые модули:
 - `processor/runner.py` -- Runner class, все run-методы, циклы итераций
@@ -48,7 +48,6 @@ class Config:
     plan_model: str             # модель для plan creation phase
     task_model: str             # модель для task phase
     review_model: str           # модель для review phases
-    finalize_enabled: bool      # включен ли finalize step
     default_branch: str         # default branch (из git)
     app_config: AppConfig       # полный application config
 ```
@@ -130,7 +129,7 @@ set_pause_handler(fn)    -- устанавливает callback pause/resume
 
 ### run_full()
 
-Полный pipeline: tasks -> review_first -> review_loop -> finalize.
+Полный pipeline: tasks -> review_first -> review_loop.
 
 ```
 1. PhaseTask: run_task_phase()
@@ -143,8 +142,6 @@ set_pause_handler(fn)    -- устанавливает callback pause/resume
 
 3. PhaseReview: run_claude_review_loop()
    - review loop (critical/major)
-
-4. run_finalize()
 ```
 
 Требует: plan_file != ""
@@ -156,7 +153,6 @@ Review pipeline без task phase.
 ```
 1. PhaseReview: run_claude_review(ReviewFirstPrompt)
 2. PhaseReview: run_claude_review_loop()
-3. run_finalize()
 ```
 
 ### run_tasks_only()
@@ -295,28 +291,6 @@ max iterations reached: log warning, return
 
 Логика no-commit detection: если Claude не сделал коммитов, значит нечего было исправлять. Session timeout обходит эту проверку (сессия могла быть убита до коммита).
 
-### Finalize: run_finalize()
-
-Опциональный шаг после успешных reviews.
-
-```
-if not finalize_enabled: return
-
-PhaseFinalize
-print_section("finalize step")
-prompt = replace_prompt_variables(FinalizePrompt)
-result = run_with_limit_retry(review_claude.run, prompt, "claude")
-
-Error handling:
-- KeyboardInterrupt / cancellation: propagate (user abort)
-- PatternMatchError / LimitPatternError: log via handle_pattern_match_error, return (best-effort)
-- other error: log, return (best-effort)
-- FAILED signal: log, return (best-effort)
-- success: log "finalize step completed"
-```
-
-Best-effort семантика: единственное исключение -- cancellation (пользователь хочет прервать). Все остальные ошибки логируются, но не propagate.
-
 ## Session timeout и idle timeout
 
 ### Session timeout
@@ -429,8 +403,7 @@ PLAN_ITERATION_DIVISOR   = 5     # plan iterations = max_iterations // 5
 | `{{PLAN_FILE}}`               | путь к план-файлу или "(no plan file...)"         | все промпты                   |
 | `{{PROGRESS_FILE}}`           | путь к progress файлу или "(no progress file...)" | все промпты                   |
 | `{{GOAL}}`                    | "implementation of plan at ..." или "current branch vs ..." | все промпты     |
-| `{{DEFAULT_BRANCH}}`          | имя default branch или "master"                   | все промпты                   |
-| `{{PLANS_DIR}}`               | директория планов или "docs/plans"                | все промпты (base variable)   |
+| `{{DEFAULT_BRANCH}}`          | имя default branch или "main"                     | все промпты                   |
 | `{{PLAN_DESCRIPTION}}`        | описание плана (user input)                       | make_plan prompt              |
 | `{{agent:name}}`              | раскрывается в Task tool instructions             | review промпты                |
 
@@ -438,7 +411,7 @@ PLAN_ITERATION_DIVISOR   = 5     # plan iterations = max_iterations // 5
 
 Два уровня функций замены:
 
-1. `replace_base_variables(prompt)` -- базовые: PLAN_FILE, PROGRESS_FILE, GOAL, DEFAULT_BRANCH, PLANS_DIR
+1. `replace_base_variables(prompt)` -- базовые: PLAN_FILE, PROGRESS_FILE, GOAL, DEFAULT_BRANCH
 2. `replace_prompt_variables(prompt)` -- базовые + agent references + commit trailer
 
 Порядок в replace_prompt_variables:

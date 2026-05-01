@@ -1,6 +1,6 @@
 # cadence
 
-Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop → finalize), and `cadence --review` (review-only of the current branch: review_first → review_loop → finalize, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`.
+Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop), and `cadence --review` (review-only of the current branch: review_first → review_loop, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`.
 
 ## Package structure
 
@@ -19,20 +19,20 @@ src/cadence/
     backend.py      - ExternalBackend: git subprocess wrapper (hard-coded `git` command); DiffStats dataclass
     service.py      - Service: high-level git ops (constructor raises if path is not a repo, branch creation for plan (no plan commit), commit trailer, rename plan in-place with -completed suffix); satisfies the `GitChecker` Protocol declared in `processor/runner.py`
   plan/
-    __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
+    __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, extract_branch_name
     parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox
-    plan.py         - Selector (numbered picker + find_recent), extract_branch_name
+    plan.py         - extract_branch_name
   processor/
     signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED, REVIEW_DONE) + is_* helpers
-    prompts.py      - Prompt loading with local override fallback; build_plan_prompt, build_task_prompt, build_review_first_prompt, build_review_second_prompt, build_finalize_prompt; expand_agent_references / format_agent_expansion / replace_prompt_variables
+    prompts.py      - Prompt loading with local override fallback; build_plan_prompt, build_task_prompt, build_review_first_prompt, build_review_second_prompt; expand_agent_references / format_agent_expansion / replace_prompt_variables
     agents.py       - Agent loader (local .cadence/agents/<name>.txt → embedded cadence.defaults.agents); AgentDef, frontmatter parser, model normalization
-    runner.py       - Runner: orchestrates plan creation, task execution, review (run_claude_review + run_claude_review_loop), and finalize phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch
+    runner.py       - Runner: orchestrates plan creation, task execution, and review (run_claude_review + run_claude_review_loop) phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch
   progress/
     colors.py       - Rich Style mapping from ColorConfig
     flock.py        - File locking via fcntl.flock
     logger.py       - Dual file+stdout logger with timestamps and signal highlighting; resolves the progress path per mode (`progress-plan.txt`/`progress-task.txt` next to the plan file for plan/full; `<tasks_root>/<branch-or-head-hash>/progress-review.txt` for review)
   defaults/
-    prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt, finalize.txt)
+    prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt)
     agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt) referenced from review prompts via {{agent:<name>}} markers
 ```
 

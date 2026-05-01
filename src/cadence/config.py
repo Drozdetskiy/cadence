@@ -22,7 +22,7 @@ class ColorConfig:
 @dataclass
 class Config:
     claude_command: str = "claude"
-    claude_args: str = "--dangerously-skip-permissions --output-format stream-json --verbose"
+    claude_args: str = "--dangerously-skip-permissions --verbose"
     plan_model: str = "claude-opus-4-7"
     task_model: str = "claude-opus-4-7"
     review_model: str = "claude-opus-4-7"
@@ -32,8 +32,6 @@ class Config:
     session_timeout: str = "0"
     idle_timeout: str = "5m"
     wait_on_limit: str = "0"
-    finalize_enabled: bool = False
-    plans_dir: str = "docs/plans"
     tasks_root: str = "cdc-tasks"
     default_branch: str = "main"
     commit_trailer: str = ""
@@ -100,7 +98,6 @@ def load_config(config_dir: Path | None) -> Config:
         "session_timeout",
         "idle_timeout",
         "wait_on_limit",
-        "plans_dir",
         "tasks_root",
         "default_branch",
         "commit_trailer",
@@ -109,9 +106,6 @@ def load_config(config_dir: Path | None) -> Config:
         "iteration_delay_ms",
         "task_retry_count",
         "max_iterations",
-    }
-    _BOOL_FIELDS = {
-        "finalize_enabled",
     }
     _LIST_FIELDS = {
         "claude_error_patterns",
@@ -125,10 +119,6 @@ def load_config(config_dir: Path | None) -> Config:
     for key in _INT_FIELDS:
         if key in data:
             setattr(cfg, key, int(data[key]))
-
-    for key in _BOOL_FIELDS:
-        if key in data:
-            setattr(cfg, key, bool(data[key]))
 
     for key in _LIST_FIELDS:
         if key in data:
