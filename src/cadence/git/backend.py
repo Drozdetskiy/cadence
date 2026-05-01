@@ -51,9 +51,7 @@ class ExternalBackend:
             raise RuntimeError(f"git not found: {self._command}") from exc
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            raise RuntimeError(
-                f"git {' '.join(args)} failed (exit {result.returncode}): {stderr}"
-            )
+            raise RuntimeError(f"git {' '.join(args)} failed (exit {result.returncode}): {stderr}")
         return result.stdout.rstrip()
 
     def _run_with_status(
@@ -84,9 +82,7 @@ class ExternalBackend:
         return stdout.strip()
 
     def has_commits(self) -> bool:
-        code, _, stderr = self._run_with_status(
-            "rev-parse", "HEAD", env_extra={"LC_ALL": "C"}
-        )
+        code, _, stderr = self._run_with_status("rev-parse", "HEAD", env_extra={"LC_ALL": "C"})
         if code == 0:
             return True
         if code == 128 and "ambiguous argument" in stderr.lower():
@@ -104,14 +100,12 @@ class ExternalBackend:
         raise RuntimeError(f"git symbolic-ref failed (exit {code}): {stderr}")
 
     def get_default_branch(self) -> str:
-        code, stdout, _ = self._run_with_status(
-            "symbolic-ref", "refs/remotes/origin/HEAD"
-        )
+        code, stdout, _ = self._run_with_status("symbolic-ref", "refs/remotes/origin/HEAD")
         if code == 0:
             ref = stdout.strip()
             prefix = "refs/remotes/origin/"
             if ref.startswith(prefix):
-                name = ref[len(prefix):]
+                name = ref[len(prefix) :]
                 if self._ref_exists(f"refs/heads/{name}"):
                     return name
                 return f"origin/{name}"
@@ -163,15 +157,6 @@ class ExternalBackend:
             return True
         return False
 
-    def file_has_changes(self, path: str) -> bool:
-        rel = self._to_relative(path)
-        code, stdout, _ = self._run_with_status(
-            "status", "--porcelain", "-uall", "--", rel
-        )
-        if code != 0:
-            return False
-        return bool(stdout.strip())
-
     def has_changes_other_than(self, path: str) -> list[str]:
         rel = self._to_relative(path)
         rel_cf = rel.casefold()
@@ -190,17 +175,10 @@ class ExternalBackend:
             out.append(extracted)
         return out
 
-    def add(self, path: str) -> None:
-        rel = self._to_relative(path)
-        self._run("add", "--", rel)
-
     def move_file(self, src: str, dst: str) -> None:
         src_rel = self._to_relative(src)
         dst_rel = self._to_relative(dst)
         self._run("mv", "--", src_rel, dst_rel)
-
-    def commit(self, msg: str) -> None:
-        self._run("commit", "-m", msg)
 
     def commit_files(self, msg: str, *paths: str) -> None:
         rels = [self._to_relative(p) for p in paths]
@@ -208,9 +186,7 @@ class ExternalBackend:
 
     def create_initial_commit(self, msg: str) -> None:
         self._run("add", "-A")
-        code, stdout, _ = self._run_with_status(
-            "diff", "--cached", "--name-only"
-        )
+        code, stdout, _ = self._run_with_status("diff", "--cached", "--name-only")
         if code != 0 or not stdout.strip():
             raise RuntimeError("nothing to commit for initial commit")
         self._run("commit", "-m", msg)
@@ -227,9 +203,7 @@ class ExternalBackend:
         if head and head == base_hash.strip():
             return DiffStats()
 
-        code, stdout, _ = self._run_with_status(
-            "diff", "--numstat", f"{ref}...HEAD"
-        )
+        code, stdout, _ = self._run_with_status("diff", "--numstat", f"{ref}...HEAD")
         if code != 0:
             return DiffStats()
 
@@ -261,21 +235,17 @@ class ExternalBackend:
         if self._ref_exists(remote):
             return remote
         if branch_name.startswith("origin/"):
-            remote_name = branch_name[len("origin/"):]
+            remote_name = branch_name[len("origin/") :]
             alt = f"refs/remotes/origin/{remote_name}"
             if self._ref_exists(alt):
                 return alt
-        code, _, _ = self._run_with_status(
-            "rev-parse", "--verify", "--quiet", branch_name
-        )
+        code, _, _ = self._run_with_status("rev-parse", "--verify", "--quiet", branch_name)
         if code == 0:
             return branch_name
         return ""
 
     def _ref_exists(self, ref: str) -> bool:
-        code, _, _ = self._run_with_status(
-            "show-ref", "--verify", "--quiet", ref
-        )
+        code, _, _ = self._run_with_status("show-ref", "--verify", "--quiet", ref)
         return code == 0
 
     def _to_relative(self, path: str) -> str:

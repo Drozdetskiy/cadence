@@ -17,7 +17,7 @@ src/cadence/
   git/
     __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
     backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
-    service.py      - Service: high-level git ops (branch creation for plan, commit trailer, rename plan in-place with -completed suffix, no commit)
+    service.py      - Service: high-level git ops (branch creation for plan (no plan commit), commit trailer, rename plan in-place with -completed suffix)
   plan/
     __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
     parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox
@@ -68,4 +68,12 @@ Module-level details live in `docs/`: `config.md`, `processor.md`, `executor.md`
 
 ## Commit messages
 
-Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line, maximally concise. Author as the user — no `Co-Authored-By` trailer.
+Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line.
+
+Each section is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the subject line. If a section needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+
+Good: `0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file / file_has_changes helpers.`
+
+Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: _prepare_plan_branch returns only branch name (drops needs_commit), create_branch_for_plan no longer auto-commits, ruff format applied, test_creates_branch_and_commits renamed to test_creates_branch_no_commit, ...`
+
+Author as the user — no `Co-Authored-By` trailer.

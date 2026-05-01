@@ -55,9 +55,6 @@ class Service:
     def diff_stats(self, base_branch: str) -> DiffStats:
         return self._repo.diff_stats(base_branch)
 
-    def file_has_changes(self, path: str) -> bool:
-        return self._repo.file_has_changes(path)
-
     def is_default_branch(self, default_branch: str) -> bool:
         current = self._repo.current_branch()
         if not current:
@@ -65,20 +62,16 @@ class Service:
         if default_branch:
             trimmed = default_branch
             if trimmed.startswith("origin/"):
-                trimmed = trimmed[len("origin/"):]
+                trimmed = trimmed[len("origin/") :]
             return current == trimmed
         return current in ("main", "master")
 
     def create_branch(self, name: str) -> None:
         self._repo.create_branch(name)
 
-    def create_branch_for_plan(
-        self, plan_file: str, default_branch: str
-    ) -> None:
+    def create_branch_for_plan(self, plan_file: str, default_branch: str) -> None:
         resolved_plan = self._resolve_filesystem_case(plan_file)
-        branch, needs_commit = self._prepare_plan_branch(
-            resolved_plan, default_branch
-        )
+        branch = self._prepare_plan_branch(resolved_plan, default_branch)
         if not branch:
             return
 
@@ -89,38 +82,21 @@ class Service:
             self._repo.create_branch(branch)
             self._log.print("created branch %s", branch)
 
-        if needs_commit:
-            self._repo.add(resolved_plan)
-            self._repo.commit(self._append_trailer(f"add plan: {branch}"))
-            self._log.print("committed plan file on %s", branch)
-
-    def _prepare_plan_branch(
-        self, plan_file: str, default_branch: str
-    ) -> tuple[str, bool]:
+    def _prepare_plan_branch(self, plan_file: str, default_branch: str) -> str:
         if not self.is_default_branch(default_branch):
-            return "", False
+            return ""
 
         branch = extract_branch_name(plan_file)
         if not branch:
-            raise RuntimeError(
-                f"cannot extract branch name from plan: {plan_file}"
-            )
+            raise RuntimeError(f"cannot extract branch name from plan: {plan_file}")
 
         other = self._repo.has_changes_other_than(plan_file)
         if other:
             raise RuntimeError(
-                "repository has uncommitted changes other than the plan file: "
-                + ", ".join(other)
+                "repository has uncommitted changes other than the plan file: " + ", ".join(other)
             )
 
-        needs_commit = self._repo.file_has_changes(plan_file)
-        return branch, needs_commit
-
-    def commit_plan_file(self, plan_file: str) -> None:
-        resolved = self._resolve_filesystem_case(plan_file)
-        branch = extract_branch_name(resolved)
-        self._repo.add(resolved)
-        self._repo.commit(self._append_trailer(f"add plan: {branch}"))
+        return branch
 
     def mark_plan_completed(self, plan_file: str) -> None:
         resolved = self._resolve_filesystem_case(plan_file)
@@ -134,9 +110,7 @@ class Service:
             raise FileNotFoundError(f"plan file not found: {plan_file}")
 
         if dst.exists():
-            raise FileExistsError(
-                f"completed plan already exists, refusing to overwrite: {dst}"
-            )
+            raise FileExistsError(f"completed plan already exists, refusing to overwrite: {dst}")
 
         os.rename(str(src), str(dst))
         self._log.print("marked plan completed: %s", str(dst))
@@ -146,9 +120,7 @@ class Service:
             return
         if not prompt_fn():
             raise RuntimeError("repository has no commits; aborted by user")
-        self._repo.create_initial_commit(
-            self._append_trailer("initial commit")
-        )
+        self._repo.create_initial_commit(self._append_trailer("initial commit"))
         self._log.print("created initial commit")
 
     def _resolve_filesystem_case(self, path: str) -> str:
