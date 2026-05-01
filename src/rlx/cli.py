@@ -428,7 +428,7 @@ def run_task_mode(task_file: Path) -> None:
         log.close(success=run_success)
 
 
-def run_review_mode() -> None:
+def run_review_mode(base: str | None = None) -> None:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
 
@@ -448,7 +448,7 @@ def run_review_mode() -> None:
 
     git_svc.set_commit_trailer(cfg.commit_trailer)
 
-    default_branch = cfg.default_branch or git_svc.get_default_branch()
+    default_branch = base or cfg.default_branch or git_svc.get_default_branch()
     branch = git_svc.current_branch()
 
     log = _build_review_logger(colors, holder, branch)
@@ -456,6 +456,7 @@ def run_review_mode() -> None:
     log.print("rlx %s", resolve_version())
     log.print("mode: review")
     log.print("branch: %s", branch)
+    log.print("base: %s", default_branch)
     log.print("progress: %s", log.path)
 
     git_svc_for_log = Service(path=".", log=log, command=vcs)
@@ -545,6 +546,11 @@ _PLAN_OPT: Path | None = typer.Option(None, "--plan", help="Path to plan descrip
 _TASK_OPT: Path | None = typer.Option(None, "--task", help="Path to plan file for task execution")
 _REVIEW_OPT: bool = typer.Option(False, "--review", help="Review current branch only")
 _IMPL_OPT: bool = typer.Option(False, "--impl", help="Auto-implement after plan creation")
+_BASE_OPT: str | None = typer.Option(
+    None,
+    "--base",
+    help="Base branch for review diff (overrides config default_branch)",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -554,6 +560,7 @@ def main(
     task: Path | None = _TASK_OPT,
     review: bool = _REVIEW_OPT,
     impl: bool = _IMPL_OPT,
+    base: str | None = _BASE_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
@@ -570,6 +577,13 @@ def main(
     if impl and plan is None:
         typer.echo(
             "error: --impl requires --plan",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if base is not None and not review:
+        typer.echo(
+            "error: --base is only valid with --review",
             err=True,
         )
         raise SystemExit(1)
@@ -594,4 +608,4 @@ def main(
         assert task is not None
         run_task_mode(task)
     elif mode == Mode.REVIEW:
-        run_review_mode()
+        run_review_mode(base)
