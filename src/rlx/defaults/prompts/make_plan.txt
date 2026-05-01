@@ -7,7 +7,7 @@ IMPORTANT: Read the progress file first to see any questions you already asked a
 ## Step 0: Check for Existing Plan
 
 FIRST, check if a plan file already exists next to the prompt file (the file passed to --plan) matching this request.
-Also check {{PLANS_DIR}}/ and {{PLANS_DIR}}/completed/ for previously completed plans.
+Also check {{PLANS_DIR}}/ for previously completed plans (filenames ending in `-completed`).
 If a plan file for this feature already exists:
 - Output <<<RLX:PLAN_READY>>> immediately
 - Do NOT modify the existing plan
@@ -100,7 +100,6 @@ When you have enough information to create a plan, write it directly to disk:
 
 - [ ] update README.md if user-facing changes
 - [ ] update CLAUDE.md if internal patterns changed
-- [ ] move this plan to `docs/plans/completed/`
 ---
 
 ## Step 4.5: Validate Plan Before Writing
