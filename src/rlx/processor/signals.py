@@ -5,10 +5,13 @@ import re
 from dataclasses import dataclass
 
 from rlx.status import (
+    SignalCompleted,
     SignalEnd,
+    SignalFailed,
     SignalPlanDraft,
     SignalPlanReady,
     SignalQuestion,
+    SignalReviewDone,
 )
 
 
@@ -66,3 +69,15 @@ def parse_plan_draft_payload(output: str) -> str | None:
 
 def is_plan_ready(signal: str) -> bool:
     return signal == SignalPlanReady
+
+
+def is_review_done(signal: str) -> bool:
+    return signal == SignalReviewDone
+
+
+def is_task_failed(signal: str) -> bool:
+    return signal == SignalFailed
+
+
+def is_all_tasks_done(signal: str) -> bool:
+    return signal == SignalCompleted
