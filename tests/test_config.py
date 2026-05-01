@@ -99,59 +99,81 @@ class TestLoadConfig:
         cfg = load_config(None)
         assert cfg.claude_command == "claude"
 
-    def test_missing_toml(self, tmp_path: Path) -> None:
+    def test_missing_yaml(self, tmp_path: Path) -> None:
         cfg = load_config(tmp_path)
         assert cfg.max_iterations == 50
 
     def test_load_string_fields(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text('claude_command = "my-claude"\nplans_dir = "my-plans"\n')
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: my-claude\nplans_dir: my-plans\n")
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "my-claude"
         assert cfg.plans_dir == "my-plans"
         assert cfg.task_model == "claude-opus-4-7"
 
     def test_load_int_fields(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text("max_iterations = 100\niteration_delay_ms = 500\n")
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("max_iterations: 100\niteration_delay_ms: 500\n")
         cfg = load_config(tmp_path)
         assert cfg.max_iterations == 100
         assert cfg.iteration_delay_ms == 500
 
     def test_load_bool_fields(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text("finalize_enabled = true\n")
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("finalize_enabled: true\n")
         cfg = load_config(tmp_path)
         assert cfg.finalize_enabled is True
 
     def test_load_list_fields(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text('claude_error_patterns = ["custom error"]\n')
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('claude_error_patterns:\n  - "custom error"\n')
         cfg = load_config(tmp_path)
         assert cfg.claude_error_patterns == ["custom error"]
 
     def test_load_colors(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text('[colors]\ntask = "#ff0000"\nwarn = "#00ff00"\n')
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('colors:\n  task: "#ff0000"\n  warn: "#00ff00"\n')
         cfg = load_config(tmp_path)
         assert cfg.colors.task == "#ff0000"
         assert cfg.colors.warn == "#00ff00"
         assert cfg.colors.review == "#1a9e9e"
 
     def test_absent_keys_keep_defaults(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text('claude_command = "custom"\n')
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: custom\n")
         cfg = load_config(tmp_path)
         assert cfg.claude_command == "custom"
         assert cfg.max_iterations == 50
         assert cfg.finalize_enabled is False
 
     def test_tilde_expansion(self, tmp_path: Path) -> None:
-        toml_path = tmp_path / "config.toml"
-        toml_path.write_text('vcs_command = "~/bin/git"\n')
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('vcs_command: "~/bin/git"\n')
         cfg = load_config(tmp_path)
         assert not cfg.vcs_command.startswith("~")
         assert cfg.vcs_command.endswith("/bin/git")
+
+    def test_invalid_yaml_raises_value_error(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: 'unterminated\n")
+        with pytest.raises(ValueError, match=r"invalid \.cadence/config\.yaml"):
+            load_config(tmp_path)
+
+    def test_empty_yaml_keeps_defaults(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("# only a comment\n")
+        cfg = load_config(tmp_path)
+        assert cfg.claude_command == "claude"
+        assert cfg.max_iterations == 50
+
+    def test_top_level_not_mapping_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("- 1\n- 2\n")
+        with pytest.raises(
+            ValueError,
+            match=r"invalid \.cadence/config\.yaml: top-level must be a mapping",
+        ):
+            load_config(tmp_path)
 
 
 class TestParseYamlOverrides:
@@ -232,25 +254,24 @@ class TestParseYamlOverrides:
         assert overrides.task_model is None
 
     def test_value_containing_colon(self) -> None:
-        text = "task:\n  model: org:opus\n"
+        text = 'task:\n  model: "org:opus"\n'
         overrides = parse_yaml_overrides(text)
         assert overrides.task_model == "org:opus"
 
     def test_malformed_no_colon_raises(self) -> None:
         with pytest.raises(ValueError, match=r"invalid cadence-config\.yaml"):
-            parse_yaml_overrides("some random text\n")
-
-    def test_malformed_nested_without_section_raises(self) -> None:
-        with pytest.raises(
-            ValueError, match="nested key without a top-level section"
-        ):
-            parse_yaml_overrides("  model: sonnet\n")
+            parse_yaml_overrides("task:\n  model: 'unterminated\n")
 
     def test_malformed_top_level_scalar_raises(self) -> None:
         with pytest.raises(
-            ValueError, match="must be a section"
+            ValueError,
+            match=r"invalid cadence-config\.yaml: top-level must be a mapping",
         ):
-            parse_yaml_overrides("task: sonnet\n")
+            parse_yaml_overrides("- 1\n- 2\n")
+
+    def test_section_with_scalar_value_silently_ignored(self) -> None:
+        overrides = parse_yaml_overrides("task: sonnet\n")
+        assert overrides == YamlOverrides()
 
 
 class TestLoadYamlConfig:

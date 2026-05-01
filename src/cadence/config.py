@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 
 @dataclass
@@ -73,12 +75,22 @@ def load_config(config_dir: Path | None) -> Config:
     if config_dir is None:
         return cfg
 
-    toml_path = config_dir / "config.toml"
-    if not toml_path.is_file():
+    yaml_path = config_dir / "config.yaml"
+    if not yaml_path.is_file():
         return cfg
 
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
+    try:
+        with open(yaml_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid .cadence/config.yaml: {exc}") from exc
+
+    if raw is None:
+        data: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        data = raw
+    else:
+        raise ValueError("invalid .cadence/config.yaml: top-level must be a mapping")
 
     _STR_FIELDS = {
         "claude_command",
@@ -150,71 +162,34 @@ class YamlOverrides:
     review_model: str | None = None
 
 
-_YAML_KNOWN_SECTIONS = ("plan", "task", "review")
-
-
-def _strip_trailing_comment(value: str) -> str:
-    idx = value.find(" #")
-    if idx != -1:
-        value = value[:idx]
-    return value.rstrip()
-
-
-def _strip_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-        return value[1:-1]
-    return value
-
-
-def parse_yaml_overrides(text: str) -> YamlOverrides:
+def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     overrides = YamlOverrides()
-    current_section: str | None = None
+    if not text:
+        return overrides
 
-    for lineno, raw_line in enumerate(text.splitlines(), start=1):
-        if not raw_line.strip():
-            continue
-        if raw_line.lstrip().startswith("#"):
-            continue
+    try:
+        raw = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid cadence-config.yaml: {exc}") from exc
 
-        is_indented = raw_line[:1] in (" ", "\t")
-        stripped = raw_line.strip()
+    if raw is None:
+        return overrides
+    if not isinstance(raw, dict):
+        raise ValueError("invalid cadence-config.yaml: top-level must be a mapping")
 
-        if ":" not in stripped:
-            raise ValueError(
-                f"invalid cadence-config.yaml: line {lineno}: expected 'key:' or 'key: value'"
-            )
-
-        key, _, value = stripped.partition(":")
-        key = key.strip()
-        value = _strip_trailing_comment(value.strip())
-        value = _strip_quotes(value.strip())
-
-        if not is_indented:
-            if value:
-                raise ValueError(
-                    f"invalid cadence-config.yaml: line {lineno}: "
-                    f"top-level key {key!r} must be a section, not a scalar"
-                )
-            current_section = key
+    for section in ("plan", "task", "review"):
+        value = raw.get(section)
+        if not isinstance(value, dict):
             continue
-
-        if current_section is None:
-            raise ValueError(
-                f"invalid cadence-config.yaml: line {lineno}: "
-                "nested key without a top-level section"
-            )
-        if current_section not in _YAML_KNOWN_SECTIONS:
+        model = value.get("model")
+        if not isinstance(model, str) or not model:
             continue
-        if key != "model":
-            continue
-        if not value:
-            continue
-        if current_section == "plan":
-            overrides.plan_model = value
-        elif current_section == "task":
-            overrides.task_model = value
+        if section == "plan":
+            overrides.plan_model = model
+        elif section == "task":
+            overrides.task_model = model
         else:
-            overrides.review_model = value
+            overrides.review_model = model
 
     return overrides
 
