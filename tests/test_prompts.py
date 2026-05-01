@@ -49,9 +49,7 @@ class TestLoadTaskPrompt:
     )
     def test_all_shipped_prompts_load(self, name: str) -> None:
         prompt = load_prompt(name)
-        assert prompt.strip(), (
-            f"shipped prompt {name!r} loaded but is empty"
-        )
+        assert prompt.strip(), f"shipped prompt {name!r} loaded but is empty"
 
 
 class TestBuildTaskPrompt:
@@ -101,8 +99,7 @@ class TestBuildTaskPrompt:
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
         (prompts_dir / "task.txt").write_text(
-            "Custom task: {{PLAN_FILE}} "
-            "goal={{GOAL}} branch={{DEFAULT_BRANCH}}"
+            "Custom task: {{PLAN_FILE}} goal={{GOAL}} branch={{DEFAULT_BRANCH}}"
         )
         result = build_task_prompt(
             plan_file="/tmp/p.md",
@@ -111,32 +108,25 @@ class TestBuildTaskPrompt:
             local_dir=tmp_path,
         )
         assert result == (
-            "Custom task: /tmp/p.md "
-            "goal=implementation of plan at /tmp/p.md branch=develop"
+            "Custom task: /tmp/p.md goal=implementation of plan at /tmp/p.md branch=develop"
         )
 
 
 class TestFormatAgentExpansion:
     def test_with_model(self) -> None:
-        out = format_agent_expansion(
-            "hello body", model="sonnet", agent_type="general-purpose"
-        )
+        out = format_agent_expansion("hello body", model="sonnet", agent_type="general-purpose")
         assert "Use the Task tool with model=sonnet" in out
         assert "launch a general-purpose agent" in out
         assert "<<<AGENT_PROMPT BEGIN>>>\nhello body\n<<<AGENT_PROMPT END>>>" in out
         assert "Report findings only - no positive observations." in out
 
     def test_body_with_quotes_preserved(self) -> None:
-        body = 'has "double" and \'single\' quotes'
-        out = format_agent_expansion(
-            body, model="", agent_type="general-purpose"
-        )
+        body = "has \"double\" and 'single' quotes"
+        out = format_agent_expansion(body, model="", agent_type="general-purpose")
         assert body in out
 
     def test_without_model(self) -> None:
-        out = format_agent_expansion(
-            "body", model="", agent_type="code-reviewer"
-        )
+        out = format_agent_expansion("body", model="", agent_type="code-reviewer")
         assert "Use the Task tool to launch a code-reviewer agent" in out
         assert "with model=" not in out
 
@@ -177,21 +167,13 @@ class TestExpandAgentReferences:
         )
         assert "{{agent:not-a-real-agent}}" in result
         assert any(
-            "not-a-real-agent" in w
-            and "reinstall" in w
-            and "pip install" in w
-            for w in warnings
-        ), (
-            "expected the load_agent diagnostic to be forwarded "
-            "to the warn callback, not swallowed"
-        )
+            "not-a-real-agent" in w and "reinstall" in w and "pip install" in w for w in warnings
+        ), "expected the load_agent diagnostic to be forwarded to the warn callback, not swallowed"
 
     def test_recursion_guard(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "parent.txt").write_text(
-            "outer body has {{agent:child}} inside"
-        )
+        (agents_dir / "parent.txt").write_text("outer body has {{agent:child}} inside")
         (agents_dir / "child.txt").write_text("child body")
         result = expand_agent_references(
             "{{agent:parent}}",
@@ -205,9 +187,7 @@ class TestExpandAgentReferences:
     def test_base_vars_applied_to_agent_body(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "quality.txt").write_text(
-            "review branch {{DEFAULT_BRANCH}} goal {{GOAL}}"
-        )
+        (agents_dir / "quality.txt").write_text("review branch {{DEFAULT_BRANCH}} goal {{GOAL}}")
         result = expand_agent_references(
             "{{agent:quality}}",
             local_dir=tmp_path,
@@ -241,9 +221,7 @@ class TestReplacePromptVariables:
         )
         assert result.count(trailer) == 1
         agent_start = result.index("Use the Task tool")
-        agent_end = result.index(
-            "Report findings only - no positive observations."
-        )
+        agent_end = result.index("Report findings only - no positive observations.")
         assert trailer not in result[agent_start:agent_end]
         assert result.rstrip().endswith(trailer)
 
@@ -278,17 +256,9 @@ class TestBuildReviewFirstPrompt:
             assert f"{{{{agent:{name}}}}}" not in result
         # Documentation agent must be fully removed
         assert "{{agent:documentation}}" not in result
-        assert (
-            "Review code changes and identify missing documentation updates."
-            not in result
-        )
+        assert "Review code changes and identify missing documentation updates." not in result
         # Four agent expansions - count the fixed emitted sentence
-        assert (
-            result.count(
-                "Report findings only - no positive observations."
-            )
-            == 4
-        )
+        assert result.count("Report findings only - no positive observations.") == 4
         # Variable substitution in outer prompt
         assert "{{DEFAULT_BRANCH}}" not in result
         assert "{{GOAL}}" not in result
@@ -316,10 +286,7 @@ class TestBuildReviewFirstPrompt:
             default_branch="main",
         )
         assert "Co-Authored-By" not in result
-        assert (
-            "When making git commits, add the following trailer"
-            not in result
-        )
+        assert "When making git commits, add the following trailer" not in result
 
     def test_goal_when_no_plan_file(self) -> None:
         result = build_review_first_prompt(
@@ -340,9 +307,7 @@ class TestBuildReviewFirstPrompt:
     def test_local_agent_override(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "quality.txt").write_text(
-            "OVERRIDE_QUALITY_BODY for {{DEFAULT_BRANCH}}"
-        )
+        (agents_dir / "quality.txt").write_text("OVERRIDE_QUALITY_BODY for {{DEFAULT_BRANCH}}")
         result = build_review_first_prompt(
             plan_file="",
             progress_file="",
@@ -364,12 +329,7 @@ class TestBuildReviewSecondPrompt:
         # Should NOT contain testing/simplification/documentation markers
         for name in ("testing", "simplification", "documentation"):
             assert f"{{{{agent:{name}}}}}" not in result
-        assert (
-            result.count(
-                "Report findings only - no positive observations."
-            )
-            == 2
-        )
+        assert result.count("Report findings only - no positive observations.") == 2
         assert "<<<CADENCE:REVIEW_DONE>>>" in result
 
 

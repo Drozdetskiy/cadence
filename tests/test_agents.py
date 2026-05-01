@@ -87,9 +87,7 @@ class TestFrontmatter:
     def test_malformed_frontmatter_kept_as_body(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "quality.txt").write_text(
-            "---\nmodel: sonnet\nbody without closing fence\n"
-        )
+        (agents_dir / "quality.txt").write_text("---\nmodel: sonnet\nbody without closing fence\n")
 
         result = load_agent("quality", local_dir=tmp_path)
 
@@ -103,9 +101,7 @@ class TestModelNormalization:
     def test_long_sonnet_id_normalized(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "x.txt").write_text(
-            "---\nmodel: claude-sonnet-4-5-20250929\n---\nbody\n"
-        )
+        (agents_dir / "x.txt").write_text("---\nmodel: claude-sonnet-4-5-20250929\n---\nbody\n")
 
         result = load_agent("x", local_dir=tmp_path)
 
@@ -115,9 +111,7 @@ class TestModelNormalization:
     def test_long_haiku_id_normalized(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "x.txt").write_text(
-            "---\nmodel: claude-haiku-4-5-20251001\n---\nbody\n"
-        )
+        (agents_dir / "x.txt").write_text("---\nmodel: claude-haiku-4-5-20251001\n---\nbody\n")
 
         result = load_agent("x", local_dir=tmp_path)
 
@@ -127,9 +121,7 @@ class TestModelNormalization:
     def test_long_opus_id_normalized(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "x.txt").write_text(
-            "---\nmodel: claude-opus-4-7\n---\nbody\n"
-        )
+        (agents_dir / "x.txt").write_text("---\nmodel: claude-opus-4-7\n---\nbody\n")
 
         result = load_agent("x", local_dir=tmp_path)
 
@@ -139,14 +131,10 @@ class TestModelNormalization:
     def test_invalid_model_warns_and_drops(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"
         agents_dir.mkdir()
-        (agents_dir / "x.txt").write_text(
-            "---\nmodel: gpt-4\n---\nthe body\n"
-        )
+        (agents_dir / "x.txt").write_text("---\nmodel: gpt-4\n---\nthe body\n")
 
         warnings: list[str] = []
-        result = load_agent(
-            "x", local_dir=tmp_path, warn=lambda msg: warnings.append(msg)
-        )
+        result = load_agent("x", local_dir=tmp_path, warn=lambda msg: warnings.append(msg))
 
         assert result is not None
         assert result.model == ""
@@ -159,12 +147,8 @@ class TestModelNormalization:
         for model_name in ("haiku", "sonnet", "opus"):
             agents_dir = tmp_path / f"{model_name}-agents" / "agents"
             agents_dir.mkdir(parents=True)
-            (agents_dir / "x.txt").write_text(
-                f"---\nmodel: {model_name}\n---\nbody\n"
-            )
-            result = load_agent(
-                "x", local_dir=tmp_path / f"{model_name}-agents"
-            )
+            (agents_dir / "x.txt").write_text(f"---\nmodel: {model_name}\n---\nbody\n")
+            result = load_agent("x", local_dir=tmp_path / f"{model_name}-agents")
             assert result is not None
             assert result.model == model_name
 
@@ -182,9 +166,7 @@ class TestEmbeddedDefaults:
     def test_implementation_body_loads(self) -> None:
         result = load_agent("implementation")
         assert result is not None
-        assert result.body.startswith(
-            "Review whether the implementation achieves the stated goal"
-        )
+        assert result.body.startswith("Review whether the implementation achieves the stated goal")
 
     def test_testing_body_loads(self) -> None:
         result = load_agent("testing")
@@ -194,9 +176,7 @@ class TestEmbeddedDefaults:
     def test_simplification_body_loads(self) -> None:
         result = load_agent("simplification")
         assert result is not None
-        assert result.body.startswith(
-            "Detect over-engineered and overcomplicated code"
-        )
+        assert result.body.startswith("Detect over-engineered and overcomplicated code")
 
     @pytest.mark.parametrize(
         "name",
@@ -209,12 +189,8 @@ class TestEmbeddedDefaults:
     )
     def test_all_shipped_agents_load(self, name: str) -> None:
         result = load_agent(name)
-        assert result is not None, (
-            f"shipped agent {name!r} returned None"
-        )
-        assert result.body.strip(), (
-            f"shipped agent {name!r} loaded but body is empty"
-        )
+        assert result is not None, f"shipped agent {name!r} returned None"
+        assert result.body.strip(), f"shipped agent {name!r} loaded but body is empty"
 
 
 class TestAgentDef:

@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from cadence.cli import compute_progress_path
 from cadence.config import ColorConfig
 from cadence.progress.colors import Colors
 from cadence.progress.flock import lock_file, unlock_file
@@ -11,8 +12,7 @@ from cadence.progress.logger import (
     Logger,
     ProgressLoggerConfig,
     _is_progress_completed,
-    _progress_path,
-    _sanitize_plan_name,
+    sanitize_plan_name,
 )
 from cadence.status import (
     Mode,
@@ -75,122 +75,115 @@ class TestFlock:
             os.unlink(path)
 
 
-class TestProgressPath:
+class TestComputeProgressPath:
     def test_plan_mode_with_plan_file(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.PLAN, plan_file="some/dir/plan.md")
-        assert _progress_path(cfg) == os.path.join("some/dir", "progress-plan.txt")
+        path = compute_progress_path(Mode.PLAN, plan_file="some/dir/plan.md")
+        assert path == os.path.join("some/dir", "progress-plan.txt")
 
     def test_plan_mode_plan_file_no_dir(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.PLAN, plan_file="plan.md")
-        assert _progress_path(cfg) == os.path.join(".", "progress-plan.txt")
+        path = compute_progress_path(Mode.PLAN, plan_file="plan.md")
+        assert path == os.path.join(".", "progress-plan.txt")
 
     def test_plan_mode_no_plan_file_raises(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.PLAN)
         with pytest.raises(RuntimeError):
-            _progress_path(cfg)
+            compute_progress_path(Mode.PLAN)
 
     def test_full_mode_with_plan_file(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.FULL, plan_file="some/dir/plan.md")
-        assert _progress_path(cfg) == os.path.join("some/dir", "progress-task.txt")
+        path = compute_progress_path(Mode.FULL, plan_file="some/dir/plan.md")
+        assert path == os.path.join("some/dir", "progress-task.txt")
 
     def test_full_mode_no_plan_file_raises(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.FULL)
         with pytest.raises(RuntimeError):
-            _progress_path(cfg)
+            compute_progress_path(Mode.FULL)
 
     def test_review_mode_feature_branch(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="feat/foo",
             default_branch="main",
             tasks_root="cdc-tasks",
         )
-        assert _progress_path(cfg) == os.path.join("cdc-tasks", "feat-foo", "progress-review.txt")
+        assert path == os.path.join("cdc-tasks", "feat-foo", "progress-review.txt")
 
     def test_review_mode_default_branch_uses_hash(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="main",
             default_branch="main",
             head_hash="abc1234",
             tasks_root="cdc-tasks",
         )
-        assert _progress_path(cfg) == os.path.join("cdc-tasks", "abc1234", "progress-review.txt")
+        assert path == os.path.join("cdc-tasks", "abc1234", "progress-review.txt")
 
     def test_review_mode_default_branch_with_origin_prefix_uses_hash(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="main",
             default_branch="origin/main",
             head_hash="abc1234def567",
             tasks_root="cdc-tasks",
         )
-        assert _progress_path(cfg) == os.path.join(
-            "cdc-tasks", "abc1234def56", "progress-review.txt"
-        )
+        assert path == os.path.join("cdc-tasks", "abc1234def56", "progress-review.txt")
 
     def test_review_mode_full_length_hash_truncated_to_12(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="",
             default_branch="main",
             head_hash="0123456789abcdef0123456789abcdef01234567",
             tasks_root="cdc-tasks",
         )
-        assert _progress_path(cfg) == os.path.join(
-            "cdc-tasks", "0123456789ab", "progress-review.txt"
-        )
+        assert path == os.path.join("cdc-tasks", "0123456789ab", "progress-review.txt")
 
     def test_review_mode_detached_head_uses_hash(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="",
             default_branch="main",
             head_hash="def5678",
             tasks_root="cdc-tasks",
         )
-        assert _progress_path(cfg) == os.path.join("cdc-tasks", "def5678", "progress-review.txt")
+        assert path == os.path.join("cdc-tasks", "def5678", "progress-review.txt")
 
     def test_review_mode_custom_tasks_root(self) -> None:
-        cfg = ProgressLoggerConfig(
-            mode=Mode.REVIEW,
+        path = compute_progress_path(
+            Mode.REVIEW,
             branch="feature-x",
             default_branch="main",
             tasks_root="my-tasks",
         )
-        assert _progress_path(cfg) == os.path.join("my-tasks", "feature-x", "progress-review.txt")
+        assert path == os.path.join("my-tasks", "feature-x", "progress-review.txt")
 
     def test_review_mode_no_branch_no_hash_raises(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.REVIEW, branch="", default_branch="main", head_hash="")
         with pytest.raises(RuntimeError):
-            _progress_path(cfg)
+            compute_progress_path(Mode.REVIEW, branch="", default_branch="main", head_hash="")
 
 
 class TestSanitizePlanName:
     def test_basic(self) -> None:
-        assert _sanitize_plan_name("Hello World") == "hello-world"
+        assert sanitize_plan_name("Hello World") == "hello-world"
 
     def test_special_chars(self) -> None:
-        assert _sanitize_plan_name("plan@v2!") == "planv2"
+        assert sanitize_plan_name("plan@v2!") == "planv2"
 
     def test_collapse_dashes(self) -> None:
-        assert _sanitize_plan_name("a---b") == "a-b"
+        assert sanitize_plan_name("a---b") == "a-b"
 
     def test_empty_fallback(self) -> None:
-        assert _sanitize_plan_name("!!!") == "unnamed"
+        assert sanitize_plan_name("!!!") == "unnamed"
 
     def test_length_limit(self) -> None:
-        result = _sanitize_plan_name("a" * 100)
+        result = sanitize_plan_name("a" * 100)
         assert len(result) <= 50
 
     def test_slash_becomes_dash(self) -> None:
-        assert _sanitize_plan_name("feat/foo") == "feat-foo"
+        assert sanitize_plan_name("feat/foo") == "feat-foo"
 
     def test_multiple_slashes(self) -> None:
-        assert _sanitize_plan_name("a/b/c") == "a-b-c"
+        assert sanitize_plan_name("a/b/c") == "a-b-c"
 
     def test_backslash_becomes_dash(self) -> None:
-        assert _sanitize_plan_name("a\\b") == "a-b"
+        assert sanitize_plan_name("a\\b") == "a-b"
 
 
 class TestLogger:
@@ -208,13 +201,19 @@ class TestLogger:
             tasks_root = str(kwargs.get("tasks_root", "cdc-tasks"))
             plan_file_default = "" if mode == Mode.REVIEW else "test.md"
             plan_file = str(kwargs.get("plan_file", plan_file_default))
-            cfg = ProgressLoggerConfig(
+            progress_path = compute_progress_path(
+                mode,
                 plan_file=plan_file,
-                mode=mode,
                 branch=branch,
                 default_branch=default_branch,
                 head_hash=head_hash,
                 tasks_root=tasks_root,
+            )
+            cfg = ProgressLoggerConfig(
+                progress_path=progress_path,
+                plan_file=plan_file,
+                mode=mode,
+                branch=branch,
             )
             colors = Colors(ColorConfig())
             holder = PhaseHolder()
@@ -470,10 +469,10 @@ class TestLogger:
             progress_file.write_text("some incomplete data\n")
 
             cfg = ProgressLoggerConfig(
+                progress_path=str(progress_file),
                 plan_file="plans/incomplete.md",
                 mode=Mode.FULL,
                 branch="feat",
-                default_branch="main",
             )
             colors = Colors(ColorConfig())
             holder = PhaseHolder()

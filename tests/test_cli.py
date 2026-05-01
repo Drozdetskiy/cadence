@@ -6,11 +6,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from typer import BadParameter
 
 from cadence.cli import (
-    _build_review_executor,
+    _setup_runtime,
     _sigint,
+    _validate_flags,
     check_claude_dep,
     derive_plan_path,
     determine_mode,
@@ -48,13 +48,58 @@ class TestDetermineMode:
     def test_plan_takes_priority_over_review(self, tmp_path: Path) -> None:
         assert determine_mode(tmp_path / "f.md", None, True) == Mode.PLAN
 
-    def test_no_mode_raises(self) -> None:
-        with pytest.raises(BadParameter):
-            determine_mode(None, None, False)
-
     def test_plan_takes_priority_over_task(self, tmp_path: Path) -> None:
         result = determine_mode(tmp_path / "a.md", tmp_path / "b.md", False)
         assert result == Mode.PLAN
+
+
+class TestValidateFlags:
+    def test_no_flags_exits(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None)
+        assert excinfo.value.code == 1
+        assert "one of --plan, --task, or --review is required" in capsys.readouterr().err
+
+    def test_plan_and_task_mutually_exclusive(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(tmp_path / "a", tmp_path / "b", False, False, None)
+        assert excinfo.value.code == 1
+        assert "mutually exclusive" in capsys.readouterr().err
+
+    def test_review_with_impl_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, True, True, None)
+        assert excinfo.value.code == 1
+        assert "--review is incompatible with --impl" in capsys.readouterr().err
+
+    def test_impl_without_plan_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, True, None)
+        assert excinfo.value.code == 1
+        assert "--impl requires --plan" in capsys.readouterr().err
+
+    def test_base_without_review_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, "main")
+        assert excinfo.value.code == 1
+        assert "--base is only valid with --review" in capsys.readouterr().err
+
+    def test_valid_plan_alone_passes(self, tmp_path: Path) -> None:
+        _validate_flags(tmp_path / "p", None, False, False, None)
+
+    def test_valid_task_alone_passes(self, tmp_path: Path) -> None:
+        _validate_flags(None, tmp_path / "p", False, False, None)
+
+    def test_valid_review_alone_passes(self) -> None:
+        _validate_flags(None, None, True, False, None)
+
+    def test_valid_review_with_base_passes(self) -> None:
+        _validate_flags(None, None, True, False, "develop")
+
+    def test_valid_plan_with_impl_passes(self, tmp_path: Path) -> None:
+        _validate_flags(tmp_path / "p", None, False, True, None)
 
 
 class TestCheckClaudeDep:
@@ -119,7 +164,7 @@ class TestRunPlanMode:
         with pytest.raises(SystemExit):
             run_plan_mode(f)
 
-    @patch("cadence.cli.is_git_repo", return_value=False)
+    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -128,7 +173,7 @@ class TestRunPlanMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
+        _svc: MagicMock,
         tmp_path: Path,
     ) -> None:
         from cadence.config import Config
@@ -142,20 +187,18 @@ class TestRunPlanMode:
     @patch("cadence.cli.typer.echo")
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_full_wiring_plan_ready(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
@@ -170,9 +213,7 @@ class TestRunPlanMode:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
 
         mock_terminal = MagicMock()
@@ -190,20 +231,18 @@ class TestRunPlanMode:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_executor_created_with_handlers(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -217,9 +256,7 @@ class TestRunPlanMode:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
 
         mock_terminal = MagicMock()
@@ -236,20 +273,18 @@ class TestRunPlanMode:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_user_aborted(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -277,6 +312,7 @@ class TestRunPlanMode:
         mock_log.print.assert_any_call("aborted by user")
         mock_log.close.assert_called_once()
 
+
 class TestMainCommand:
     def test_version_flag(self) -> None:
         from typer.testing import CliRunner
@@ -299,15 +335,11 @@ class TestMainCommand:
         f1.write_text("plan")
         f2 = tmp_path / "b.md"
         f2.write_text("task")
-        result = runner.invoke(
-            app, ["--plan", str(f1), "--task", str(f2)]
-        )
+        result = runner.invoke(app, ["--plan", str(f1), "--task", str(f2)])
         assert result.exit_code != 0
 
     @patch("cadence.cli.run_task_mode")
-    def test_task_flag_calls_run_task_mode(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_task_flag_calls_run_task_mode(self, mock_run: MagicMock, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
         from cadence.cli import app
@@ -322,9 +354,7 @@ class TestMainCommand:
         assert args[0] == f
 
     @patch("cadence.cli.run_review_mode")
-    def test_review_flag_calls_run_review_mode(
-        self, mock_run: MagicMock
-    ) -> None:
+    def test_review_flag_calls_run_review_mode(self, mock_run: MagicMock) -> None:
         from typer.testing import CliRunner
 
         from cadence.cli import app
@@ -386,9 +416,7 @@ class TestMainCommand:
         assert result.exit_code != 0
 
     @patch("cadence.cli.run_plan_mode")
-    def test_impl_with_plan_passes(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_impl_with_plan_passes(self, mock_run: MagicMock, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
         from cadence.cli import app
@@ -490,20 +518,18 @@ class TestRunPlanModeImplFlag:
     @patch("cadence.cli.typer.echo")
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_impl_flag_chains_to_task_mode(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
@@ -519,9 +545,7 @@ class TestRunPlanModeImplFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
 
         f = tmp_path / "prompt.md"
@@ -536,9 +560,7 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
-        mock_run_task_mode.assert_called_once_with(
-            Path(derive_plan_path(f)), config=None
-        )
+        mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)), config=None)
         ordered_names = [c[0] for c in parent.mock_calls]
         assert ordered_names.index("close") < ordered_names.index("task")
 
@@ -546,20 +568,18 @@ class TestRunPlanModeImplFlag:
     @patch("cadence.cli.typer.echo")
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_no_impl_flag_no_not_available_message(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
@@ -575,9 +595,7 @@ class TestRunPlanModeImplFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
 
         f = tmp_path / "prompt.md"
@@ -594,22 +612,20 @@ class TestRunPlanModeImplFlag:
     @patch("cadence.cli.typer.echo")
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
     @patch("cadence.cli.Runner")
+    @patch("cadence.cli.Service")
     def test_impl_flag_does_not_chain_on_plan_failure(
         self,
+        _svc: MagicMock,
         mock_runner_cls: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         mock_echo: MagicMock,
@@ -665,7 +681,6 @@ class TestRunTaskMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -676,7 +691,6 @@ class TestRunTaskMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -693,17 +707,12 @@ class TestRunTaskMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
-        mock_svc.diff_stats.return_value = DiffStats(
-            files=2, additions=10, deletions=3
-        )
+        mock_svc.diff_stats.return_value = DiffStats(files=2, additions=10, deletions=3)
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalCompleted
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
         mock_executor_cls.return_value = mock_executor
 
         mock_terminal_cls.return_value = MagicMock()
@@ -724,7 +733,6 @@ class TestRunTaskMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -735,7 +743,6 @@ class TestRunTaskMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -751,7 +758,6 @@ class TestRunTaskMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_service_cls.return_value = mock_svc
 
@@ -775,7 +781,6 @@ class TestRunTaskMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -786,7 +791,6 @@ class TestRunTaskMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -808,7 +812,6 @@ class TestRunTaskMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -819,7 +822,6 @@ class TestRunTaskMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -836,16 +838,13 @@ class TestRunTaskMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_svc.mark_plan_completed.side_effect = RuntimeError("git failed")
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalCompleted
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
         mock_executor_cls.return_value = mock_executor
 
         mock_terminal_cls.return_value = MagicMock()
@@ -882,37 +881,83 @@ class TestInstallSigquit:
             signal.signal(sigquit, prior)
 
 
-class TestBuildReviewExecutor:
-    def test_returns_none_when_review_matches_task(self) -> None:
-        from cadence.config import Config
-
-        cfg = Config(task_model="sonnet", review_model="sonnet")
-        result = _build_review_executor(
-            cfg,
-            activity_handler=lambda _t: None,
-            output_handler=lambda _t: None,
-            idle_timeout=0.0,
-        )
-        assert result is None
-
-    @patch("cadence.cli.ClaudeExecutor")
-    def test_builds_distinct_executor_when_review_differs(
-        self, mock_executor_cls: MagicMock
+class TestSetupRuntime:
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_returns_expected_tuple(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        mock_service_cls: MagicMock,
     ) -> None:
         from cadence.config import Config
 
-        cfg = Config(task_model="sonnet", review_model="opus")
-        mock_executor_cls.return_value = MagicMock()
-        result = _build_review_executor(
-            cfg,
-            activity_handler=lambda _t: None,
-            output_handler=lambda _t: None,
-            idle_timeout=0.0,
+        mock_config.return_value = Config(default_branch="trunk")
+        mock_svc = MagicMock()
+        mock_service_cls.return_value = mock_svc
+
+        cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
+            None, None
         )
-        assert result is mock_executor_cls.return_value
+
+        assert isinstance(cfg, Config)
+        assert holder is not None
+        assert colors is not None
+        assert git_svc is mock_svc
+        assert callable(factory)
+        assert default_branch == "trunk"
+        assert local_dir is None
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_factory_creates_executor_with_supplied_model(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        _svc: MagicMock,
+        mock_executor_cls: MagicMock,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        _, _, _, _, factory, _, _ = _setup_runtime(None, None)
+
+        log = MagicMock()
+        factory(log, "opus")
+
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "opus"
-        assert kwargs["command"] == cfg.claude_command
+        assert kwargs["activity_handler"] is not None
+        assert kwargs["output_handler"] is not None
+
+    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_service_init_failure_exits(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        _svc: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        with pytest.raises(SystemExit) as excinfo:
+            _setup_runtime(None, None)
+        assert excinfo.value.code == 1
+        assert "not a repo" in capsys.readouterr().err
 
 
 class TestRunReviewMode:
@@ -920,7 +965,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -931,7 +975,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -948,17 +991,12 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
-        mock_svc.diff_stats.return_value = DiffStats(
-            files=1, additions=4, deletions=2
-        )
+        mock_svc.diff_stats.return_value = DiffStats(files=1, additions=4, deletions=2)
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalReviewDone
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalReviewDone)
         mock_executor_cls.return_value = mock_executor
 
         mock_terminal_cls.return_value = MagicMock()
@@ -985,7 +1023,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -996,7 +1033,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1017,7 +1053,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1046,7 +1081,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1057,7 +1091,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1078,7 +1111,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1107,7 +1139,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1118,7 +1149,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1127,9 +1157,7 @@ class TestRunReviewMode:
     ) -> None:
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, default_branch="main"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, default_branch="main")
 
         mock_log = MagicMock()
         mock_log.path = str(tmp_path / "progress.txt")
@@ -1137,7 +1165,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "should-not-be-used"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1156,7 +1183,6 @@ class TestRunReviewMode:
             run_review_mode(base="develop")
 
         mock_svc.diff_stats.assert_called_once_with("develop")
-        mock_svc.get_default_branch.assert_not_called()
         mock_log.print.assert_any_call("base: %s", "develop")
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "develop"
@@ -1165,7 +1191,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1176,7 +1201,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1185,9 +1209,7 @@ class TestRunReviewMode:
     ) -> None:
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, default_branch="trunk"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, default_branch="trunk")
 
         mock_log = MagicMock()
         mock_log.path = str(tmp_path / "progress.txt")
@@ -1195,7 +1217,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "should-not-be-used"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1214,7 +1235,6 @@ class TestRunReviewMode:
             run_review_mode(base=None)
 
         mock_svc.diff_stats.assert_called_once_with("trunk")
-        mock_svc.get_default_branch.assert_not_called()
         mock_log.print.assert_any_call("base: %s", "trunk")
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "trunk"
@@ -1223,65 +1243,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    def test_base_none_falls_back_to_autodetect_when_config_empty(
-        self,
-        mock_logger_cls: MagicMock,
-        _check: MagicMock,
-        _detect: MagicMock,
-        mock_config: MagicMock,
-        _git: MagicMock,
-        mock_service_cls: MagicMock,
-        mock_executor_cls: MagicMock,
-        mock_terminal_cls: MagicMock,
-        _sigquit: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        from cadence.config import Config
-
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, default_branch=""
-        )
-
-        mock_log = MagicMock()
-        mock_log.path = str(tmp_path / "progress.txt")
-        mock_log.elapsed.return_value = "0m30s"
-        mock_logger_cls.return_value = mock_log
-
-        mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
-        mock_svc.current_branch.return_value = "feature"
-        mock_svc.diff_stats.return_value = DiffStats()
-        mock_service_cls.return_value = mock_svc
-
-        mock_executor_cls.return_value = MagicMock()
-        mock_terminal_cls.return_value = MagicMock()
-
-        with (
-            patch("cadence.cli.display_stats"),
-            patch("cadence.cli.Runner") as mock_runner_cls,
-        ):
-            mock_runner = MagicMock()
-            mock_runner.run.return_value = True
-            mock_runner_cls.return_value = mock_runner
-
-            run_review_mode()
-
-        mock_svc.diff_stats.assert_called_once_with("main")
-        mock_svc.get_default_branch.assert_called_once()
-        mock_log.print.assert_any_call("base: %s", "main")
-        ctx_arg = mock_runner_cls.call_args.args[0]
-        assert ctx_arg.default_branch == "main"
-
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1292,7 +1253,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1308,7 +1268,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_service_cls.return_value = mock_svc
 
@@ -1329,7 +1288,6 @@ class TestRunReviewMode:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1340,7 +1298,6 @@ class TestRunReviewMode:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1356,7 +1313,6 @@ class TestRunReviewMode:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_service_cls.return_value = mock_svc
 
@@ -1380,7 +1336,6 @@ class TestRunTaskModeReviewExecutor:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1391,7 +1346,6 @@ class TestRunTaskModeReviewExecutor:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1412,7 +1366,6 @@ class TestRunTaskModeReviewExecutor:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1442,7 +1395,6 @@ class TestRunTaskModeReviewExecutor:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1453,7 +1405,6 @@ class TestRunTaskModeReviewExecutor:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1474,7 +1425,6 @@ class TestRunTaskModeReviewExecutor:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1503,20 +1453,18 @@ class TestRunTaskModeReviewExecutor:
 class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_plan_explicit_config_applies_overrides(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -1530,9 +1478,7 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
@@ -1551,20 +1497,18 @@ class TestConfigFlag:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_plan_autodiscovers_yaml_next_to_plan(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -1578,15 +1522,13 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
-        yaml_path = tmp_path / "cadence-config.yaml"
+        yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text("plan:\n  model: discovered-plan\n")
 
         run_plan_mode(plan_file)
@@ -1596,38 +1538,32 @@ class TestConfigFlag:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_plan_no_yaml_no_overrides(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, plan_model="toml-plan-default"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, plan_model="toml-plan-default")
 
         mock_log = MagicMock()
         mock_log.path = str(tmp_path / "progress.txt")
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
@@ -1643,7 +1579,6 @@ class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1654,7 +1589,6 @@ class TestConfigFlag:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1671,7 +1605,6 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1701,7 +1634,6 @@ class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1712,7 +1644,6 @@ class TestConfigFlag:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1729,7 +1660,6 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1739,7 +1669,7 @@ class TestConfigFlag:
 
         task_file = tmp_path / "plan.md"
         task_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
-        yaml_path = tmp_path / "cadence-config.yaml"
+        yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text("task:\n  model: discovered-task\n")
 
         with patch("cadence.cli.Runner") as mock_runner_cls:
@@ -1756,7 +1686,6 @@ class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1767,7 +1696,6 @@ class TestConfigFlag:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1784,7 +1712,6 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1809,7 +1736,6 @@ class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -1822,7 +1748,6 @@ class TestConfigFlag:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -1831,9 +1756,7 @@ class TestConfigFlag:
     ) -> None:
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, review_model="toml-review-default"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, review_model="toml-review-default")
 
         mock_log = MagicMock()
         mock_log.path = str(tmp_path / "progress.txt")
@@ -1841,7 +1764,6 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
@@ -1870,9 +1792,7 @@ class TestConfigFlag:
         plan_file.write_text("implement feature X")
         missing = tmp_path / "missing.yaml"
 
-        result = runner.invoke(
-            app, ["--plan", str(plan_file), "--config", str(missing)]
-        )
+        result = runner.invoke(app, ["--plan", str(plan_file), "--config", str(missing)])
         assert result.exit_code != 0
         assert "config file not found" in result.output
 
@@ -1887,28 +1807,24 @@ class TestConfigFlag:
         bad_yaml = tmp_path / "bad.yaml"
         bad_yaml.write_text("not-valid-yaml-no-colon\n")
 
-        result = runner.invoke(
-            app, ["--plan", str(plan_file), "--config", str(bad_yaml)]
-        )
+        result = runner.invoke(app, ["--plan", str(plan_file), "--config", str(bad_yaml)])
         assert result.exit_code != 0
         assert "error" in result.output.lower()
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_explicit_config_wins_over_autodiscovery(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -1922,16 +1838,14 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
         plan_file = tmp_path / "prompt.md"
         plan_file.write_text("implement feature X")
 
-        sibling_yaml = tmp_path / "cadence-config.yaml"
+        sibling_yaml = tmp_path / "config.yaml"
         sibling_yaml.write_text("plan:\n  model: sibling-plan\n")
 
         explicit_yaml = tmp_path / "explicit.yaml"
@@ -1944,42 +1858,36 @@ class TestConfigFlag:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
     @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
     def test_autodiscovery_does_not_walk_to_parent(
         self,
+        _svc: MagicMock,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, plan_model="toml-plan-default"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, plan_model="toml-plan-default")
 
         mock_log = MagicMock()
         mock_log.path = str(tmp_path / "progress.txt")
         mock_logger_cls.return_value = mock_log
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
-        parent_yaml = tmp_path / "cadence-config.yaml"
+        parent_yaml = tmp_path / "config.yaml"
         parent_yaml.write_text("plan:\n  model: parent-yaml\n")
 
         subdir = tmp_path / "subdir"
@@ -1996,8 +1904,6 @@ class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -2008,8 +1914,6 @@ class TestConfigFlag:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -2026,15 +1930,12 @@ class TestConfigFlag:
         mock_logger_cls.return_value = mock_log
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
@@ -2044,9 +1945,7 @@ class TestConfigFlag:
         derived_plan.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
         explicit_yaml = tmp_path / "explicit.yaml"
-        explicit_yaml.write_text(
-            "plan:\n  model: yaml-plan\ntask:\n  model: yaml-task\n"
-        )
+        explicit_yaml.write_text("plan:\n  model: yaml-plan\ntask:\n  model: yaml-task\n")
 
         with patch("cadence.cli.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
@@ -2055,9 +1954,7 @@ class TestConfigFlag:
 
             run_plan_mode(plan_file, impl=True, config=explicit_yaml)
 
-        models_used = [
-            call.kwargs["model"] for call in mock_executor_cls.call_args_list
-        ]
+        models_used = [call.kwargs["model"] for call in mock_executor_cls.call_args_list]
         assert "yaml-plan" in models_used
         assert "yaml-task" in models_used
 
@@ -2069,7 +1966,6 @@ class TestProgressPathWiring:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -2078,7 +1974,6 @@ class TestProgressPathWiring:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -2089,12 +1984,9 @@ class TestProgressPathWiring:
 
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, tasks_root="cdc-tasks"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "main"
         mock_svc.head_hash.return_value = "abc123def456"
         mock_svc.diff_stats.return_value = DiffStats()
@@ -2125,7 +2017,6 @@ class TestProgressPathWiring:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -2134,7 +2025,6 @@ class TestProgressPathWiring:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -2145,12 +2035,9 @@ class TestProgressPathWiring:
 
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, tasks_root="cdc-tasks"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feat/foo"
         mock_svc.head_hash.return_value = "abc123"
         mock_svc.diff_stats.return_value = DiffStats()
@@ -2179,18 +2066,16 @@ class TestProgressPathWiring:
 
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.is_git_repo", return_value=True)
-    @patch("cadence.cli.get_default_branch", return_value="main")
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Service")
     def test_plan_mode_writes_progress_plan_next_to_plan_file(
         self,
+        _svc: MagicMock,
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _branch: MagicMock,
-        _git: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
         tmp_path: Path,
@@ -2202,9 +2087,7 @@ class TestProgressPathWiring:
         mock_config.return_value = Config(iteration_delay_ms=0)
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalPlanReady
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
@@ -2227,7 +2110,6 @@ class TestProgressPathWiring:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -2236,7 +2118,6 @@ class TestProgressPathWiring:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -2250,15 +2131,12 @@ class TestProgressPathWiring:
         mock_config.return_value = Config(iteration_delay_ms=0)
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
-        mock_executor.run.return_value = Result(
-            output="done", signal=SignalCompleted
-        )
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
         mock_executor_cls.return_value = mock_executor
         mock_terminal_cls.return_value = MagicMock()
 
@@ -2286,7 +2164,6 @@ class TestProgressPathWiring:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
-    @patch("cadence.cli.is_git_repo", return_value=True)
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
     @patch("cadence.cli.check_claude_dep")
@@ -2295,7 +2172,6 @@ class TestProgressPathWiring:
         _check: MagicMock,
         _detect: MagicMock,
         mock_config: MagicMock,
-        _git: MagicMock,
         mock_service_cls: MagicMock,
         mock_executor_cls: MagicMock,
         mock_terminal_cls: MagicMock,
@@ -2307,12 +2183,9 @@ class TestProgressPathWiring:
 
         from cadence.config import Config
 
-        mock_config.return_value = Config(
-            iteration_delay_ms=0, tasks_root="cdc-tasks"
-        )
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
 
         mock_svc = MagicMock()
-        mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = ""
         mock_svc.head_hash.return_value = ""
         mock_service_cls.return_value = mock_svc

@@ -3,13 +3,7 @@ from __future__ import annotations
 from rich.style import Style
 
 from cadence.config import ColorConfig
-from cadence.status import (
-    Phase,
-    PhaseFinalize,
-    PhasePlan,
-    PhaseReview,
-    PhaseTask,
-)
+from cadence.status import Phase, PhaseReview
 
 
 def _hex_to_style(hex_color: str) -> Style:
@@ -25,12 +19,7 @@ class Colors:
         self._signal = _hex_to_style(cfg.signal)
         self._timestamp = _hex_to_style(cfg.timestamp)
         self._info = _hex_to_style(cfg.info)
-        self._phases: dict[Phase, Style] = {
-            PhaseTask: self._task,
-            PhaseReview: self._review,
-            PhasePlan: self._task,
-            PhaseFinalize: self._task,
-        }
+        self._phases: dict[Phase, Style] = {PhaseReview: self._review}
 
     def for_phase(self, phase: Phase) -> Style:
         return self._phases.get(phase, self._task)

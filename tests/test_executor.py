@@ -17,11 +17,12 @@ from cadence.executor.claude_executor import (
     LimitPatternError,
     PatternMatchError,
     Result,
-    _extract_text,
+    _extract_text_from_event,
     detect_signal,
     filter_env,
     match_pattern,
 )
+from cadence.executor.events import parse_event
 from cadence.executor.process_group import ProcessGroupCleanup
 from cadence.status import (
     SignalCompleted,
@@ -83,6 +84,12 @@ class TestMatchPattern:
 
 
 class TestExtractText:
+    def _extract(self, raw: dict[str, object]) -> str:
+        parsed = parse_event(raw)
+        if parsed is None:
+            return ""
+        return _extract_text_from_event(parsed)
+
     def test_assistant_event(self) -> None:
         event = {
             "type": "assistant",
@@ -93,45 +100,43 @@ class TestExtractText:
                 ]
             },
         }
-        assert _extract_text(event) == "hello world"
+        assert self._extract(event) == "hello world"
 
     def test_content_block_delta(self) -> None:
         event = {
             "type": "content_block_delta",
             "delta": {"type": "text_delta", "text": "chunk"},
         }
-        assert _extract_text(event) == "chunk"
+        assert self._extract(event) == "chunk"
 
     def test_content_block_delta_non_text(self) -> None:
         event = {
             "type": "content_block_delta",
             "delta": {"type": "tool_use_delta", "text": "chunk"},
         }
-        assert _extract_text(event) == ""
+        assert self._extract(event) == ""
 
     def test_message_stop(self) -> None:
         event = {
             "type": "message_stop",
-            "message": {
-                "content": [{"type": "text", "text": "final"}]
-            },
+            "message": {"content": [{"type": "text", "text": "final"}]},
         }
-        assert _extract_text(event) == "final"
+        assert self._extract(event) == "final"
 
     def test_result_dict_output(self) -> None:
         event = {
             "type": "result",
             "result": {"output": "session summary"},
         }
-        assert _extract_text(event) == "session summary"
+        assert self._extract(event) == "session summary"
 
     def test_result_string(self) -> None:
         event = {"type": "result", "result": "some string"}
-        assert _extract_text(event) == ""
+        assert self._extract(event) == ""
 
     def test_unknown_type(self) -> None:
         event = {"type": "unknown", "data": "stuff"}
-        assert _extract_text(event) == ""
+        assert self._extract(event) == ""
 
 
 class TestFilterEnv:
@@ -180,10 +185,12 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_signal_detection(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -192,10 +199,12 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_failed_signal(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "<<<CADENCE:TASK_FAILED>>>"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "<<<CADENCE:TASK_FAILED>>>"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -226,13 +235,15 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_pattern_in_assistant_content_not_matched(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {
-                    "type": "text_delta",
-                    "text": "discussing You've hit your limit pattern in code",
-                },
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "text_delta",
+                        "text": "discussing You've hit your limit pattern in code",
+                    },
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -246,10 +257,12 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_pattern_in_result_event_not_matched(self) -> None:
         lines = [
-            json.dumps({
-                "type": "result",
-                "result": "summary echoing You've hit your limit literal",
-            }),
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": "summary echoing You've hit your limit literal",
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -262,21 +275,25 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_pattern_in_unrecognized_json_event_not_matched(self) -> None:
         lines = [
-            json.dumps({
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "content": "matched: You've hit your limit",
-                        }
-                    ]
-                },
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
-            }),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "content": "matched: You've hit your limit",
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "done <<<CADENCE:ALL_TASKS_DONE>>>"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -291,17 +308,19 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_pattern_in_unrecognized_json_event_no_signal_not_matched(self) -> None:
         lines = [
-            json.dumps({
-                "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "content": "matched: You've hit your limit",
-                        }
-                    ]
-                },
-            }),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "content": "matched: You've hit your limit",
+                            }
+                        ]
+                    },
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -327,14 +346,21 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_limit_pattern_skipped_on_clean_signal_exit(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "plan body <<<CADENCE:PLAN_READY>>>"},
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "quoting You've hit your limit pattern"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "plan body <<<CADENCE:PLAN_READY>>>"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "text_delta",
+                        "text": "quoting You've hit your limit pattern",
+                    },
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -350,16 +376,18 @@ class TestClaudeExecutorWithMockRunner:
         from cadence.status import SignalQuestion
 
         question_text = (
-            '<<<CADENCE:QUESTION>>>\n'
+            "<<<CADENCE:QUESTION>>>\n"
             '{"question": "How does YAML override TOML?", '
             '"options": ["a quoting You\'ve hit your limit", "b"]}\n'
-            '<<<CADENCE:END>>>'
+            "<<<CADENCE:END>>>"
         )
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": question_text},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": question_text},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(
@@ -380,10 +408,15 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_nonzero_exit_with_signal_ignored(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "work done <<<CADENCE:ALL_TASKS_DONE>>>"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {
+                        "type": "text_delta",
+                        "text": "work done <<<CADENCE:ALL_TASKS_DONE>>>",
+                    },
+                }
+            ),
         ]
         runner = MockCommandRunner(lines, exit_code=1)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -393,10 +426,12 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_nonzero_exit_with_output_no_signal(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "partial work"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "partial work"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines, exit_code=1)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -415,10 +450,12 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_called(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "hello"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "hello"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner, output_handler=captured.append)
@@ -428,15 +465,19 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_newline_at_message_stop(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "first message."},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "first message."},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "second message."},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "second message."},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
         ]
         runner = MockCommandRunner(lines)
@@ -447,22 +488,30 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_newline_at_assistant_boundary(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "assistant",
-                "message": {"content": []},
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "first message."},
-            }),
-            json.dumps({
-                "type": "assistant",
-                "message": {"content": []},
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "second message."},
-            }),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "first message."},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "second message."},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner, output_handler=captured.append)
@@ -472,19 +521,25 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_no_double_newline_with_both_boundaries(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "first."},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "first."},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
-            json.dumps({
-                "type": "assistant",
-                "message": {"content": []},
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "second."},
-            }),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": []},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "second."},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
         ]
         runner = MockCommandRunner(lines)
@@ -495,10 +550,12 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_no_extra_newline_when_text_ends_with_newline(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "has newline\n"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "has newline\n"},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
         ]
         runner = MockCommandRunner(lines)
@@ -509,10 +566,12 @@ class TestClaudeExecutorWithMockRunner:
     def test_output_handler_no_newline_for_tool_only_message(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Read"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Read"},
+                }
+            ),
             json.dumps({"type": "message_stop"}),
         ]
         runner = MockCommandRunner(lines)
@@ -531,15 +590,17 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_assistant_event_parsing(self) -> None:
         lines = [
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "first part "},
-                        {"type": "text", "text": "second part"},
-                    ]
-                },
-            }),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "first part "},
+                            {"type": "text", "text": "second part"},
+                        ]
+                    },
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -548,10 +609,12 @@ class TestClaudeExecutorWithMockRunner:
 
     def test_result_event_with_output(self) -> None:
         lines = [
-            json.dumps({
-                "type": "result",
-                "result": {"output": "summary text"},
-            }),
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": {"output": "summary text"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -606,10 +669,12 @@ class TestClaudeExecutorIdleTimeout:
                 r, w = os.pipe()
                 rf = os.fdopen(r, "r")
                 wf = os.fdopen(w, "w")
-                line = json.dumps({
-                    "type": "content_block_delta",
-                    "delta": {"type": "text_delta", "text": "hi"},
-                })
+                line = json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "delta": {"type": "text_delta", "text": "hi"},
+                    }
+                )
                 wf.write(line + "\n")
                 wf.flush()
 
@@ -697,10 +762,12 @@ class TestActivityHandler:
     def test_called_with_tool_name(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Read"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Read"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner, activity_handler=captured.append)
@@ -710,10 +777,12 @@ class TestActivityHandler:
     def test_not_called_for_text_events(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "hello"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "hello"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner, activity_handler=captured.append)
@@ -722,10 +791,12 @@ class TestActivityHandler:
 
     def test_none_handler_no_crash(self) -> None:
         lines = [
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Grep"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Grep"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner)
@@ -735,22 +806,30 @@ class TestActivityHandler:
     def test_multiple_tools(self) -> None:
         captured: list[str] = []
         lines = [
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Read"},
-            }),
-            json.dumps({
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "some text"},
-            }),
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Grep"},
-            }),
-            json.dumps({
-                "type": "content_block_start",
-                "content_block": {"type": "tool_use", "name": "Edit"},
-            }),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Read"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "some text"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Grep"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Edit"},
+                }
+            ),
         ]
         runner = MockCommandRunner(lines)
         executor = ClaudeExecutor(cmd_runner=runner, activity_handler=captured.append)

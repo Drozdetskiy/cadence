@@ -23,16 +23,16 @@
 
 ```python
 @dataclass
-class Config:
-    plan_file: str = ""        # путь к файлу плана (определяет каталог progress-файла в plan/full)
-    plan_description: str = "" # описание плана (исторический параметр, в путях больше не используется)
-    mode: str = ""             # "full", "review", "plan"
-    branch: str = ""           # текущая ветка (для review)
-    tasks_root: str = "cdc-tasks"  # корень для review-прогресса
-    default_branch: str = ""   # имя default-ветки репозитория
-    head_hash: str = ""        # HEAD commit hash (используется в review на default/detached)
-    no_color: bool = False     # отключить цвета
+class ProgressLoggerConfig:
+    progress_path: str             # абсолютный или относительный путь к progress-файлу (вычисляется в cli.py)
+    plan_file: str = ""            # путь к плану (только для header)
+    branch: str = ""               # текущая ветка (только для header)
+    mode: Mode = Mode.PLAN         # режим (только для header)
+    plan_description: str = ""     # описание (исторический параметр, header only)
+    no_color: bool = False         # отключить цвета
 ```
+
+Конфиг намеренно тонкий: путь к файлу прогресса вычисляется один раз в `cli.compute_progress_path()` и передаётся сюда уже готовым. Поля `tasks_root`, `default_branch`, `head_hash` из конфига убраны -- `cli.py` владеет ими и использует только при расчёте `progress_path`.
 
 ### Logger class
 
@@ -47,12 +47,11 @@ class Logger:
 ```
 
 Процедура создания:
-1. Вычисление пути через `_progress_path(cfg)` (см. ниже)
-2. Резолвинг в абсолютный путь
-3. Создание parent директории (0o750)
-4. Открытие файла с append mode (0o600)
-5. Получение exclusive file lock (fcntl.flock)
-6. Проверка наличия completion footer:
+1. Резолвинг `cfg.progress_path` в абсолютный путь
+2. Создание parent директории (0o750)
+3. Открытие файла с append mode (0o600)
+4. Получение exclusive file lock (fcntl.flock)
+5. Проверка наличия completion footer:
    - Есть footer -> truncate файл, записать свежий header
    - Нет footer, файл не пуст -> записать restart separator
    - Файл пуст -> записать header
@@ -133,16 +132,18 @@ Completed: 2006-01-02 15:04:05 (1h23m45s)
 3. Если файл > 0 без footer -> restart separator, существующий контент сохраняется
 4. Если файл пуст -> свежий header
 
-### Вычисление пути (_progress_path)
+### Вычисление пути (cli.compute_progress_path)
 
-Путь к progress-файлу зависит от режима:
+Путь к progress-файлу вычисляется в `cli.py` через `compute_progress_path(mode, *, plan_file, branch, default_branch, head_hash, tasks_root)` и передаётся в `ProgressLoggerConfig.progress_path`. `Logger` сам путь не вычисляет.
 
-- `Mode.PLAN` (требуется `cfg.plan_file`): `<dirname(plan_file)>/progress-plan.txt`
-- `Mode.FULL` (требуется `cfg.plan_file`): `<dirname(plan_file)>/progress-task.txt`
+Правила по режимам:
+
+- `Mode.PLAN` (требуется `plan_file`): `<dirname(plan_file)>/progress-plan.txt`
+- `Mode.FULL` (требуется `plan_file`): `<dirname(plan_file)>/progress-task.txt`
 - `Mode.REVIEW`: `<tasks_root>/<segment>/progress-review.txt`, где `segment` --
-  `_sanitize_plan_name(cfg.branch)`, если ветка непустая и не совпадает с `cfg.default_branch`;
-  иначе `cfg.head_hash` (на default-ветке или detached HEAD). Если и ветка пустая, и hash пустой --
-  `RuntimeError`.
+  `_sanitize_plan_name(branch)`, если ветка непустая и не совпадает с `default_branch`
+  (с учётом снятия `origin/` префикса); иначе `head_hash[:12]` (на default-ветке или
+  detached HEAD). Если и ветка пустая, и hash пустой -- `RuntimeError`.
 
 Если `Mode.PLAN`/`Mode.FULL` вызван без `plan_file` -- `RuntimeError`. Fallback на старый
 `.cadence/progress/` каталог не предусмотрен.
@@ -186,14 +187,12 @@ class Colors:
 
 Все цвета парсятся из RGB формата ("r,g,b", значения 0-255). Ошибка при невалидном значении -- это ошибка конфигурации, не runtime.
 
-Phase-to-color mapping:
+Phase-to-color mapping (`_phases` содержит только `PhaseReview`; всё остальное падает в task через `.get(phase, self._task)`):
 
 | Phase | Цвет |
 |---|---|
-| PhaseTask | task (green) |
 | PhaseReview | review |
-| PhasePlan | task (reuses green) |
-| PhaseFinalize | task (reuses green) |
+| PhaseTask / PhasePlan / PhaseFinalize / unknown | task (green, через fallback) |
 
 Методы:
 - `for_phase(p: Phase) -> Style` -- цвет для фазы (fallback: task)

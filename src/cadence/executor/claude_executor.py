@@ -59,9 +59,7 @@ class LimitPatternError(Exception):
 
 
 class CommandRunner(Protocol):
-    def run(
-        self, name: str, *args: str
-    ) -> tuple[IO[str], Callable[[], int]]: ...
+    def run(self, name: str, *args: str) -> tuple[IO[str], Callable[[], int]]: ...
 
 
 def detect_signal(text: str) -> str:
@@ -98,13 +96,6 @@ def _extract_text_from_event(event: ClaudeEvent) -> str:
             return result.output or ""
         case _:
             return ""
-
-
-def _extract_text(event: dict[str, object]) -> str:
-    parsed = parse_event(event)
-    if parsed is None:
-        return ""
-    return _extract_text_from_event(parsed)
 
 
 def filter_env() -> dict[str, str]:
@@ -277,9 +268,7 @@ class ClaudeExecutor:
                     output_parts.append(line + "\n")
                     continue
 
-                last_output_text = self._handle_event(
-                    event, output_parts, result, last_output_text
-                )
+                last_output_text = self._handle_event(event, output_parts, result, last_output_text)
 
         except BaseException:
             if handle.cleanup is not None:
@@ -344,9 +333,7 @@ class ClaudeExecutor:
                 result.error = Exception(f"claude exited with code {exit_code}")
                 return result
             if not result.signal:
-                result.error = Exception(
-                    f"claude exited with code {exit_code} without completing"
-                )
+                result.error = Exception(f"claude exited with code {exit_code} without completing")
                 return result
 
         if exit_code == 0 and result.signal:
@@ -369,10 +356,12 @@ class ClaudeExecutor:
         if self._args:
             cmd.extend(shlex.split(self._args))
         else:
-            cmd.extend([
-                "--dangerously-skip-permissions",
-                "--verbose",
-            ])
+            cmd.extend(
+                [
+                    "--dangerously-skip-permissions",
+                    "--verbose",
+                ]
+            )
         if self._model:
             cmd.extend(["--model", self._model])
         cmd.extend(["--output-format", "stream-json", "--print"])

@@ -49,8 +49,7 @@ class TestConfigDefaults:
         assert cfg.finalize_enabled is False
         assert cfg.plans_dir == "docs/plans"
         assert cfg.tasks_root == "cdc-tasks"
-        assert cfg.default_branch == ""
-        assert cfg.vcs_command == "git"
+        assert cfg.default_branch == "main"
         assert cfg.commit_trailer == ""
         assert "You've hit your limit" in cfg.claude_error_patterns
         assert "API Error:" in cfg.claude_error_patterns
@@ -153,13 +152,6 @@ class TestLoadConfig:
         assert cfg.max_iterations == 50
         assert cfg.finalize_enabled is False
 
-    def test_tilde_expansion(self, tmp_path: Path) -> None:
-        yaml_path = tmp_path / "config.yaml"
-        yaml_path.write_text('vcs_command: "~/bin/git"\n')
-        cfg = load_config(tmp_path)
-        assert not cfg.vcs_command.startswith("~")
-        assert cfg.vcs_command.endswith("/bin/git")
-
     def test_invalid_yaml_raises_value_error(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text("claude_command: 'unterminated\n")
@@ -194,14 +186,7 @@ class TestParseYamlOverrides:
         assert overrides == YamlOverrides()
 
     def test_all_three_modes(self) -> None:
-        text = (
-            "plan:\n"
-            "  model: opus\n"
-            "task:\n"
-            "  model: sonnet\n"
-            "review:\n"
-            "  model: haiku\n"
-        )
+        text = "plan:\n  model: opus\ntask:\n  model: sonnet\nreview:\n  model: haiku\n"
         overrides = parse_yaml_overrides(text)
         assert overrides.plan_model == "opus"
         assert overrides.task_model == "sonnet"
@@ -235,23 +220,14 @@ class TestParseYamlOverrides:
         assert overrides.task_model == "sonnet"
 
     def test_unknown_top_level_key_ignored(self) -> None:
-        text = (
-            "unknown:\n"
-            "  model: ignored\n"
-            "task:\n"
-            "  model: sonnet\n"
-        )
+        text = "unknown:\n  model: ignored\ntask:\n  model: sonnet\n"
         overrides = parse_yaml_overrides(text)
         assert overrides.task_model == "sonnet"
         assert overrides.plan_model is None
         assert overrides.review_model is None
 
     def test_unknown_nested_key_ignored(self) -> None:
-        text = (
-            "task:\n"
-            "  model: sonnet\n"
-            "  temperature: 0.5\n"
-        )
+        text = "task:\n  model: sonnet\n  temperature: 0.5\n"
         overrides = parse_yaml_overrides(text)
         assert overrides.task_model == "sonnet"
 
@@ -266,13 +242,13 @@ class TestParseYamlOverrides:
         assert overrides.task_model == "org:opus"
 
     def test_malformed_no_colon_raises(self) -> None:
-        with pytest.raises(ValueError, match=r"invalid cadence-config\.yaml"):
+        with pytest.raises(ValueError, match=r"invalid config\.yaml"):
             parse_yaml_overrides("task:\n  model: 'unterminated\n")
 
     def test_malformed_top_level_scalar_raises(self) -> None:
         with pytest.raises(
             ValueError,
-            match=r"invalid cadence-config\.yaml: top-level must be a mapping",
+            match=r"invalid config\.yaml: top-level must be a mapping",
         ):
             parse_yaml_overrides("- 1\n- 2\n")
 
@@ -280,10 +256,28 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides("task: sonnet\n")
         assert overrides == YamlOverrides()
 
+    def test_default_branch_top_level(self) -> None:
+        overrides = parse_yaml_overrides("default_branch: 0015-refactoring\n")
+        assert overrides.default_branch == "0015-refactoring"
+
+    def test_default_branch_alongside_models(self) -> None:
+        text = "default_branch: develop\ntask:\n  model: sonnet\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.default_branch == "develop"
+        assert overrides.task_model == "sonnet"
+
+    def test_default_branch_empty_string_ignored(self) -> None:
+        overrides = parse_yaml_overrides("default_branch: ''\n")
+        assert overrides.default_branch is None
+
+    def test_default_branch_non_string_ignored(self) -> None:
+        overrides = parse_yaml_overrides("default_branch: 42\n")
+        assert overrides.default_branch is None
+
 
 class TestLoadYamlConfig:
     def test_loads_valid_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "cadence-config.yaml"
+        path = tmp_path / "config.yaml"
         path.write_text("plan:\n  model: opus\n")
         overrides = load_yaml_config(path)
         assert overrides.plan_model == "opus"
@@ -293,9 +287,9 @@ class TestLoadYamlConfig:
             load_yaml_config(tmp_path / "nope.yaml")
 
     def test_malformed_file_raises_value_error(self, tmp_path: Path) -> None:
-        path = tmp_path / "cadence-config.yaml"
+        path = tmp_path / "config.yaml"
         path.write_text("not valid yaml without colon\n")
-        with pytest.raises(ValueError, match=r"invalid cadence-config\.yaml"):
+        with pytest.raises(ValueError, match=r"invalid config\.yaml"):
             load_yaml_config(path)
 
 
@@ -324,10 +318,20 @@ class TestApplyYamlOverrides:
         assert cfg.task_model == "T"
         assert cfg.review_model == "R"
 
+    def test_default_branch_overrides(self) -> None:
+        cfg = Config(default_branch="main")
+        apply_yaml_overrides(cfg, YamlOverrides(default_branch="0015-refactoring"))
+        assert cfg.default_branch == "0015-refactoring"
+
+    def test_default_branch_none_is_no_op(self) -> None:
+        cfg = Config(default_branch="main")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.default_branch == "main"
+
 
 class TestFindYamlConfig:
     def test_returns_path_when_present(self, tmp_path: Path) -> None:
-        yaml = tmp_path / "cadence-config.yaml"
+        yaml = tmp_path / "config.yaml"
         yaml.write_text("plan:\n  model: opus\n")
         assert find_yaml_config(tmp_path) == yaml
 
@@ -335,7 +339,7 @@ class TestFindYamlConfig:
         assert find_yaml_config(tmp_path) is None
 
     def test_returns_none_when_not_a_file(self, tmp_path: Path) -> None:
-        (tmp_path / "cadence-config.yaml").mkdir()
+        (tmp_path / "config.yaml").mkdir()
         assert find_yaml_config(tmp_path) is None
 
 

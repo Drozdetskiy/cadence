@@ -80,10 +80,7 @@ class TestLoadPrompt:
 
 class TestReplaceBaseVariables:
     def test_replaces_all_variables(self) -> None:
-        prompt = (
-            "{{PLAN_FILE}} {{PROGRESS_FILE}} "
-            "{{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
-        )
+        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
         result = replace_base_variables(
             prompt,
             plan_file="/tmp/plan.md",
@@ -99,10 +96,7 @@ class TestReplaceBaseVariables:
         assert "docs/plans" in result
 
     def test_fallback_values(self) -> None:
-        prompt = (
-            "{{PLAN_FILE}} {{PROGRESS_FILE}} "
-            "{{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
-        )
+        prompt = "{{PLAN_FILE}} {{PROGRESS_FILE}} {{GOAL}} {{DEFAULT_BRANCH}} {{PLANS_DIR}}"
         result = replace_base_variables(prompt)
         assert "(no plan file" in result
         assert "(no progress file" in result
@@ -113,17 +107,12 @@ class TestReplaceBaseVariables:
 
 class TestAppendCommitTrailer:
     def test_appends_trailer(self) -> None:
-        result = append_commit_trailer_instruction(
-            "prompt", "Signed-off-by: Bot"
-        )
+        result = append_commit_trailer_instruction("prompt", "Signed-off-by: Bot")
         assert "Signed-off-by: Bot" in result
         assert "trailer" in result.lower()
 
     def test_empty_trailer_unchanged(self) -> None:
-        assert (
-            append_commit_trailer_instruction("prompt", "")
-            == "prompt"
-        )
+        assert append_commit_trailer_instruction("prompt", "") == "prompt"
 
 
 class TestBuildPlanPrompt:
@@ -140,10 +129,8 @@ class TestBuildPlanPrompt:
         result = build_plan_prompt(
             "desc",
             progress_file="/tmp/prog.txt",
-            plans_dir="my-plans",
         )
         assert "/tmp/prog.txt" in result
-        assert "my-plans" in result
 
     def test_appends_commit_trailer(self) -> None:
         result = build_plan_prompt(
@@ -155,12 +142,8 @@ class TestBuildPlanPrompt:
     def test_local_override(self, tmp_path: Path) -> None:
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "make_plan.txt").write_text(
-            "Custom: {{PLAN_DESCRIPTION}}"
-        )
-        result = build_plan_prompt(
-            "my feature", local_dir=tmp_path
-        )
+        (prompts_dir / "make_plan.txt").write_text("Custom: {{PLAN_DESCRIPTION}}")
+        result = build_plan_prompt("my feature", local_dir=tmp_path)
         assert result == "Custom: my feature"
 
     def test_substitutes_derived_plan_path(self) -> None:
@@ -210,10 +193,10 @@ class TestRunnerPlanCreationQuestionFlow:
     def test_question_then_plan_ready(self) -> None:
         executor = MagicMock()
         q_output = (
-            '<<<CADENCE:QUESTION>>>\n'
+            "<<<CADENCE:QUESTION>>>\n"
             '{"question": "Which DB?", '
             '"options": ["Postgres", "SQLite"]}\n'
-            '<<<CADENCE:END>>>'
+            "<<<CADENCE:END>>>"
         )
         executor.run.side_effect = [
             Result(output=q_output, signal=""),
@@ -234,11 +217,11 @@ class TestRunnerPlanCreationDraftFlow:
     def test_draft_auto_accepted_then_plan_ready(self) -> None:
         executor = MagicMock()
         draft_output = (
-            '<<<CADENCE:PLAN_DRAFT>>>\n'
-            '# My Plan\n'
-            '## Overview\n'
-            'Implementation details\n'
-            '<<<CADENCE:END>>>'
+            "<<<CADENCE:PLAN_DRAFT>>>\n"
+            "# My Plan\n"
+            "## Overview\n"
+            "Implementation details\n"
+            "<<<CADENCE:END>>>"
         )
         executor.run.side_effect = [
             Result(output=draft_output, signal=""),
@@ -253,9 +236,7 @@ class TestRunnerPlanCreationDraftFlow:
 
     def test_draft_auto_accept_no_feedback_in_next_prompt(self) -> None:
         executor = MagicMock()
-        draft = (
-            '<<<CADENCE:PLAN_DRAFT>>>\nDraft 1\n<<<CADENCE:END>>>'
-        )
+        draft = "<<<CADENCE:PLAN_DRAFT>>>\nDraft 1\n<<<CADENCE:END>>>"
         executor.run.side_effect = [
             Result(output=draft, signal=""),
             Result(output="done", signal=SignalPlanReady),
@@ -271,9 +252,7 @@ class TestRunnerPlanCreationDraftFlow:
 class TestRunnerPlanCreationErrors:
     def test_failed_signal_raises(self) -> None:
         executor = MagicMock()
-        executor.run.return_value = Result(
-            output="", signal=SignalFailed
-        )
+        executor.run.return_value = Result(output="", signal=SignalFailed)
         runner, _log, _input_mock = _make_runner(executor)
 
         with pytest.raises(RuntimeError, match="plan creation failed"):
@@ -294,9 +273,7 @@ class TestRunnerPlanCreationErrors:
 
     def test_limit_pattern_with_wait_retries(self) -> None:
         executor = MagicMock()
-        limit_err = LimitPatternError(
-            "You've hit your limit", "claude /usage"
-        )
+        limit_err = LimitPatternError("You've hit your limit", "claude /usage")
         executor.run.side_effect = [
             Result(output="", signal="", error=limit_err),
             Result(output="ok", signal=SignalPlanReady),
@@ -306,9 +283,7 @@ class TestRunnerPlanCreationErrors:
             max_iterations=50,
             iteration_delay_ms=0,
         )
-        runner, _log, _input_mock = _make_runner(
-            executor, plan_description="test", app_cfg=app
-        )
+        runner, _log, _input_mock = _make_runner(executor, plan_description="test", app_cfg=app)
 
         start = time.monotonic()
         runner.run_plan_creation()
@@ -319,12 +294,8 @@ class TestRunnerPlanCreationErrors:
 
     def test_max_iterations_warns(self) -> None:
         executor = MagicMock()
-        executor.run.return_value = Result(
-            output="no signals", signal=""
-        )
-        runner, log, _input_mock = _make_runner(
-            executor, max_iterations=5
-        )
+        executor.run.return_value = Result(output="no signals", signal="")
+        runner, log, _input_mock = _make_runner(executor, max_iterations=5)
 
         runner.run_plan_creation()
 
@@ -336,9 +307,7 @@ class TestRunnerPlanCreationIdleTimeout:
     def test_idle_timeout_continues(self) -> None:
         executor = MagicMock()
         executor.run.side_effect = [
-            Result(
-                output="", signal="", idle_timed_out=True
-            ),
+            Result(output="", signal="", idle_timed_out=True),
             Result(output="done", signal=SignalPlanReady),
         ]
         runner, _log, _input_mock = _make_runner(executor)
@@ -374,27 +343,21 @@ class TestResolvePlanFilePath:
         runner = _make_resolver_runner(str(plan))
         assert runner.resolve_plan_file_path() == str(plan)
 
-    def test_falls_back_to_completed_sibling_with_extension(
-        self, tmp_path: Path
-    ) -> None:
+    def test_falls_back_to_completed_sibling_with_extension(self, tmp_path: Path) -> None:
         plan = tmp_path / "plan.md"
         completed = tmp_path / "plan-completed.md"
         completed.write_text("# done\n")
         runner = _make_resolver_runner(str(plan))
         assert runner.resolve_plan_file_path() == str(completed)
 
-    def test_falls_back_to_completed_sibling_no_extension(
-        self, tmp_path: Path
-    ) -> None:
+    def test_falls_back_to_completed_sibling_no_extension(self, tmp_path: Path) -> None:
         plan = tmp_path / "preprompt"
         completed = tmp_path / "preprompt-completed"
         completed.write_text("# done\n")
         runner = _make_resolver_runner(str(plan))
         assert runner.resolve_plan_file_path() == str(completed)
 
-    def test_returns_original_when_neither_exists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_original_when_neither_exists(self, tmp_path: Path) -> None:
         plan = tmp_path / "missing.md"
         runner = _make_resolver_runner(str(plan))
         assert runner.resolve_plan_file_path() == str(plan)
@@ -439,23 +402,9 @@ def _write_plan(tmp_path: Path, content: str, name: str = "plan.md") -> Path:
     return f
 
 
-_PLAN_DONE = (
-    "# Plan\n"
-    "### Task 1: A\n"
-    "- [x] one\n"
-)
-_PLAN_PENDING = (
-    "# Plan\n"
-    "### Task 1: A\n"
-    "- [ ] one\n"
-)
-_PLAN_PENDING_TASK_2 = (
-    "# Plan\n"
-    "### Task 1: A\n"
-    "- [x] one\n"
-    "### Task 2: B\n"
-    "- [ ] two\n"
-)
+_PLAN_DONE = "# Plan\n### Task 1: A\n- [x] one\n"
+_PLAN_PENDING = "# Plan\n### Task 1: A\n- [ ] one\n"
+_PLAN_PENDING_TASK_2 = "# Plan\n### Task 1: A\n- [x] one\n### Task 2: B\n- [ ] two\n"
 
 
 class TestRunTaskPhaseCompletion:
@@ -471,9 +420,7 @@ class TestRunTaskPhaseCompletion:
         assert executor.run.call_count == 1
         log.print.assert_any_call("all tasks done")
 
-    def test_completed_with_uncompleted_warns_then_returns_true(
-        self, tmp_path: Path
-    ) -> None:
+    def test_completed_with_uncompleted_warns_then_returns_true(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
         executor = MagicMock()
 
@@ -490,16 +437,12 @@ class TestRunTaskPhaseCompletion:
             return Result(output="", signal=SignalCompleted)
 
         executor.run.side_effect = fake_run
-        runner, log, _ = _make_task_runner(
-            executor, plan_file=str(plan), max_iterations=5
-        )
+        runner, log, _ = _make_task_runner(executor, plan_file=str(plan), max_iterations=5)
 
         result = runner.run_task_phase()
 
         assert result is True
-        log.warn.assert_any_call(
-            "COMPLETED signal received but uncompleted tasks remain"
-        )
+        log.warn.assert_any_call("COMPLETED signal received but uncompleted tasks remain")
 
     def test_failed_signal_retries_then_raises(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
@@ -523,9 +466,7 @@ class TestRunTaskPhaseCompletion:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
         executor = MagicMock()
         executor.run.return_value = Result(output="no signal", signal="")
-        runner, log, _ = _make_task_runner(
-            executor, plan_file=str(plan), max_iterations=3
-        )
+        runner, log, _ = _make_task_runner(executor, plan_file=str(plan), max_iterations=3)
 
         result = runner.run_task_phase()
 
@@ -622,9 +563,7 @@ class TestBreakPause:
             return Result(output="", signal=SignalCompleted)
 
         executor.run.side_effect = fake_run
-        runner, _log, _ = _make_task_runner(
-            executor, plan_file=str(plan), max_iterations=5
-        )
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan), max_iterations=5)
         runner.set_break_event(break_event)
         runner.set_pause_handler(lambda: True)
 
@@ -671,18 +610,12 @@ class TestSessionTimeout:
     def test_idle_no_signal_marks_session_timed_out(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
         executor = MagicMock()
-        executor.run.return_value = Result(
-            output="", signal="", idle_timed_out=True
-        )
-        runner, _log, _ = _make_task_runner(
-            executor, plan_file=str(plan), max_iterations=1
-        )
+        executor.run.return_value = Result(output="", signal="", idle_timed_out=True)
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan), max_iterations=1)
         runner.run_task_phase()
         assert runner.last_session_timed_out is True
 
-    def test_session_timer_fires_clears_signal_and_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_session_timer_fires_clears_signal_and_error(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
         cfg = AppConfig(
             max_iterations=1,
@@ -696,9 +629,7 @@ class TestSessionTimeout:
             return Result(output="x", signal=SignalCompleted)
 
         executor.run.side_effect = slow_run
-        runner, _log, _ = _make_task_runner(
-            executor, plan_file=str(plan), app_cfg=cfg
-        )
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan), app_cfg=cfg)
         runner.run_task_phase()
         assert runner.last_session_timed_out is True
 
@@ -762,6 +693,48 @@ class TestRunDispatch:
         runner, _log, _ = _make_task_runner(executor, plan_file="")
         runner._ctx.mode = Mode.REVIEW
         assert runner.run() is True
+
+    def test_run_dispatches_plan_mode(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalPlanReady)
+        runner, _log, _ = _make_runner(executor)
+        runner._ctx.mode = Mode.PLAN
+        assert runner.run() is True
+        assert executor.run.call_count == 1
+
+
+class TestCheckResultError:
+    def test_no_error_returns_true(self) -> None:
+        runner, _log, _ = _make_task_runner(MagicMock(), plan_file="")
+        assert runner._check_result_error(Result(output="", signal="")) is True
+
+    def test_pattern_match_returns_false_and_logs(self) -> None:
+        runner, log, _ = _make_task_runner(MagicMock(), plan_file="")
+        result = Result(
+            output="",
+            signal="",
+            error=PatternMatchError("API Error:", "claude /usage"),
+        )
+        assert runner._check_result_error(result) is False
+        log.error.assert_called()
+
+    def test_limit_pattern_returns_false_and_logs(self) -> None:
+        runner, log, _ = _make_task_runner(MagicMock(), plan_file="")
+        result = Result(
+            output="",
+            signal="",
+            error=LimitPatternError("limit", "claude /usage"),
+        )
+        assert runner._check_result_error(result) is False
+        log.error.assert_called()
+
+    def test_unknown_error_logs_and_raises(self) -> None:
+        runner, log, _ = _make_task_runner(MagicMock(), plan_file="")
+        boom = RuntimeError("boom")
+        result = Result(output="", signal="", error=boom)
+        with pytest.raises(RuntimeError, match="boom"):
+            runner._check_result_error(result)
+        log.error.assert_called()
 
 
 def _make_review_runner(

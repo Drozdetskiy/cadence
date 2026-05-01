@@ -15,9 +15,9 @@ src/cadence/
     process_group.py   - ProcessGroupCleanup: SIGTERM/SIGKILL process group management
     events.py          - Typed Claude stream event dataclasses (AssistantEvent, ContentBlockDeltaEvent, ResultEvent) + parse_event()
   git/
-    __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
-    backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
-    service.py      - Service: high-level git ops (branch creation for plan (no plan commit), commit trailer, rename plan in-place with -completed suffix)
+    __init__.py     - Re-exports: Service, ExternalBackend, DiffStats
+    backend.py      - ExternalBackend: git subprocess wrapper (hard-coded `git` command); DiffStats dataclass
+    service.py      - Service: high-level git ops (constructor raises if path is not a repo, branch creation for plan (no plan commit), commit trailer, rename plan in-place with -completed suffix); satisfies the `GitChecker` Protocol declared in `processor/runner.py`
   plan/
     __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
     parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox

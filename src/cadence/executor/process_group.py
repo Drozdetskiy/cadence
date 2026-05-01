@@ -22,7 +22,7 @@ class ProcessGroupCleanup:
             return
         try:
             os.killpg(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError, PermissionError:
             return
         try:
             self._process.wait(timeout=0.1)

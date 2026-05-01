@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import IO
 
 from rich.console import Console
+from rich.style import Style
 from rich.text import Text
 
 from cadence.progress.colors import Colors
@@ -17,20 +18,18 @@ from cadence.status import Mode, PhaseHolder, Section
 
 @dataclass
 class ProgressLoggerConfig:
+    progress_path: str
     plan_file: str = ""
-    plan_description: str = ""
-    mode: Mode = Mode.PLAN
     branch: str = ""
+    mode: Mode = Mode.PLAN
+    plan_description: str = ""
     no_color: bool = False
-    tasks_root: str = "cdc-tasks"
-    default_branch: str = ""
-    head_hash: str = ""
 
 
 _DASHES = "-" * 60
 
 
-def _sanitize_plan_name(name: str) -> str:
+def sanitize_plan_name(name: str) -> str:
     name = name.lower()
     name = re.sub(r"[\\/]+", "-", name)
     name = re.sub(r"\s+", "-", name)
@@ -39,34 +38,6 @@ def _sanitize_plan_name(name: str) -> str:
     name = name[:50]
     name = name.strip("-")
     return name or "unnamed"
-
-
-def _progress_path(cfg: ProgressLoggerConfig) -> str:
-    if cfg.mode == Mode.PLAN:
-        if not cfg.plan_file:
-            raise RuntimeError("cannot derive progress path: plan mode requires a plan file")
-        directory = os.path.dirname(cfg.plan_file) or "."
-        return os.path.join(directory, "progress-plan.txt")
-
-    if cfg.mode == Mode.FULL:
-        if not cfg.plan_file:
-            raise RuntimeError("cannot derive progress path: task mode requires a plan file")
-        directory = os.path.dirname(cfg.plan_file) or "."
-        return os.path.join(directory, "progress-task.txt")
-
-    if cfg.mode == Mode.REVIEW:
-        default = cfg.default_branch
-        if default.startswith("origin/"):
-            default = default[len("origin/"):]
-        if cfg.branch and cfg.branch != default:
-            segment = _sanitize_plan_name(cfg.branch)
-        elif cfg.head_hash:
-            segment = cfg.head_hash[:12]
-        else:
-            raise RuntimeError("cannot derive progress path: no branch and no head hash")
-        return os.path.join(cfg.tasks_root, segment, "progress-review.txt")
-
-    raise RuntimeError(f"cannot derive progress path: unsupported mode {cfg.mode}")
 
 
 def _is_progress_completed(f: IO[str]) -> bool:
@@ -89,14 +60,13 @@ def _now_str() -> str:
 
 
 class _ProgressFile:
-    """Owns the file handle, lock, path resolution, header/restart markers."""
+    """Owns the file handle, lock, header/restart markers."""
 
     def __init__(self, cfg: ProgressLoggerConfig) -> None:
-        path = _progress_path(cfg)
-        progress_dir = os.path.dirname(path)
+        progress_dir = os.path.dirname(cfg.progress_path)
         if progress_dir:
             os.makedirs(progress_dir, mode=0o750, exist_ok=True)
-        self._path = os.path.abspath(path)
+        self._path = os.path.abspath(cfg.progress_path)
 
         self._file: IO[str] = open(self._path, "a+", encoding="utf-8")  # noqa: SIM115
         try:
@@ -183,17 +153,19 @@ class Logger:
     def path(self) -> str:
         return self._file.path
 
-    def print(self, fmt: str, *args: object) -> None:
-        msg = fmt % args if args else fmt
+    def _emit(self, prefix: str, msg: str, style: Style) -> None:
         ts = _timestamp()
-        self._file.write(f"{ts} {msg}")
+        self._file.write(f"{ts} {prefix}{msg}")
         self._buffer.ensure_newline(sys.stdout)
-        style = self._colors.for_phase(self._holder.get())
         text = Text()
         text.append(ts, style=self._colors.timestamp())
-        text.append(f" {msg}", style=style)
+        text.append(f" {prefix}{msg}", style=style)
         self._console.print(text)
         self._buffer.mark_line_start()
+
+    def print(self, fmt: str, *args: object) -> None:
+        msg = fmt % args if args else fmt
+        self._emit("", msg, self._colors.for_phase(self._holder.get()))
 
     def print_section(self, section: Section) -> None:
         ts = _timestamp()
@@ -208,25 +180,11 @@ class Logger:
 
     def error(self, fmt: str, *args: object) -> None:
         msg = fmt % args if args else fmt
-        ts = _timestamp()
-        self._file.write(f"{ts} ERROR: {msg}")
-        self._buffer.ensure_newline(sys.stdout)
-        text = Text()
-        text.append(ts, style=self._colors.timestamp())
-        text.append(f" ERROR: {msg}", style=self._colors.error())
-        self._console.print(text)
-        self._buffer.mark_line_start()
+        self._emit("ERROR: ", msg, self._colors.error())
 
     def warn(self, fmt: str, *args: object) -> None:
         msg = fmt % args if args else fmt
-        ts = _timestamp()
-        self._file.write(f"{ts} WARN: {msg}")
-        self._buffer.ensure_newline(sys.stdout)
-        text = Text()
-        text.append(ts, style=self._colors.timestamp())
-        text.append(f" WARN: {msg}", style=self._colors.warn())
-        self._console.print(text)
-        self._buffer.mark_line_start()
+        self._emit("WARN: ", msg, self._colors.warn())
 
     def print_aligned(self, text: str) -> None:
         if not text:

@@ -90,13 +90,7 @@ class TestParsePlan:
         assert plan.tasks == []
 
     def test_single_task_with_checkboxes(self) -> None:
-        content = (
-            "# My Plan\n"
-            "\n"
-            "### Task 1: Setup\n"
-            "- [x] Create dir\n"
-            "- [ ] Add config\n"
-        )
+        content = "# My Plan\n\n### Task 1: Setup\n- [x] Create dir\n- [ ] Add config\n"
         plan = parse_plan(content)
         assert plan.title == "My Plan"
         assert len(plan.tasks) == 1
@@ -109,24 +103,14 @@ class TestParsePlan:
         assert t.checkboxes[1].checked is False
 
     def test_iteration_header(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Iteration 3: Do something\n"
-            "- [ ] first\n"
-        )
+        content = "# Plan\n### Iteration 3: Do something\n- [ ] first\n"
         plan = parse_plan(content)
         assert len(plan.tasks) == 1
         assert plan.tasks[0].number == 3
         assert plan.tasks[0].title == "Do something"
 
     def test_multiple_tasks(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "- [x] one\n"
-            "### Task 2: B\n"
-            "- [ ] two\n"
-        )
+        content = "# Plan\n### Task 1: A\n- [x] one\n### Task 2: B\n- [ ] two\n"
         plan = parse_plan(content)
         assert len(plan.tasks) == 2
         assert plan.tasks[0].status == TaskStatus.DONE
@@ -134,11 +118,7 @@ class TestParsePlan:
 
     def test_h2_closes_task(self) -> None:
         content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "- [ ] inside task\n"
-            "## Success criteria\n"
-            "- [ ] outside task\n"
+            "# Plan\n### Task 1: A\n- [ ] inside task\n## Success criteria\n- [ ] outside task\n"
         )
         plan = parse_plan(content)
         assert len(plan.tasks) == 1
@@ -146,45 +126,24 @@ class TestParsePlan:
         assert plan.tasks[0].checkboxes[0].text == "inside task"
 
     def test_h1_after_title_closes_task(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "- [ ] inside\n"
-            "# Another top\n"
-            "- [ ] outside\n"
-        )
+        content = "# Plan\n### Task 1: A\n- [ ] inside\n# Another top\n- [ ] outside\n"
         plan = parse_plan(content)
         assert len(plan.tasks) == 1
         assert len(plan.tasks[0].checkboxes) == 1
 
     def test_h3_subsection_does_not_close(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "- [ ] a\n"
-            "### Subsection not a task\n"
-        )
+        content = "# Plan\n### Task 1: A\n- [ ] a\n### Subsection not a task\n"
         plan = parse_plan(content)
         assert len(plan.tasks) == 1
 
     def test_h4_does_not_close(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "- [ ] a\n"
-            "#### sub\n"
-            "- [ ] b\n"
-        )
+        content = "# Plan\n### Task 1: A\n- [ ] a\n#### sub\n- [ ] b\n"
         plan = parse_plan(content)
         assert len(plan.tasks) == 1
         assert len(plan.tasks[0].checkboxes) == 2
 
     def test_indented_checkbox(self) -> None:
-        content = (
-            "# Plan\n"
-            "### Task 1: A\n"
-            "  - [ ] indented\n"
-        )
+        content = "# Plan\n### Task 1: A\n  - [ ] indented\n"
         plan = parse_plan(content)
         assert len(plan.tasks[0].checkboxes) == 1
         assert plan.tasks[0].checkboxes[0].text == "indented"
@@ -264,9 +223,7 @@ class TestExtractBranchName:
 
 
 class TestSelector:
-    def _make(
-        self, plans_dir: str, input_text: str = ""
-    ) -> tuple[Selector, io.StringIO]:
+    def _make(self, plans_dir: str, input_text: str = "") -> tuple[Selector, io.StringIO]:
         stdout = io.StringIO()
         stdin = io.StringIO(input_text)
         sel = Selector(plans_dir, ColorConfig(), stdin=stdin, stdout=stdout)

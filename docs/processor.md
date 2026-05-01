@@ -83,7 +83,7 @@ class InputCollector(Protocol):
     def ask_draft_review(self, question: str, plan_content: str) -> tuple[str, str]: ...
 ```
 
-**GitChecker** -- инспекция git-состояния для review loop optimization:
+**GitChecker** -- инспекция git-состояния для review loop optimization. Этот Protocol живёт в `processor/runner.py` (а не в модуле `git/`) и удовлетворяется `Service` -- никакого отдельного `GitChecker` класса в `cadence.git` нет:
 ```python
 class GitChecker(Protocol):
     def head_hash(self) -> str: ...              # текущий HEAD commit hash

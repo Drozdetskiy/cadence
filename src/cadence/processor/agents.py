@@ -100,9 +100,7 @@ def load_agent(
             model = normalized
         else:
             if warn is not None:
-                warn(
-                    f"invalid model {model_raw!r} for agent {name}, ignoring"
-                )
+                warn(f"invalid model {model_raw!r} for agent {name}, ignoring")
 
     agent_type = fields.get("agent", "").strip() or _DEFAULT_AGENT_TYPE
 

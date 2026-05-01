@@ -4,7 +4,9 @@ import os
 import subprocess
 from pathlib import Path
 
-from cadence.git import GitChecker, get_default_branch, head_hash, is_git_repo
+import pytest
+
+from cadence.git import ExternalBackend
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "test",
@@ -43,70 +45,78 @@ def _commit(path: str, filename: str = "test.txt", content: str = "hello") -> No
     )
 
 
-class TestIsGitRepo:
+class TestExternalBackendRepoValidation:
     def test_real_repo(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path)
-        assert is_git_repo(path) is True
+        be = ExternalBackend(path)
+        assert os.path.realpath(path) == be.root()
 
-    def test_not_a_repo(self, tmp_path: Path) -> None:
-        assert is_git_repo(str(tmp_path)) is False
+    def test_not_a_repo_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError):
+            ExternalBackend(str(tmp_path))
 
 
-class TestHeadHash:
+class TestExternalBackendHeadHash:
     def test_returns_hash(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path)
         _commit(path)
-        h = head_hash(path)
+        h = ExternalBackend(path).head_hash()
         assert len(h) == 40
         assert all(c in "0123456789abcdef" for c in h)
 
     def test_no_commits_returns_empty(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path)
-        assert head_hash(path) == ""
+        assert ExternalBackend(path).head_hash() == ""
 
 
-class TestGetDefaultBranch:
+class TestExternalBackendGetDefaultBranch:
     def test_with_main_branch(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
         _commit(path)
-        assert get_default_branch(path) == "main"
+        assert ExternalBackend(path).get_default_branch() == "main"
 
     def test_with_master_branch(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="master")
         _commit(path)
-        assert get_default_branch(path) == "master"
+        assert ExternalBackend(path).get_default_branch() == "master"
 
     def test_fallback_to_master(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="feature")
-        assert get_default_branch(path) == "master"
+        assert ExternalBackend(path).get_default_branch() == "master"
 
 
-class TestGitChecker:
-    def test_head_hash(self, tmp_path: Path) -> None:
+class TestExternalBackendRunErrors:
+    def test_run_raises_with_message_format_on_nonzero_exit(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        be = ExternalBackend(path)
+        with pytest.raises(RuntimeError) as excinfo:
+            be._run("checkout", "no-such-branch")
+        msg = str(excinfo.value)
+        assert msg.startswith("git checkout no-such-branch failed (exit ")
+        assert "): " in msg
+
+
+class TestExternalBackendDiffFingerprint:
+    def test_clean(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path)
         _commit(path)
-        checker = GitChecker(path)
-        assert len(checker.head_hash()) == 40
+        be = ExternalBackend(path)
+        assert be.diff_fingerprint() == be.diff_fingerprint()
 
-    def test_diff_fingerprint_clean(self, tmp_path: Path) -> None:
+    def test_changes_when_modified(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path)
         _commit(path)
-        checker = GitChecker(path)
-        assert checker.diff_fingerprint() == ""
-
-    def test_diff_fingerprint_dirty(self, tmp_path: Path) -> None:
-        path = str(tmp_path)
-        _init_repo(path)
-        _commit(path)
+        be = ExternalBackend(path)
+        before = be.diff_fingerprint()
         with open(os.path.join(path, "test.txt"), "w") as f:
             f.write("modified")
-        checker = GitChecker(path)
-        assert checker.diff_fingerprint() != ""
+        assert be.diff_fingerprint() != before
