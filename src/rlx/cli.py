@@ -5,14 +5,15 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
 
 from rlx.config import Config, detect_local_dir, load_config, parse_duration
 from rlx.executor.claude_executor import ClaudeExecutor
-from rlx.git import get_default_branch, is_git_repo
-from rlx.input import TerminalCollector
+from rlx.git import DiffStats, Service, get_default_branch, is_git_repo
+from rlx.input import TerminalCollector, ask_yes_no
 from rlx.processor.runner import (
     Dependencies,
     RunContext,
@@ -120,7 +121,7 @@ def _ensure_git_repo(vcs_command: str) -> None:
         raise SystemExit(1)
 
 
-def _build_logger(
+def _build_plan_logger(
     plan_file: Path, content: str, colors: Colors, holder: PhaseHolder
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
@@ -134,6 +135,29 @@ def _build_logger(
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
+
+
+def _build_task_logger(
+    plan_file: Path, colors: Colors, holder: PhaseHolder, branch: str
+) -> Logger:
+    logger_cfg = ProgressLoggerConfig(
+        plan_file=to_rel_path(plan_file),
+        plan_description="",
+        mode=Mode.FULL,
+        branch=branch,
+    )
+    try:
+        return Logger(logger_cfg, colors, holder)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+
+def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
+    typer.echo(
+        f"branch: {branch}  elapsed: {elapsed}  "
+        f"files: {stats.files}  +{stats.additions}/-{stats.deletions}"
+    )
 
 
 def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
@@ -151,7 +175,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
 
     holder = PhaseHolder()
     colors = Colors(cfg.colors)
-    log = _build_logger(plan_file, content, colors, holder)
+    log = _build_plan_logger(plan_file, content, colors, holder)
 
     log.print("rlx %s", resolve_version())
     log.print("mode: plan")
@@ -215,6 +239,169 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         log.close(success=run_success)
 
 
+def _install_sigquit(break_event: threading.Event) -> None:
+    sigquit = getattr(signal, "SIGQUIT", None)
+    if sigquit is None:
+        return
+
+    def handler(signum: int, frame: object) -> None:
+        break_event.set()
+
+    signal.signal(sigquit, handler)
+
+
+def _make_pause_handler(log: Logger) -> Callable[[], bool]:
+    def pause() -> bool:
+        log.print(
+            "session interrupted. press Enter to continue, Ctrl+C to abort"
+        )
+        try:
+            sys.stdin.readline()
+        except KeyboardInterrupt:
+            return False
+        except (EOFError, OSError):
+            return False
+        return True
+
+    return pause
+
+
+def run_task_mode(task_file: Path) -> None:
+    if not task_file.is_file():
+        typer.echo(f"error: file not found: {task_file}", err=True)
+        raise SystemExit(1)
+
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+
+    check_claude_dep(cfg)
+
+    vcs = cfg.vcs_command or "git"
+    _ensure_git_repo(vcs)
+
+    holder = PhaseHolder()
+    colors = Colors(cfg.colors)
+
+    try:
+        git_svc = Service(path=".", log=_StderrLogger(), command=vcs)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    try:
+        git_svc.ensure_has_commits(
+            lambda: ask_yes_no(
+                "repository has no commits. create an initial commit?"
+            )
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    default_branch = cfg.default_branch or git_svc.get_default_branch()
+
+    plan_path_str = to_rel_path(task_file)
+    try:
+        git_svc.create_branch_for_plan(plan_path_str, default_branch)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    branch = git_svc.current_branch()
+
+    log = _build_task_logger(task_file, colors, holder, branch)
+
+    log.print("rlx %s", resolve_version())
+    log.print("mode: full")
+    log.print("plan file: %s", plan_path_str)
+    log.print("branch: %s", branch)
+    log.print("progress: %s", log.path)
+
+    git_svc_for_log = Service(path=".", log=log, command=vcs)
+    git_svc_for_log.set_commit_trailer(cfg.commit_trailer)
+
+    idle_timeout = parse_duration(cfg.idle_timeout)
+
+    def activity_handler(tool_name: str) -> None:
+        log.print("claude: %s", tool_name)
+
+    def output_handler(text: str) -> None:
+        log.log_claude_output(text)
+
+    claude = ClaudeExecutor(
+        command=cfg.claude_command,
+        args=cfg.claude_args,
+        model=cfg.claude_model,
+        error_patterns=cfg.claude_error_patterns,
+        limit_patterns=cfg.claude_limit_patterns,
+        idle_timeout=idle_timeout,
+        activity_handler=activity_handler,
+        output_handler=output_handler,
+    )
+
+    deps = Dependencies(
+        executor=claude,
+        input_collector=TerminalCollector(),
+        logger=log,
+        holder=holder,
+    )
+
+    ctx = RunContext(
+        mode=Mode.FULL,
+        plan_file=plan_path_str,
+        plan_description="",
+        progress_path=log.path,
+        default_branch=default_branch,
+        local_dir=local_dir,
+    )
+
+    break_event = threading.Event()
+    _install_sigquit(break_event)
+
+    run_success = False
+    try:
+        runner = Runner(ctx, cfg, deps)
+        runner.set_break_event(break_event)
+        runner.set_pause_handler(_make_pause_handler(log))
+        runner.set_git_checker(git_svc_for_log)
+
+        run_success = runner.run()
+        if run_success:
+            stats = git_svc_for_log.diff_stats(default_branch)
+            try:
+                git_svc_for_log.move_plan_to_completed(plan_path_str)
+            except (RuntimeError, FileNotFoundError) as exc:
+                log.warn("could not move plan to completed: %s", exc)
+            display_stats(stats, log.elapsed(), branch)
+    except KeyboardInterrupt:
+        log.print("interrupted by user")
+        return
+    except UserAbortedError:
+        log.print("aborted by user")
+        return
+    except Exception as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        log.close(success=run_success)
+
+
+class _StderrLogger:
+    def print(self, fmt: str, *args: object) -> None:
+        msg = fmt % args if args else fmt
+        typer.echo(msg)
+
+    def warn(self, fmt: str, *args: object) -> None:
+        msg = fmt % args if args else fmt
+        typer.echo(f"warn: {msg}", err=True)
+
+    def error(self, fmt: str, *args: object) -> None:
+        msg = fmt % args if args else fmt
+        typer.echo(f"error: {msg}", err=True)
+
+
 _PLAN_OPT: Path | None = typer.Option(None, "--plan", help="Path to plan description file")
 _TASK_OPT: Path | None = typer.Option(None, "--task", help="Path to plan file for task execution")
 _REVIEW_OPT: bool = typer.Option(False, "--review", help="Review current branch only")
@@ -258,8 +445,8 @@ def main(
         assert plan is not None
         run_plan_mode(plan, impl=impl)
     elif mode == Mode.FULL:
-        typer.echo("error: --task mode not implemented in v0.1", err=True)
-        raise SystemExit(1)
+        assert task is not None
+        run_task_mode(task)
     elif mode == Mode.REVIEW:
         typer.echo("error: --review mode not implemented in v0.1", err=True)
         raise SystemExit(1)

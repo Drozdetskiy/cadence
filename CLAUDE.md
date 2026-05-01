@@ -1,29 +1,36 @@
 # rlx
 
-Python CLI for autonomous task execution via Claude Code. v0.1 implements plan creation only (`rlx --plan <file>`). The `--impl` flag stores intent for auto-implementation after plan creation (not yet implemented).
+Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <file>` (plan creation) and `rlx --task <file>` (task execution: branch creation, iterative task execution, diff stats on completion). The `--impl` flag stores intent for auto-implementation after plan creation (not yet implemented).
 
 ## Package structure
 
 ```
 src/rlx/
-  cli.py            - Typer entrypoint, mode dispatch, --impl flag, SIGINT handling
+  cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl flags, SIGINT/SIGQUIT handling
   config.py         - Config/ColorConfig dataclasses, TOML loading, parse_duration()
   status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
-  input.py          - TerminalCollector: interactive Q&A with numbered picker
-  git.py            - Git helpers: is_git_repo, get_default_branch, head_hash
+  input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
   executor/
     claude_executor.py - ClaudeExecutor: subprocess + JSON stream parsing, idle timeout, activity callbacks
     process_group.py   - ProcessGroupCleanup: SIGTERM/SIGKILL process group management
+  git/
+    __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
+    backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
+    service.py      - Service: high-level git ops (branch creation for plan, commit trailer, move plan to completed/)
+  plan/
+    __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
+    parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox
+    plan.py         - Selector (numbered picker + find_recent), extract_branch_name
   processor/
-    signals.py      - Signal payload parsing (QUESTION, PLAN_READY)
-    prompts.py      - Prompt loading with local override fallback, variable substitution
-    runner.py       - Runner: orchestrates plan creation loop via Protocol dependencies
+    signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED)
+    prompts.py      - Prompt loading with local override fallback, build_plan_prompt, build_task_prompt
+    runner.py       - Runner: orchestrates plan creation and task execution loops via Protocol dependencies; break/pause + session timeout
   progress/
     colors.py       - Rich Style mapping from ColorConfig
     flock.py        - File locking via fcntl.flock
     logger.py       - Dual file+stdout logger with timestamps and signal highlighting
   defaults/
-    prompts/        - Embedded prompt templates (make_plan.txt)
+    prompts/        - Embedded prompt templates (make_plan.txt, task.txt)
 ```
 
 ## Key commands

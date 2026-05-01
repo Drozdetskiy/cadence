@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import subprocess
 
+from rlx.git.backend import DiffStats, ExternalBackend
+from rlx.git.service import Service
+
 
 def is_git_repo(path: str = ".", *, vcs_command: str = "git") -> bool:
     try:
@@ -80,3 +83,14 @@ class GitChecker:
             text=True,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
+
+
+__all__ = [
+    "DiffStats",
+    "ExternalBackend",
+    "GitChecker",
+    "Service",
+    "get_default_branch",
+    "head_hash",
+    "is_git_repo",
+]
