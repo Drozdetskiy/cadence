@@ -2,7 +2,7 @@
 
 Autonomous task-execution pipeline on top of [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-`cadence` drives Claude through a structured loop: plan → branch → iterative implementation → multi-agent code review → review-loop until clean → optional finalize. It is a thin orchestrator — Claude does the work, `cadence` keeps it on rails (signals, retries, idle/session timeouts, break/resume, per-phase models, git integration).
+`cadence` drives Claude through a structured loop: plan → branch → iterative implementation → multi-agent code review → review-loop until clean. It is a thin orchestrator — Claude does the work, `cadence` keeps it on rails (signals, retries, idle/session timeouts, break/resume, per-phase models, git integration).
 
 ## What it does
 
@@ -11,7 +11,6 @@ Autonomous task-execution pipeline on top of [Claude Code](https://docs.anthropi
 | **plan** | `cadence --plan <file>` | Interactive Q&A with Claude, draft review (accept / revise / reject), final plan written to `<file>-plan.md` |
 | **task** | `cadence --task <plan>` | Branch created from plan filename, one `### Task N:` section per iteration, each completed and committed |
 | **review** | implicit after `--task`, or `cadence --review` | First pass launches 4 parallel agents (quality, implementation, testing, simplification); subsequent passes loop on critical/major findings until no commits are produced |
-| **finalize** | `finalize_enabled: true` in config | Optional best-effort wrap-up step |
 
 Phases communicate with the runner via signal markers (e.g. `<<<CADENCE:PLAN_READY>>>`, `<<<CADENCE:ALL_TASKS_DONE>>>`, `<<<CADENCE:REVIEW_DONE>>>`, `<<<CADENCE:QUESTION>>>`, `<<<CADENCE:TASK_FAILED>>>`).
 
@@ -50,7 +49,7 @@ cadence --plan cdc-tasks/0001-my-feature/preprompt
 # 2. Create a plan and chain straight into implementation
 cadence --plan cdc-tasks/0001-my-feature/preprompt --impl
 
-# 3. Execute an existing plan: branch + tasks + review + finalize
+# 3. Execute an existing plan: branch + tasks + review
 cadence --task cdc-tasks/0001-my-feature/plan
 
 # 4. Review the current branch only (no plan, no branch creation)
@@ -104,7 +103,7 @@ Project-scoped, no global config. Loaded from cwd (or `CADENCE_CONFIG_DIR`). All
 ```yaml
 # Claude executor
 claude_command: claude
-claude_args: "--dangerously-skip-permissions --output-format stream-json --verbose"
+claude_args: "--dangerously-skip-permissions --verbose"
 plan_model:   claude-opus-4-7
 task_model:   claude-opus-4-7
 review_model: claude-opus-4-7
@@ -117,12 +116,8 @@ session_timeout:    "0"   # "30m", "1h30m", … 0 = disabled
 idle_timeout:       "0"
 wait_on_limit:      "0"   # >0 → retry on rate-limit instead of failing
 
-# Feature flags
-finalize_enabled: false
-
 # VCS / paths
 tasks_root:     cdc-tasks # root for per-task subdirectories (preprompt/plan/config.yaml)
-plans_dir:      docs/plans
 default_branch: main      # override per-project in local config
 commit_trailer: ""        # appended to all cadence-made commits
 
@@ -164,7 +159,6 @@ If `--config` is omitted, cadence auto-discovers `config.yaml` next to the plan/
     task.txt             # overrides task-iteration prompt
     review_first.txt     # overrides initial review prompt
     review_second.txt    # overrides review-loop prompt
-    finalize.txt
   agents/
     quality.txt          # custom review agents (referenced as {{agent:quality}})
     implementation.txt
@@ -203,7 +197,7 @@ src/cadence/
   executor/         Claude subprocess + JSON-stream parsing
   git/              Service layer over `git` CLI
   plan/             Markdown plan parser, branch-name extraction
-  processor/        Runner — orchestrates plan/task/review/finalize phases
+  processor/        Runner — orchestrates plan/task/review phases
   progress/         File+stdout logger with colors and flock
   defaults/
     prompts/        Embedded prompt templates

@@ -7,12 +7,12 @@
 Два модуля обеспечивают взаимодействие с VCS и управление планами:
 
 - `git` -- единый API для git-операций (ветки, коммиты, диффы) через subprocess
-- `plan` -- парсинг markdown-планов, нумерованный выбор, извлечение имени ветки
+- `plan` -- парсинг markdown-планов, извлечение имени ветки
 
 Ключевые модули:
 - `cadence/git/service.py` -- Service class, все публичные методы
 - `cadence/git/backend.py` -- ExternalBackend: реализация через CLI (git)
-- `cadence/plan/plan.py` -- Selector, Select(), ExtractBranchName()
+- `cadence/plan/plan.py` -- ExtractBranchName()
 - `cadence/plan/parse.py` -- ParsePlan(), ParsePlanFile(), типы Task/Checkbox/Plan
 
 ## Logger интерфейс
@@ -179,7 +179,7 @@ class ExternalBackend:
         self._path: str   # absolute path to repository root
 ```
 
-Реализует Backend через вызовы CLI. Команда `git` захардкожена -- конфигурируемого `vcs_command` больше нет.
+Реализует Backend через вызовы CLI. Команда `git` захардкожена.
 
 ### Конструктор
 
@@ -404,39 +404,6 @@ Regex `format_in_text = re.compile(r'\[\s*[ xX]?\s*\]')` определяет ch
 
 Возвращает False если `format_in_text` матчит текст checkbox-а.
 
-### Selector
-
-```python
-class Selector:
-    def __init__(self, plans_dir: str, colors: Colors):
-        self.plans_dir = plans_dir
-        self.colors = colors
-```
-
-### select(plan_file: str, optional: bool) -> str
-
-Основная точка входа для выбора plan-файла:
-- `plan_file` предоставлен: валидирует существование (`Path.exists()`)
-- `plan_file` пуст, `optional=True`: возвращает `""`
-- `plan_file` пуст, `optional=False`: нумерованный выбор из доступных планов
-- Всегда возвращает absolute path через `Path.resolve()`
-
-### _select_with_numbers() -> str
-
-Интерактивный выбор через нумерованный список:
-1. Проверяет существование `plans_dir`
-2. `glob.glob(plans_dir + "/*.md")` -- ищет plan-файлы, исключая файлы с суффиксом `-completed.md` (это уже завершённые планы)
-3. Нет файлов -> `NoPlansFoundError`
-4. Один файл -> auto-select
-5. Несколько файлов:
-   - Выводит нумерованный список файлов
-   - Промпт "Enter number (1-N):" для выбора
-   - Отмена пользователем -> "no plan selected" error
-
-### find_recent(start_time: datetime) -> str
-
-Находит последний модифицированный plan-файл после `start_time`. Используется plan creation mode для нахождения только что созданного плана. Возвращает `""` если не найден. Файлы с суффиксом `-completed.md` исключаются.
-
 ### extract_branch_name(plan_file: str) -> str
 
 Извлекает имя ветки из имени plan-файла:
@@ -449,14 +416,6 @@ class Selector:
 - `2024-01-15-auth-refactor.md` -> `auth-refactor`
 - `feature-login.md` -> `feature-login`
 - `2024-01-15.md` -> `2024-01-15` (fallback на полное имя)
-
-### prompt_description(colors: Colors) -> str
-
-Запрашивает описание плана у пользователя через stdin. Используется когда нет существующих планов и можно перейти в plan creation mode. Возвращает пустую строку при Ctrl+C/Ctrl+D.
-
-### NoPlansFoundError
-
-Sentinel error. Проверяется через `isinstance()` в caller'е для переключения в plan creation mode.
 
 ---
 
@@ -479,6 +438,3 @@ Markdown парсинг через regex -- прямой перевод. Python 
 
 ### JSON serialization
 `dataclasses.asdict()` + `json.dumps()`.
-
-### Error types
-`NoPlansFoundError` -- custom exception class. `isinstance()` для проверки.

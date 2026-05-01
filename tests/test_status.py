@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 
 from cadence.status import (
-    PhaseFinalize,
     PhaseHolder,
     PhasePlan,
     PhaseReview,
@@ -17,7 +16,6 @@ from cadence.status import (
     SignalQuestion,
     SignalReviewDone,
     new_claude_review_section,
-    new_generic_section,
     new_plan_iteration_section,
     new_task_iteration_section,
 )
@@ -28,7 +26,6 @@ class TestPhaseConstants:
         assert PhaseTask == "task"
         assert PhaseReview == "review"
         assert PhasePlan == "plan"
-        assert PhaseFinalize == "finalize"
 
 
 class TestSignalConstants:
@@ -71,10 +68,6 @@ class TestSection:
     def test_plan_iteration_section(self) -> None:
         s = new_plan_iteration_section(1)
         assert s.label == "plan iteration 1"
-
-    def test_generic_section(self) -> None:
-        s = new_generic_section("custom label")
-        assert s.label == "custom label"
 
 
 class TestPhaseHolder:
