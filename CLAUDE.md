@@ -7,7 +7,7 @@ Python CLI for autonomous task execution via Claude Code. Supports `cadence --pl
 ```
 src/cadence/
   cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base/--config flags, SIGINT/SIGQUIT handling
-  config.py         - Config/ColorConfig dataclasses, TOML loading, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config)
+  config.py         - Config/ColorConfig dataclasses, YAML loading via PyYAML, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config)
   status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
   input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
   executor/
@@ -38,9 +38,12 @@ src/cadence/
 
 ## Key commands
 
+Run tools directly from the project venv (`source venv/bin/activate`). Do NOT use `pdm run`.
+
 ```bash
 pytest tests/ -v                # run tests
 ruff check src/ tests/          # lint
+ruff format src/ tests/         # format
 mypy src/                       # strict type check
 cadence --version               # verify CLI
 make check                      # all of the above
@@ -56,5 +59,13 @@ make check                      # all of the above
 
 - Mock `CommandRunner` protocol for executor tests (avoid real Claude subprocess)
 - Mock stdin/stdout for input/terminal tests
-- Use `tmp_path` fixtures for file-based tests (config TOML, logger output, git repos)
+- Use `tmp_path` fixtures for file-based tests (config YAML, logger output, git repos)
 - Never launch real Claude or require real git repos except via tmp_path
+
+## Deeper reference
+
+Module-level details live in `docs/`: `config.md`, `processor.md`, `executor.md`, `git-and-plans.md`, `progress-and-input.md`. Read on demand.
+
+## Commit messages
+
+Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line, maximally concise. Author as the user — no `Co-Authored-By` trailer.
