@@ -32,7 +32,7 @@ src/rlx/
     logger.py       - Dual file+stdout logger with timestamps and signal highlighting
   defaults/
     prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt, finalize.txt)
-    agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt, documentation.txt) referenced from review prompts via {{agent:<name>}} markers
+    agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt) referenced from review prompts via {{agent:<name>}} markers
 ```
 
 ## Key commands
