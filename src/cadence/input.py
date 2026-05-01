@@ -25,7 +25,7 @@ def ask_yes_no(
     out.flush()
     try:
         raw = read_line_with_context(inp)
-    except (EOFError, OSError):
+    except EOFError, OSError:
         return False
     return raw.strip().lower() in ("y", "yes")
 
@@ -41,7 +41,7 @@ class TerminalCollector:
         self._stdout.write(f"\n{question}\n")
         try:
             return self._select_with_numbers(choices)
-        except (EOFError, OSError):
+        except EOFError, OSError:
             return options[0] if options else ""
 
     def _select_with_numbers(self, choices: list[str]) -> str:

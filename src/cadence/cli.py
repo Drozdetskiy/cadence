@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import signal
 import sys
@@ -20,7 +21,7 @@ from cadence.config import (
     parse_duration,
 )
 from cadence.executor.claude_executor import ClaudeExecutor
-from cadence.git import DiffStats, Service, get_default_branch, is_git_repo
+from cadence.git import DiffStats, Service
 from cadence.input import TerminalCollector, ask_yes_no
 from cadence.processor.runner import (
     Dependencies,
@@ -29,7 +30,7 @@ from cadence.processor.runner import (
     UserAbortedError,
 )
 from cadence.progress.colors import Colors
-from cadence.progress.logger import Logger, ProgressLoggerConfig
+from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
 from cadence.status import Mode, PhaseHolder
 
 app = typer.Typer(add_completion=False)
@@ -77,11 +78,38 @@ def determine_mode(
         return Mode.PLAN
     if task is not None:
         return Mode.FULL
-    if review:
-        return Mode.REVIEW
-    raise typer.BadParameter(
-        "one of --plan, --task, or --review is required"
-    )
+    return Mode.REVIEW
+
+
+def _validate_flags(
+    plan: Path | None,
+    task: Path | None,
+    review: bool,
+    impl: bool,
+    base: str | None,
+) -> None:
+    if review and impl:
+        typer.echo("error: --review is incompatible with --impl", err=True)
+        raise SystemExit(1)
+    if impl and plan is None:
+        typer.echo("error: --impl requires --plan", err=True)
+        raise SystemExit(1)
+    if base is not None and not review:
+        typer.echo("error: --base is only valid with --review", err=True)
+        raise SystemExit(1)
+    active = sum([plan is not None, task is not None, review])
+    if active > 1:
+        typer.echo(
+            "error: --plan, --task, and --review are mutually exclusive",
+            err=True,
+        )
+        raise SystemExit(1)
+    if active == 0:
+        typer.echo(
+            "error: one of --plan, --task, or --review is required",
+            err=True,
+        )
+        raise SystemExit(1)
 
 
 def check_claude_dep(cfg: Config) -> None:
@@ -105,7 +133,7 @@ def derive_plan_path(prompt_file: Path) -> str:
     else:
         idx = name.rfind("prompt")
         if idx != -1:
-            plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+            plan_name = name[:idx] + "plan" + name[idx + len("prompt") :]
         else:
             stem = prompt_file.stem
             plan_name = f"{stem}-plan{prompt_file.suffix}"
@@ -123,15 +151,6 @@ def _read_plan_file(plan_file: Path) -> str:
     return content
 
 
-def _ensure_git_repo(vcs_command: str) -> None:
-    if not is_git_repo(vcs_command=vcs_command):
-        typer.echo(
-            "error: not a git repository (or not at repo root)",
-            err=True,
-        )
-        raise SystemExit(1)
-
-
 def _apply_yaml_overrides(
     cfg: Config,
     config_arg: Path | None,
@@ -139,9 +158,7 @@ def _apply_yaml_overrides(
 ) -> None:
     if config_arg is not None:
         if not config_arg.is_file():
-            typer.echo(
-                f"error: config file not found: {config_arg}", err=True
-            )
+            typer.echo(f"error: config file not found: {config_arg}", err=True)
             raise SystemExit(1)
         yaml_path: Path | None = config_arg
     elif anchor is not None:
@@ -161,68 +178,57 @@ def _apply_yaml_overrides(
     apply_yaml_overrides(cfg, overrides)
 
 
-def _build_plan_logger(
-    plan_file: Path,
-    content: str,
-    colors: Colors,
-    holder: PhaseHolder,
-    tasks_root: str,
-    default_branch: str,
-) -> Logger:
-    logger_cfg = ProgressLoggerConfig(
-        plan_file=to_rel_path(plan_file),
-        plan_description=content,
-        mode=Mode.PLAN,
-        branch="",
-        tasks_root=tasks_root,
-        default_branch=default_branch,
-    )
-    try:
-        return Logger(logger_cfg, colors, holder)
-    except RuntimeError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise SystemExit(1) from None
+def compute_progress_path(
+    mode: Mode,
+    *,
+    plan_file: str = "",
+    branch: str = "",
+    default_branch: str = "",
+    head_hash: str = "",
+    tasks_root: str = "cdc-tasks",
+) -> str:
+    if mode == Mode.PLAN:
+        if not plan_file:
+            raise RuntimeError("cannot derive progress path: plan mode requires a plan file")
+        directory = os.path.dirname(plan_file) or "."
+        return os.path.join(directory, "progress-plan.txt")
+
+    if mode == Mode.FULL:
+        if not plan_file:
+            raise RuntimeError("cannot derive progress path: task mode requires a plan file")
+        directory = os.path.dirname(plan_file) or "."
+        return os.path.join(directory, "progress-task.txt")
+
+    if mode == Mode.REVIEW:
+        default = default_branch
+        if default.startswith("origin/"):
+            default = default[len("origin/") :]
+        if branch and branch != default:
+            segment = sanitize_plan_name(branch)
+        elif head_hash:
+            segment = head_hash[:12]
+        else:
+            raise RuntimeError("cannot derive progress path: no branch and no head hash")
+        return os.path.join(tasks_root, segment, "progress-review.txt")
+
+    raise RuntimeError(f"cannot derive progress path: unsupported mode {mode}")
 
 
-def _build_task_logger(
-    plan_file: Path,
-    colors: Colors,
-    holder: PhaseHolder,
+def _build_logger(
+    progress_path: str,
+    plan_file: str,
+    plan_description: str,
+    mode: Mode,
     branch: str,
-    tasks_root: str,
-    default_branch: str,
-) -> Logger:
-    logger_cfg = ProgressLoggerConfig(
-        plan_file=to_rel_path(plan_file),
-        plan_description="",
-        mode=Mode.FULL,
-        branch=branch,
-        tasks_root=tasks_root,
-        default_branch=default_branch,
-    )
-    try:
-        return Logger(logger_cfg, colors, holder)
-    except RuntimeError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise SystemExit(1) from None
-
-
-def _build_review_logger(
     colors: Colors,
     holder: PhaseHolder,
-    branch: str,
-    tasks_root: str,
-    default_branch: str,
-    head_hash: str,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
-        plan_file="",
-        plan_description="",
-        mode=Mode.REVIEW,
+        progress_path=progress_path,
+        plan_file=plan_file,
+        plan_description=plan_description,
+        mode=mode,
         branch=branch,
-        tasks_root=tasks_root,
-        default_branch=default_branch,
-        head_hash=head_hash,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -231,24 +237,56 @@ def _build_review_logger(
         raise SystemExit(1) from None
 
 
-def _build_review_executor(
-    cfg: Config,
-    activity_handler: Callable[[str], None],
-    output_handler: Callable[[str], None],
-    idle_timeout: float,
-) -> ClaudeExecutor | None:
-    if cfg.review_model == cfg.task_model:
-        return None
-    return ClaudeExecutor(
-        command=cfg.claude_command,
-        args=cfg.claude_args,
-        model=cfg.review_model,
-        error_patterns=cfg.claude_error_patterns,
-        limit_patterns=cfg.claude_limit_patterns,
-        idle_timeout=idle_timeout,
-        activity_handler=activity_handler,
-        output_handler=output_handler,
-    )
+ClaudeExecutorFactory = Callable[[Logger, str], ClaudeExecutor]
+
+
+def _setup_runtime(
+    config_arg: Path | None,
+    anchor: Path | None,
+) -> tuple[
+    Config,
+    PhaseHolder,
+    Colors,
+    Service,
+    ClaudeExecutorFactory,
+    str,
+    Path | None,
+]:
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config_arg, anchor)
+
+    check_claude_dep(cfg)
+
+    try:
+        git_svc = Service(path=".", log=_StderrLogger())
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    holder = PhaseHolder()
+    colors = Colors(cfg.colors)
+    idle_timeout = parse_duration(cfg.idle_timeout)
+
+    def factory(log: Logger, model: str) -> ClaudeExecutor:
+        def activity_handler(tool_name: str) -> None:
+            log.print("claude: %s", tool_name)
+
+        def output_handler(text: str) -> None:
+            log.log_claude_output(text)
+
+        return ClaudeExecutor(
+            command=cfg.claude_command,
+            args=cfg.claude_args,
+            model=model,
+            error_patterns=cfg.claude_error_patterns,
+            limit_patterns=cfg.claude_limit_patterns,
+            idle_timeout=idle_timeout,
+            activity_handler=activity_handler,
+            output_handler=output_handler,
+        )
+
+    return cfg, holder, colors, git_svc, factory, cfg.default_branch, local_dir
 
 
 def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
@@ -258,37 +296,35 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(
-    plan_file: Path, *, impl: bool = False, config: Path | None = None
-) -> None:
+def run_plan_mode(plan_file: Path, *, impl: bool = False, config: Path | None = None) -> None:
     content = _read_plan_file(plan_file)
 
-    local_dir = detect_local_dir()
-    cfg = load_config(local_dir)
-    _apply_yaml_overrides(cfg, config, plan_file)
-
-    check_claude_dep(cfg)
-
-    vcs = cfg.vcs_command or "git"
-    _ensure_git_repo(vcs)
-
-    default_branch = cfg.default_branch or get_default_branch(vcs_command=vcs)
-
-    holder = PhaseHolder()
-    colors = Colors(cfg.colors)
-    log = _build_plan_logger(
-        plan_file, content, colors, holder, cfg.tasks_root, default_branch
+    cfg, holder, colors, _git_svc, factory, default_branch, local_dir = _setup_runtime(
+        config, plan_file
     )
+
+    plan_file_rel = to_rel_path(plan_file)
+    try:
+        progress_path = compute_progress_path(
+            Mode.PLAN,
+            plan_file=plan_file_rel,
+            tasks_root=cfg.tasks_root,
+            default_branch=default_branch,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+    log = _build_logger(progress_path, plan_file_rel, content, Mode.PLAN, "", colors, holder)
 
     log.print("cadence %s", resolve_version())
     log.print("mode: plan")
-    log.print("plan file: %s", to_rel_path(plan_file))
+    log.print("plan file: %s", plan_file_rel)
     log.print("progress: %s", log.path)
 
     plan_path = derive_plan_path(plan_file)
     ctx = RunContext(
         mode=Mode.PLAN,
-        plan_file=to_rel_path(plan_file),
+        plan_file=plan_file_rel,
         plan_description=content,
         progress_path=log.path,
         default_branch=default_branch,
@@ -296,27 +332,8 @@ def run_plan_mode(
         derived_plan_path=plan_path,
     )
 
-    idle_timeout = parse_duration(cfg.idle_timeout)
-
-    def activity_handler(tool_name: str) -> None:
-        log.print("claude: %s", tool_name)
-
-    def output_handler(text: str) -> None:
-        log.log_claude_output(text)
-
-    claude = ClaudeExecutor(
-        command=cfg.claude_command,
-        args=cfg.claude_args,
-        model=cfg.plan_model,
-        error_patterns=cfg.claude_error_patterns,
-        limit_patterns=cfg.claude_limit_patterns,
-        idle_timeout=idle_timeout,
-        activity_handler=activity_handler,
-        output_handler=output_handler,
-    )
-
     deps = Dependencies(
-        executor=claude,
+        executor=factory(log, cfg.plan_model),
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
@@ -357,14 +374,12 @@ def _install_sigquit(break_event: threading.Event) -> None:
 
 def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     def pause() -> bool:
-        log.print(
-            "session interrupted. press Enter to continue, Ctrl+C to abort"
-        )
+        log.print("session interrupted. press Enter to continue, Ctrl+C to abort")
         try:
             sys.stdin.readline()
         except KeyboardInterrupt:
             return False
-        except (EOFError, OSError):
+        except EOFError, OSError:
             return False
         return True
 
@@ -376,37 +391,19 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
         typer.echo(f"error: file not found: {task_file}", err=True)
         raise SystemExit(1)
 
-    local_dir = detect_local_dir()
-    cfg = load_config(local_dir)
-    _apply_yaml_overrides(cfg, config, task_file)
-
-    check_claude_dep(cfg)
-
-    vcs = cfg.vcs_command or "git"
-    _ensure_git_repo(vcs)
-
-    holder = PhaseHolder()
-    colors = Colors(cfg.colors)
-
-    try:
-        git_svc = Service(path=".", log=_StderrLogger(), command=vcs)
-    except RuntimeError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise SystemExit(1) from None
+    cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
+        config, task_file
+    )
 
     git_svc.set_commit_trailer(cfg.commit_trailer)
 
     try:
         git_svc.ensure_has_commits(
-            lambda: ask_yes_no(
-                "repository has no commits. create an initial commit?"
-            )
+            lambda: ask_yes_no("repository has no commits. create an initial commit?")
         )
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
-
-    default_branch = cfg.default_branch or git_svc.get_default_branch()
 
     plan_path_str = to_rel_path(task_file)
     try:
@@ -417,9 +414,18 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
 
     branch = git_svc.current_branch()
 
-    log = _build_task_logger(
-        task_file, colors, holder, branch, cfg.tasks_root, default_branch
-    )
+    try:
+        progress_path = compute_progress_path(
+            Mode.FULL,
+            plan_file=plan_path_str,
+            branch=branch,
+            tasks_root=cfg.tasks_root,
+            default_branch=default_branch,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+    log = _build_logger(progress_path, plan_path_str, "", Mode.FULL, branch, colors, holder)
 
     log.print("cadence %s", resolve_version())
     log.print("mode: full")
@@ -427,30 +433,10 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     log.print("branch: %s", branch)
     log.print("progress: %s", log.path)
 
-    git_svc_for_log = Service(path=".", log=log, command=vcs)
-    git_svc_for_log.set_commit_trailer(cfg.commit_trailer)
+    git_svc.set_log(log)
 
-    idle_timeout = parse_duration(cfg.idle_timeout)
-
-    def activity_handler(tool_name: str) -> None:
-        log.print("claude: %s", tool_name)
-
-    def output_handler(text: str) -> None:
-        log.log_claude_output(text)
-
-    claude = ClaudeExecutor(
-        command=cfg.claude_command,
-        args=cfg.claude_args,
-        model=cfg.task_model,
-        error_patterns=cfg.claude_error_patterns,
-        limit_patterns=cfg.claude_limit_patterns,
-        idle_timeout=idle_timeout,
-        activity_handler=activity_handler,
-        output_handler=output_handler,
-    )
-    review_claude = _build_review_executor(
-        cfg, activity_handler, output_handler, idle_timeout
-    )
+    claude = factory(log, cfg.task_model)
+    review_claude = factory(log, cfg.review_model) if cfg.review_model != cfg.task_model else None
 
     deps = Dependencies(
         executor=claude,
@@ -477,13 +463,13 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
         runner = Runner(ctx, cfg, deps)
         runner.set_break_event(break_event)
         runner.set_pause_handler(_make_pause_handler(log))
-        runner.set_git_checker(git_svc_for_log)
+        runner.set_git_checker(git_svc)
 
         run_success = runner.run()
         if run_success:
-            stats = git_svc_for_log.diff_stats(default_branch)
+            stats = git_svc.diff_stats(default_branch)
             try:
-                git_svc_for_log.mark_plan_completed(plan_path_str)
+                git_svc.mark_plan_completed(plan_path_str)
             except (RuntimeError, OSError) as exc:
                 log.warn("could not mark plan completed: %s", exc)
             display_stats(stats, log.elapsed(), branch)
@@ -500,30 +486,14 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
         log.close(success=run_success)
 
 
-def run_review_mode(
-    base: str | None = None, *, config: Path | None = None
-) -> None:
-    local_dir = detect_local_dir()
-    cfg = load_config(local_dir)
-    _apply_yaml_overrides(cfg, config, None)
-
-    check_claude_dep(cfg)
-
-    vcs = cfg.vcs_command or "git"
-    _ensure_git_repo(vcs)
-
-    holder = PhaseHolder()
-    colors = Colors(cfg.colors)
-
-    try:
-        git_svc = Service(path=".", log=_StderrLogger(), command=vcs)
-    except RuntimeError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise SystemExit(1) from None
+def run_review_mode(base: str | None = None, *, config: Path | None = None) -> None:
+    cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(config, None)
 
     git_svc.set_commit_trailer(cfg.commit_trailer)
 
-    default_branch = base or cfg.default_branch or git_svc.get_default_branch()
+    if base is not None:
+        default_branch = base
+
     branch = git_svc.current_branch()
     try:
         head_hash = git_svc.head_hash()
@@ -531,9 +501,18 @@ def run_review_mode(
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
 
-    log = _build_review_logger(
-        colors, holder, branch, cfg.tasks_root, default_branch, head_hash
-    )
+    try:
+        progress_path = compute_progress_path(
+            Mode.REVIEW,
+            branch=branch,
+            tasks_root=cfg.tasks_root,
+            default_branch=default_branch,
+            head_hash=head_hash,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+    log = _build_logger(progress_path, "", "", Mode.REVIEW, branch, colors, holder)
 
     log.print("cadence %s", resolve_version())
     log.print("mode: review")
@@ -541,34 +520,13 @@ def run_review_mode(
     log.print("base: %s", default_branch)
     log.print("progress: %s", log.path)
 
-    git_svc_for_log = Service(path=".", log=log, command=vcs)
-    git_svc_for_log.set_commit_trailer(cfg.commit_trailer)
-
-    idle_timeout = parse_duration(cfg.idle_timeout)
-
-    def activity_handler(tool_name: str) -> None:
-        log.print("claude: %s", tool_name)
-
-    def output_handler(text: str) -> None:
-        log.log_claude_output(text)
-
-    claude = ClaudeExecutor(
-        command=cfg.claude_command,
-        args=cfg.claude_args,
-        model=cfg.review_model,
-        error_patterns=cfg.claude_error_patterns,
-        limit_patterns=cfg.claude_limit_patterns,
-        idle_timeout=idle_timeout,
-        activity_handler=activity_handler,
-        output_handler=output_handler,
-    )
+    git_svc.set_log(log)
 
     deps = Dependencies(
-        executor=claude,
+        executor=factory(log, cfg.review_model),
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
-        review_executor=None,
     )
 
     ctx = RunContext(
@@ -588,11 +546,11 @@ def run_review_mode(
         runner = Runner(ctx, cfg, deps)
         runner.set_break_event(break_event)
         runner.set_pause_handler(_make_pause_handler(log))
-        runner.set_git_checker(git_svc_for_log)
+        runner.set_git_checker(git_svc)
 
         run_success = runner.run()
         if run_success:
-            stats = git_svc_for_log.diff_stats(default_branch)
+            stats = git_svc.diff_stats(default_branch)
             display_stats(stats, log.elapsed(), branch)
     except KeyboardInterrupt:
         log.print("interrupted by user")
@@ -633,7 +591,7 @@ _BASE_OPT: str | None = typer.Option(
 _CONFIG_OPT: Path | None = typer.Option(
     None,
     "--config",
-    help="Path to optional cadence-config.yaml model overrides",
+    help="Path to optional config.yaml overrides (models, default_branch)",
 )
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
@@ -652,37 +610,10 @@ def main(
         typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
-    if review and impl:
-        typer.echo(
-            "error: --review is incompatible with --impl",
-            err=True,
-        )
-        raise SystemExit(1)
-
-    if impl and plan is None:
-        typer.echo(
-            "error: --impl requires --plan",
-            err=True,
-        )
-        raise SystemExit(1)
-
-    if base is not None and not review:
-        typer.echo(
-            "error: --base is only valid with --review",
-            err=True,
-        )
-        raise SystemExit(1)
+    _validate_flags(plan, task, review, impl, base)
 
     _sigint.reset()
     _sigint.install()
-
-    active = sum([plan is not None, task is not None, review])
-    if active > 1:
-        typer.echo(
-            "error: --plan, --task, and --review are mutually exclusive",
-            err=True,
-        )
-        raise SystemExit(1)
 
     mode = determine_mode(plan, task, review)
 

@@ -66,9 +66,7 @@ class Selector:
             raise NoPlansFoundError(f"plans directory not found: {plans_dir}")
 
         files = sorted(
-            f
-            for f in glob.glob(os.path.join(plans_dir, "*.md"))
-            if not _is_completed_plan(f)
+            f for f in glob.glob(os.path.join(plans_dir, "*.md")) if not _is_completed_plan(f)
         )
         if not files:
             raise NoPlansFoundError(f"no plan files found in {plans_dir}")

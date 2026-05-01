@@ -137,13 +137,15 @@ class Runner:
         return self._deps.review_executor or self._deps.executor
 
     def run(self) -> bool:
-        if self._ctx.mode == Mode.PLAN:
-            return self.run_plan_creation()
-        if self._ctx.mode == Mode.FULL:
-            return self.run_full()
-        if self._ctx.mode == Mode.REVIEW:
-            return self.run_review_only()
-        raise ValueError(f"unsupported mode: {self._ctx.mode}")
+        dispatch: dict[Mode, Callable[[], bool]] = {
+            Mode.PLAN: self.run_plan_creation,
+            Mode.FULL: self.run_full,
+            Mode.REVIEW: self.run_review_only,
+        }
+        handler = dispatch.get(self._ctx.mode)
+        if handler is None:
+            raise ValueError(f"unsupported mode: {self._ctx.mode}")
+        return handler()
 
     def run_full(self) -> bool:
         if not self._ctx.plan_file:
@@ -151,23 +153,12 @@ class Runner:
         self._deps.holder.set(PhaseTask)
         if not self.run_task_phase():
             return False
-        self._deps.holder.set(PhaseReview)
-        review_prompt = build_review_first_prompt(
-            local_dir=self._ctx.local_dir,
-            plan_file=self._ctx.plan_file,
-            progress_file=self._ctx.progress_path or self._deps.logger.path,
-            default_branch=self._ctx.default_branch,
-            commit_trailer=self._app.commit_trailer,
-            warn=self._deps.logger.warn,
-        )
-        if not self.run_claude_review(review_prompt):
-            return False
-        if not self.run_claude_review_loop():
-            return False
-        self.run_finalize()
-        return True
+        return self._run_review_pipeline()
 
     def run_review_only(self) -> bool:
+        return self._run_review_pipeline()
+
+    def _run_review_pipeline(self) -> bool:
         self._deps.holder.set(PhaseReview)
         review_prompt = build_review_first_prompt(
             local_dir=self._ctx.local_dir,
@@ -222,18 +213,12 @@ class Runner:
                 retry_count = 0
                 continue
 
-            if result.error is not None:
-                if isinstance(result.error, (PatternMatchError, LimitPatternError)):
-                    self._handle_pattern_match_error(result.error)
-                    return False
-                log.error("%s", str(result.error))
-                raise result.error
+            if not self._check_result_error(result):
+                return False
 
             if is_all_tasks_done(result.signal):
                 if self.has_uncompleted_tasks():
-                    log.warn(
-                        "COMPLETED signal received but uncompleted tasks remain"
-                    )
+                    log.warn("COMPLETED signal received but uncompleted tasks remain")
                     retry_count = 0
                     self._sleep_with_cancel(self._iteration_delay)
                     i += 1
@@ -305,16 +290,10 @@ class Runner:
         log = self._deps.logger
         log.print_section(new_claude_review_section(0, "all findings"))
 
-        result = self._run_with_limit_retry(
-            self._review_executor, prompt
-        )
+        result = self._run_with_limit_retry(self._review_executor, prompt)
 
-        if result.error is not None:
-            if isinstance(result.error, (PatternMatchError, LimitPatternError)):
-                self._handle_pattern_match_error(result.error)
-                return False
-            log.error("%s", str(result.error))
-            raise result.error
+        if not self._check_result_error(result):
+            return False
 
         if is_task_failed(result.signal):
             log.error("review reported failure")
@@ -346,22 +325,12 @@ class Runner:
         for i in range(1, max_review_iterations + 1):
             log.print_section(new_claude_review_section(i, "critical/major"))
 
-            head_before = (
-                self._git_checker.head_hash() if self._git_checker else ""
-            )
+            head_before = self._git_checker.head_hash() if self._git_checker else ""
 
-            result = self._run_with_limit_retry(
-                self._review_executor, prompt
-            )
+            result = self._run_with_limit_retry(self._review_executor, prompt)
 
-            if result.error is not None:
-                if isinstance(
-                    result.error, (PatternMatchError, LimitPatternError)
-                ):
-                    self._handle_pattern_match_error(result.error)
-                    return False
-                log.error("%s", str(result.error))
-                raise result.error
+            if not self._check_result_error(result):
+                return False
 
             if is_task_failed(result.signal):
                 log.error("review reported failure")
@@ -405,9 +374,7 @@ class Runner:
         )
 
         try:
-            result = self._run_with_limit_retry(
-                self._review_executor, prompt
-            )
+            result = self._run_with_limit_retry(self._review_executor, prompt)
         except KeyboardInterrupt:
             raise
         except Exception as exc:
@@ -415,9 +382,7 @@ class Runner:
             return
 
         if result.error is not None:
-            if isinstance(
-                result.error, (PatternMatchError, LimitPatternError)
-            ):
+            if isinstance(result.error, (PatternMatchError, LimitPatternError)):
                 self._handle_pattern_match_error(result.error)
                 return
             log.warn("finalize error: %s", str(result.error))
@@ -455,12 +420,8 @@ class Runner:
 
             result = self._run_with_limit_retry(claude, prompt)
 
-            if result.error is not None:
-                if isinstance(result.error, (PatternMatchError, LimitPatternError)):
-                    self._handle_pattern_match_error(result.error)
-                    return False
-                log.error("%s", str(result.error))
-                raise result.error
+            if not self._check_result_error(result):
+                return False
 
             if is_task_failed(result.signal):
                 log.error("plan creation failed")
@@ -502,10 +463,17 @@ class Runner:
         answer = self._deps.input_collector.ask_question(question, options)
         log.log_answer(answer)
 
-    def _handle_pattern_match_error(
-        self, err: PatternMatchError | LimitPatternError
-    ) -> None:
+    def _handle_pattern_match_error(self, err: PatternMatchError | LimitPatternError) -> None:
         self._deps.logger.error("pattern matched: %s", err.pattern)
+
+    def _check_result_error(self, result: Result) -> bool:
+        if result.error is None:
+            return True
+        if isinstance(result.error, (PatternMatchError, LimitPatternError)):
+            self._handle_pattern_match_error(result.error)
+            return False
+        self._deps.logger.error("%s", str(result.error))
+        raise result.error
 
     def _is_break(self) -> bool:
         return self._break_event is not None and self._break_event.is_set()
@@ -525,9 +493,7 @@ class Runner:
     ) -> Result:
         if self._session_timeout <= 0:
             result = executor.run(prompt)
-            self.last_session_timed_out = (
-                result.idle_timed_out and not result.signal
-            )
+            self.last_session_timed_out = result.idle_timed_out and not result.signal
             return result
 
         cancel_fn = getattr(executor, "cancel", None)
@@ -561,9 +527,7 @@ class Runner:
             self.last_session_timed_out = True
             return result
 
-        self.last_session_timed_out = (
-            result.idle_timed_out and not result.signal
-        )
+        self.last_session_timed_out = result.idle_timed_out and not result.signal
         return result
 
     def _run_with_limit_retry(

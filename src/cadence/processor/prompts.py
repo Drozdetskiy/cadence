@@ -42,9 +42,7 @@ def load_prompt(name: str, local_dir: Path | None = None) -> str:
             else:
                 return strip_leading_comments(raw)
 
-    ref = importlib.resources.files("cadence.defaults.prompts").joinpath(
-        f"{name}.txt"
-    )
+    ref = importlib.resources.files("cadence.defaults.prompts").joinpath(f"{name}.txt")
     try:
         content = ref.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -79,9 +77,7 @@ def replace_base_variables(
     return prompt
 
 
-def append_commit_trailer_instruction(
-    prompt: str, commit_trailer: str
-) -> str:
+def append_commit_trailer_instruction(prompt: str, commit_trailer: str) -> str:
     if not commit_trailer:
         return prompt
     instruction = (
@@ -96,9 +92,7 @@ _PLAN_DESC_PLACEHOLDER = "{{PLAN_DESCRIPTION}}"
 _AGENT_REF_RE = re.compile(r"\{\{agent:([a-zA-Z0-9_-]+)\}\}")
 
 
-def format_agent_expansion(
-    prompt_body: str, *, model: str, agent_type: str
-) -> str:
+def format_agent_expansion(prompt_body: str, *, model: str, agent_type: str) -> str:
     model_clause = f" with model={model}" if model else ""
     return (
         f"Use the Task tool{model_clause} to launch a {agent_type} agent "
@@ -126,9 +120,7 @@ def expand_agent_references(
                 warn(str(exc))
             return match.group(0)
         body = replace_base_variables(agent.body, **base_vars)
-        return format_agent_expansion(
-            body, model=agent.model, agent_type=agent.agent_type
-        )
+        return format_agent_expansion(body, model=agent.model, agent_type=agent.agent_type)
 
     return _AGENT_REF_RE.sub(_sub, prompt)
 
@@ -153,9 +145,7 @@ def replace_prompt_variables(
         "plans_dir": plans_dir,
     }
     prompt = replace_base_variables(prompt, **base_vars)
-    prompt = expand_agent_references(
-        prompt, local_dir=local_dir, warn=warn, base_vars=base_vars
-    )
+    prompt = expand_agent_references(prompt, local_dir=local_dir, warn=warn, base_vars=base_vars)
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
     return prompt
 

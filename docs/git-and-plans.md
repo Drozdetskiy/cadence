@@ -113,9 +113,9 @@ def _append_trailer(self, msg: str) -> str  # private
 2. Перебирает `["main", "master", "trunk", "develop"]` -- возвращает первую существующую локальную ветку
 3. Fallback -- `"master"`
 
-Дополнительно `_matches_default_branch(branch, default_branch)`:
-- Снимает prefix `origin/` для сравнения
-- Если `default_branch` пуст, проверяет `branch == "main" or branch == "master"`
+`Service.is_default_branch(default_branch)` сравнивает текущую ветку с переданным `default_branch`:
+- Снимает prefix `origin/` перед сравнением
+- Возвращает `False`, если текущая ветка пуста (detached HEAD) или если `default_branch` пуст
 
 ### Операции с ветками
 
@@ -177,10 +177,9 @@ def _resolve_filesystem_case(self, path: str) -> str
 class ExternalBackend:
     def __init__(self, path: str):
         self._path: str   # absolute path to repository root
-        self._command: str = "git"
 ```
 
-Реализует Backend через вызовы CLI.
+Реализует Backend через вызовы CLI. Команда `git` захардкожена -- конфигурируемого `vcs_command` больше нет.
 
 ### Конструктор
 
@@ -199,9 +198,10 @@ def __init__(self, path: str) -> None
 def _run(self, *args: str) -> str
 ```
 
-- `subprocess.run([self._command, *args], cwd=self._path, capture_output=True, text=True)`
+- `subprocess.run(["git", *args], cwd=self._path, capture_output=True, text=True)`
 - Trailing whitespace удаляется (`rstrip()`), leading сохраняется (нужно для porcelain)
 - При ошибке -- stderr включается в сообщение
+- `_run` делегирует в `_run_with_status` и поднимает `RuntimeError` на ненулевом exit code, чтобы вся subprocess-логика жила в одном месте
 
 ### DiffFingerprint
 

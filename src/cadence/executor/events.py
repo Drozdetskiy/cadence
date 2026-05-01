@@ -52,12 +52,7 @@ class ResultEvent:
     result: ResultPayload | str | None = None
 
 
-ClaudeEvent = (
-    AssistantEvent
-    | ContentBlockDeltaEvent
-    | ContentBlockStartEvent
-    | ResultEvent
-)
+ClaudeEvent = AssistantEvent | ContentBlockDeltaEvent | ContentBlockStartEvent | ResultEvent
 
 
 def _parse_content_item(d: dict[str, object]) -> ContentItem | None:
@@ -111,9 +106,7 @@ def _parse_result(raw: dict[str, object]) -> ResultEvent:
         return ResultEvent(result=result_raw)
     if isinstance(result_raw, dict):
         out = result_raw.get("output")
-        return ResultEvent(
-            result=ResultPayload(output=out if isinstance(out, str) else "")
-        )
+        return ResultEvent(result=ResultPayload(output=out if isinstance(out, str) else ""))
     return ResultEvent(result=None)
 
 

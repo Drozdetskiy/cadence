@@ -15,18 +15,17 @@ class DiffStats:
 
 
 class ExternalBackend:
-    def __init__(self, path: str, *, command: str = "git") -> None:
-        self._command = command
+    def __init__(self, path: str) -> None:
         resolved = str(Path(path).resolve())
         try:
             result = subprocess.run(
-                [self._command, "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],
                 cwd=resolved,
                 capture_output=True,
                 text=True,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"git not found: {self._command}") from exc
+            raise RuntimeError("git not found") from exc
         if result.returncode != 0:
             stderr = result.stderr.strip() or "not a git repository"
             raise RuntimeError(f"git: {stderr}")
@@ -36,23 +35,10 @@ class ExternalBackend:
         self._path = os.path.realpath(root)
 
     def _run(self, *args: str, env_extra: dict[str, str] | None = None) -> str:
-        env = None
-        if env_extra:
-            env = {**os.environ, **env_extra}
-        try:
-            result = subprocess.run(
-                [self._command, *args],
-                cwd=self._path,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"git not found: {self._command}") from exc
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            raise RuntimeError(f"git {' '.join(args)} failed (exit {result.returncode}): {stderr}")
-        return result.stdout.rstrip()
+        code, stdout, stderr = self._run_with_status(*args, env_extra=env_extra)
+        if code != 0:
+            raise RuntimeError(f"git {' '.join(args)} failed (exit {code}): {stderr}")
+        return stdout
 
     def _run_with_status(
         self, *args: str, env_extra: dict[str, str] | None = None
@@ -62,14 +48,14 @@ class ExternalBackend:
             env = {**os.environ, **env_extra}
         try:
             result = subprocess.run(
-                [self._command, *args],
+                ["git", *args],
                 cwd=self._path,
                 capture_output=True,
                 text=True,
                 env=env,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"git not found: {self._command}") from exc
+            raise RuntimeError("git not found") from exc
         return result.returncode, result.stdout.rstrip(), result.stderr.strip()
 
     def root(self) -> str:

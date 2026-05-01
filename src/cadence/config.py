@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,8 +35,7 @@ class Config:
     finalize_enabled: bool = False
     plans_dir: str = "docs/plans"
     tasks_root: str = "cdc-tasks"
-    default_branch: str = ""
-    vcs_command: str = "git"
+    default_branch: str = "main"
     commit_trailer: str = ""
     claude_error_patterns: list[str] = field(
         default_factory=lambda: [
@@ -105,7 +103,6 @@ def load_config(config_dir: Path | None) -> Config:
         "plans_dir",
         "tasks_root",
         "default_branch",
-        "vcs_command",
         "commit_trailer",
     }
     _INT_FIELDS = {
@@ -144,9 +141,6 @@ def load_config(config_dir: Path | None) -> Config:
             if color_key in color_data:
                 setattr(color_cfg, color_key, str(color_data[color_key]))
 
-    if cfg.vcs_command.startswith("~"):
-        cfg.vcs_command = os.path.expanduser(cfg.vcs_command)
-
     return cfg
 
 
@@ -162,6 +156,7 @@ class YamlOverrides:
     plan_model: str | None = None
     task_model: str | None = None
     review_model: str | None = None
+    default_branch: str | None = None
 
 
 def parse_yaml_overrides(text: str | None) -> YamlOverrides:
@@ -172,12 +167,12 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     try:
         raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ValueError(f"invalid cadence-config.yaml: {exc}") from exc
+        raise ValueError(f"invalid config.yaml: {exc}") from exc
 
     if raw is None:
         return overrides
     if not isinstance(raw, dict):
-        raise ValueError("invalid cadence-config.yaml: top-level must be a mapping")
+        raise ValueError("invalid config.yaml: top-level must be a mapping")
 
     for section in ("plan", "task", "review"):
         value = raw.get(section)
@@ -192,6 +187,10 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
             overrides.task_model = model
         else:
             overrides.review_model = model
+
+    default_branch = raw.get("default_branch")
+    if isinstance(default_branch, str) and default_branch:
+        overrides.default_branch = default_branch
 
     return overrides
 
@@ -208,10 +207,12 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.task_model = overrides.task_model
     if overrides.review_model is not None:
         cfg.review_model = overrides.review_model
+    if overrides.default_branch is not None:
+        cfg.default_branch = overrides.default_branch
 
 
 def find_yaml_config(start_dir: Path) -> Path | None:
-    candidate = start_dir / "cadence-config.yaml"
+    candidate = start_dir / "config.yaml"
     if candidate.is_file():
         return candidate
     return None

@@ -27,40 +27,46 @@ class TestParseEvent:
         assert parse_event({"foo": "bar"}) is None
 
     def test_assistant_with_text_content(self) -> None:
-        ev = parse_event({
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "hello"},
-                    {"type": "text", "text": " world"},
-                ],
-            },
-        })
+        ev = parse_event(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "hello"},
+                        {"type": "text", "text": " world"},
+                    ],
+                },
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.type == "assistant"
         assert ev.message is not None
         assert ev.message.content == [TextContent(text="hello"), TextContent(text=" world")]
 
     def test_assistant_with_tool_use_content(self) -> None:
-        ev = parse_event({
-            "type": "assistant",
-            "message": {"content": [{"type": "tool_use", "name": "Read"}]},
-        })
+        ev = parse_event(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "name": "Read"}]},
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.message is not None
         assert ev.message.content == [ToolUseBlock(name="Read")]
 
     def test_assistant_drops_unknown_content_items(self) -> None:
-        ev = parse_event({
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "ok"},
-                    {"type": "weird"},
-                    "not a dict",
-                ],
-            },
-        })
+        ev = parse_event(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "ok"},
+                        {"type": "weird"},
+                        "not a dict",
+                    ],
+                },
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.message is not None
         assert ev.message.content == [TextContent(text="ok")]
@@ -76,78 +82,96 @@ class TestParseEvent:
         assert ev.message is None
 
     def test_message_stop_routed_to_assistant_event(self) -> None:
-        ev = parse_event({
-            "type": "message_stop",
-            "message": {"content": [{"type": "text", "text": "done"}]},
-        })
+        ev = parse_event(
+            {
+                "type": "message_stop",
+                "message": {"content": [{"type": "text", "text": "done"}]},
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.type == "message_stop"
         assert ev.message is not None
         assert ev.message.content == [TextContent(text="done")]
 
     def test_text_content_without_text_field_dropped(self) -> None:
-        ev = parse_event({
-            "type": "assistant",
-            "message": {"content": [{"type": "text"}]},
-        })
+        ev = parse_event(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text"}]},
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.message is not None
         assert ev.message.content == []
 
     def test_tool_use_without_name_dropped(self) -> None:
-        ev = parse_event({
-            "type": "assistant",
-            "message": {"content": [{"type": "tool_use"}]},
-        })
+        ev = parse_event(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use"}]},
+            }
+        )
         assert isinstance(ev, AssistantEvent)
         assert ev.message is not None
         assert ev.message.content == []
 
     def test_content_block_delta_text(self) -> None:
-        ev = parse_event({
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta", "text": "chunk"},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "chunk"},
+            }
+        )
         assert isinstance(ev, ContentBlockDeltaEvent)
         assert ev.delta == TextDelta(text="chunk")
 
     def test_content_block_delta_unknown_type(self) -> None:
-        ev = parse_event({
-            "type": "content_block_delta",
-            "delta": {"type": "input_json_delta"},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "input_json_delta"},
+            }
+        )
         assert isinstance(ev, ContentBlockDeltaEvent)
         assert ev.delta is None
 
     def test_content_block_delta_missing_text(self) -> None:
-        ev = parse_event({
-            "type": "content_block_delta",
-            "delta": {"type": "text_delta"},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta"},
+            }
+        )
         assert isinstance(ev, ContentBlockDeltaEvent)
         assert ev.delta is None
 
     def test_content_block_start_tool_use(self) -> None:
-        ev = parse_event({
-            "type": "content_block_start",
-            "content_block": {"type": "tool_use", "name": "Bash"},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_start",
+                "content_block": {"type": "tool_use", "name": "Bash"},
+            }
+        )
         assert isinstance(ev, ContentBlockStartEvent)
         assert ev.content_block == ToolUseBlock(name="Bash")
 
     def test_content_block_start_text(self) -> None:
-        ev = parse_event({
-            "type": "content_block_start",
-            "content_block": {"type": "text", "text": ""},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_start",
+                "content_block": {"type": "text", "text": ""},
+            }
+        )
         assert isinstance(ev, ContentBlockStartEvent)
         assert ev.content_block == TextContent(text="")
 
     def test_content_block_start_unknown(self) -> None:
-        ev = parse_event({
-            "type": "content_block_start",
-            "content_block": {"type": "thinking"},
-        })
+        ev = parse_event(
+            {
+                "type": "content_block_start",
+                "content_block": {"type": "thinking"},
+            }
+        )
         assert isinstance(ev, ContentBlockStartEvent)
         assert ev.content_block is None
 

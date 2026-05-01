@@ -21,10 +21,13 @@ def completed_plan_path(plan_file: str) -> Path:
 
 
 class Service:
-    def __init__(self, path: str, log: Logger, *, command: str = "git") -> None:
-        self._repo = ExternalBackend(path, command=command)
+    def __init__(self, path: str, log: Logger) -> None:
+        self._repo = ExternalBackend(path)
         self._log = log
         self._trailer: str = ""
+
+    def set_log(self, log: Logger) -> None:
+        self._log = log
 
     def set_commit_trailer(self, trailer: str) -> None:
         self._trailer = trailer or ""

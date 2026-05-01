@@ -48,7 +48,7 @@ def parse_question_payload(output: str) -> QuestionPayload | None:
         return None
     try:
         data = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return None
     if not isinstance(data, dict):
         return None
