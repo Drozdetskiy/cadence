@@ -253,15 +253,13 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         holder=holder,
     )
 
+    plan_path = derive_plan_path(plan_file)
     run_success = False
     try:
         runner = Runner(ctx, cfg, deps)
         run_success = runner.run()
         if run_success:
-            plan_path = derive_plan_path(plan_file)
             typer.echo(f"run: rlx --task {plan_path}")
-            if impl:
-                typer.echo("(implementation not available in v0.1)")
     except KeyboardInterrupt:
         log.print("interrupted by user")
         return
@@ -273,6 +271,9 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         raise SystemExit(1) from exc
     finally:
         log.close(success=run_success)
+
+    if impl and run_success:
+        run_task_mode(Path(plan_path))
 
 
 def _install_sigquit(break_event: threading.Event) -> None:
