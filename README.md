@@ -1,6 +1,6 @@
 # rlx
 
-A Python CLI tool for autonomous task execution via Claude Code. In v0.1, `rlx` supports interactive plan creation: given a file describing a task, it drives a Q&A dialogue with Claude to produce a detailed implementation plan.
+A Python CLI tool for autonomous task execution via Claude Code. `rlx` supports interactive plan creation (`--plan`), full task pipelines (`--task`: tasks → review → finalize), and standalone branch review (`--review`).
 
 ## Installation
 
@@ -21,6 +21,12 @@ rlx --plan <file>
 # Create a plan and queue auto-implementation (v0.2+)
 rlx --plan <file> --impl
 
+# Execute a plan: branch creation, iterative task execution, review pass, finalize
+rlx --task <file>
+
+# Review the current branch against the default branch (no plan, no tasks)
+rlx --review
+
 # Show version
 rlx --version
 ```
@@ -30,6 +36,10 @@ When you run `rlx --plan task.md`, the tool:
 2. Starts an interactive dialogue with Claude
 3. Asks clarifying questions about your requirements
 4. Writes the final plan as `<file>-plan.md` next to the source file
+
+### `--review`
+
+`rlx --review` runs the review phase against the current branch without creating a plan or executing tasks. It performs a first-pass review, then iterates a critical/major review loop until no further commits are produced (or the iteration cap is reached), and runs the finalize step when `finalize_enabled` is set in config. Set `review_model` in config to use a distinct Claude model for review/finalize. `--review` is incompatible with `--impl` and `--plan` / `--task`.
 
 ## Development
 

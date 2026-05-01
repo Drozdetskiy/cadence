@@ -18,26 +18,40 @@ from rlx.plan import (
     file_has_uncompleted_checkbox,
     parse_plan_file,
 )
-from rlx.processor.prompts import build_plan_prompt, build_task_prompt
+from rlx.processor.prompts import (
+    build_finalize_prompt,
+    build_plan_prompt,
+    build_review_first_prompt,
+    build_review_second_prompt,
+    build_task_prompt,
+)
 from rlx.processor.signals import (
+    is_all_tasks_done,
     is_plan_ready,
+    is_review_done,
+    is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
 )
 from rlx.status import (
     Mode,
+    PhaseFinalize,
     PhaseHolder,
     PhasePlan,
+    PhaseReview,
     PhaseTask,
     Section,
-    SignalCompleted,
-    SignalFailed,
+    new_claude_review_section,
+    new_finalize_section,
     new_plan_iteration_section,
     new_task_iteration_section,
 )
 
 MIN_PLAN_ITERATIONS = 5
 PLAN_ITERATION_DIVISOR = 5
+MIN_REVIEW_ITERATIONS = 3
+REVIEW_ITERATION_DIVISOR = 10
+_LIMIT_RETRY_MAX = 10
 
 
 class Executor(Protocol):
@@ -85,6 +99,7 @@ class Dependencies:
     input_collector: InputCollector
     logger: Logger
     holder: PhaseHolder
+    review_executor: Executor | None = None
 
 
 class Runner:
@@ -115,18 +130,57 @@ class Runner:
     def set_git_checker(self, checker: GitChecker) -> None:
         self._git_checker = checker
 
+    @property
+    def _review_executor(self) -> Executor:
+        return self._deps.review_executor or self._deps.executor
+
     def run(self) -> bool:
         if self._ctx.mode == Mode.PLAN:
             return self.run_plan_creation()
         if self._ctx.mode == Mode.FULL:
             return self.run_full()
+        if self._ctx.mode == Mode.REVIEW:
+            return self.run_review_only()
         raise ValueError(f"unsupported mode: {self._ctx.mode}")
 
     def run_full(self) -> bool:
         if not self._ctx.plan_file:
             raise ValueError("run_full requires plan_file")
         self._deps.holder.set(PhaseTask)
-        return self.run_task_phase()
+        if not self.run_task_phase():
+            return False
+        self._deps.holder.set(PhaseReview)
+        review_prompt = build_review_first_prompt(
+            local_dir=self._ctx.local_dir,
+            plan_file=self._ctx.plan_file,
+            progress_file=self._ctx.progress_path or self._deps.logger.path,
+            default_branch=self._ctx.default_branch,
+            commit_trailer=self._app.commit_trailer,
+            warn=self._deps.logger.warn,
+        )
+        if not self.run_claude_review(review_prompt):
+            return False
+        if not self.run_claude_review_loop():
+            return False
+        self.run_finalize()
+        return True
+
+    def run_review_only(self) -> bool:
+        self._deps.holder.set(PhaseReview)
+        review_prompt = build_review_first_prompt(
+            local_dir=self._ctx.local_dir,
+            plan_file=self._ctx.plan_file,
+            progress_file=self._ctx.progress_path or self._deps.logger.path,
+            default_branch=self._ctx.default_branch,
+            commit_trailer=self._app.commit_trailer,
+            warn=self._deps.logger.warn,
+        )
+        if not self.run_claude_review(review_prompt):
+            return False
+        if not self.run_claude_review_loop():
+            return False
+        self.run_finalize()
+        return True
 
     def run_tasks_only(self) -> bool:
         if not self._ctx.plan_file:
@@ -155,7 +209,7 @@ class Runner:
                 task_num = i
             log.print_section(new_task_iteration_section(task_num))
 
-            result = self._run_with_limit_retry(claude.run, prompt)
+            result = self._run_with_limit_retry(claude, prompt)
 
             if self._is_break():
                 assert self._break_event is not None
@@ -173,7 +227,7 @@ class Runner:
                 log.error("%s", str(result.error))
                 raise result.error
 
-            if result.signal == SignalCompleted:
+            if is_all_tasks_done(result.signal):
                 if self.has_uncompleted_tasks():
                     log.warn(
                         "COMPLETED signal received but uncompleted tasks remain"
@@ -185,7 +239,7 @@ class Runner:
                 log.print("all tasks done")
                 return True
 
-            if result.signal == SignalFailed:
+            if is_task_failed(result.signal):
                 if retry_count < self._task_retry_count:
                     retry_count += 1
                     log.warn(
@@ -247,6 +301,134 @@ class Runner:
             return str(completed)
         return plan_file
 
+    def run_claude_review(self, prompt: str) -> bool:
+        log = self._deps.logger
+        log.print_section(new_claude_review_section(0, "all findings"))
+
+        result = self._run_with_limit_retry(
+            self._review_executor, prompt
+        )
+
+        if result.error is not None:
+            if isinstance(result.error, (PatternMatchError, LimitPatternError)):
+                self._handle_pattern_match_error(result.error)
+                return False
+            log.error("%s", str(result.error))
+            raise result.error
+
+        if is_task_failed(result.signal):
+            log.error("review reported failure")
+            raise RuntimeError("review failed")
+
+        if is_review_done(result.signal):
+            log.print("review completed, no issues found")
+            return True
+
+        log.warn("review did not complete cleanly")
+        return True
+
+    def run_claude_review_loop(self) -> bool:
+        log = self._deps.logger
+        max_review_iterations = max(
+            MIN_REVIEW_ITERATIONS,
+            self._app.max_iterations // REVIEW_ITERATION_DIVISOR,
+        )
+
+        prompt = build_review_second_prompt(
+            local_dir=self._ctx.local_dir,
+            plan_file=self._ctx.plan_file,
+            progress_file=self._ctx.progress_path or log.path,
+            default_branch=self._ctx.default_branch,
+            commit_trailer=self._app.commit_trailer,
+            warn=log.warn,
+        )
+
+        for i in range(1, max_review_iterations + 1):
+            log.print_section(new_claude_review_section(i, "critical/major"))
+
+            head_before = (
+                self._git_checker.head_hash() if self._git_checker else ""
+            )
+
+            result = self._run_with_limit_retry(
+                self._review_executor, prompt
+            )
+
+            if result.error is not None:
+                if isinstance(
+                    result.error, (PatternMatchError, LimitPatternError)
+                ):
+                    self._handle_pattern_match_error(result.error)
+                    return False
+                log.error("%s", str(result.error))
+                raise result.error
+
+            if is_task_failed(result.signal):
+                log.error("review reported failure")
+                raise RuntimeError("review failed")
+
+            if is_review_done(result.signal):
+                log.print("review loop complete, no more findings")
+                return True
+
+            if self.last_session_timed_out:
+                log.print("session timed out, continuing review loop")
+                self._sleep_with_cancel(self._iteration_delay)
+                continue
+
+            if self._git_checker is not None:
+                head_after = self._git_checker.head_hash()
+                if head_after == head_before:
+                    log.print("no changes detected, stopping review loop")
+                    return True
+
+            log.print("issues fixed, running another review iteration")
+            self._sleep_with_cancel(self._iteration_delay)
+
+        log.warn("max review iterations reached")
+        return True
+
+    def run_finalize(self) -> None:
+        if not self._app.finalize_enabled:
+            return
+        log = self._deps.logger
+        self._deps.holder.set(PhaseFinalize)
+        log.print_section(new_finalize_section())
+
+        prompt = build_finalize_prompt(
+            local_dir=self._ctx.local_dir,
+            plan_file=self._ctx.plan_file,
+            progress_file=self._ctx.progress_path or log.path,
+            default_branch=self._ctx.default_branch,
+            commit_trailer=self._app.commit_trailer,
+            warn=log.warn,
+        )
+
+        try:
+            result = self._run_with_limit_retry(
+                self._review_executor, prompt
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            log.warn("finalize error: %s", exc)
+            return
+
+        if result.error is not None:
+            if isinstance(
+                result.error, (PatternMatchError, LimitPatternError)
+            ):
+                self._handle_pattern_match_error(result.error)
+                return
+            log.warn("finalize error: %s", str(result.error))
+            return
+
+        if is_task_failed(result.signal):
+            log.warn("finalize reported failure")
+            return
+
+        log.print("finalize step completed")
+
     def run_plan_creation(self) -> bool:
         log = self._deps.logger
         claude = self._deps.executor
@@ -270,7 +452,7 @@ class Runner:
                 commit_trailer=self._app.commit_trailer,
             )
 
-            result = self._run_with_limit_retry(claude.run, prompt)
+            result = self._run_with_limit_retry(claude, prompt)
 
             if result.error is not None:
                 if isinstance(result.error, (PatternMatchError, LimitPatternError)):
@@ -279,7 +461,7 @@ class Runner:
                 log.error("%s", str(result.error))
                 raise result.error
 
-            if result.signal == SignalFailed:
+            if is_task_failed(result.signal):
                 log.error("plan creation failed")
                 raise RuntimeError("plan creation failed")
 
@@ -337,52 +519,59 @@ class Runner:
 
     def _run_with_session_timeout(
         self,
-        run_fn: Callable[[str], Result],
+        executor: Executor,
         prompt: str,
     ) -> Result:
         if self._session_timeout <= 0:
-            result = run_fn(prompt)
-            if result.idle_timed_out and not result.signal:
-                self.last_session_timed_out = True
+            result = executor.run(prompt)
+            self.last_session_timed_out = (
+                result.idle_timed_out and not result.signal
+            )
             return result
 
-        executor = self._deps.executor
         cancel_fn = getattr(executor, "cancel", None)
         timed_out = threading.Event()
+        completed = threading.Event()
+        state_lock = threading.Lock()
 
         def on_timeout() -> None:
-            timed_out.set()
-            if callable(cancel_fn):
-                with contextlib.suppress(Exception):
-                    cancel_fn()
+            with state_lock:
+                if completed.is_set():
+                    return
+                timed_out.set()
+                if callable(cancel_fn):
+                    with contextlib.suppress(Exception):
+                        cancel_fn()
 
         timer = threading.Timer(self._session_timeout, on_timeout)
         timer.daemon = True
         timer.start()
         try:
-            result = run_fn(prompt)
+            result = executor.run(prompt)
         finally:
-            timer.cancel()
+            with state_lock:
+                completed.set()
+                timer.cancel()
 
         if timed_out.is_set():
             result.error = None
             result.signal = ""
+            result.idle_timed_out = True
             self.last_session_timed_out = True
             return result
 
-        if result.idle_timed_out and not result.signal:
-            self.last_session_timed_out = True
+        self.last_session_timed_out = (
+            result.idle_timed_out and not result.signal
+        )
         return result
 
     def _run_with_limit_retry(
         self,
-        run_fn: Callable[[str], Result],
+        executor: Executor,
         prompt: str,
-        *,
-        max_retries: int = 10,
     ) -> Result:
-        result = self._run_with_session_timeout(run_fn, prompt)
-        for _ in range(max_retries):
+        result = self._run_with_session_timeout(executor, prompt)
+        for _ in range(_LIMIT_RETRY_MAX):
             if result.error is None:
                 return result
             if not isinstance(result.error, LimitPatternError):
@@ -391,11 +580,15 @@ class Runner:
                 return result
             self._deps.logger.warn("rate limit detected, waiting...")
             self._sleep_with_cancel(self._wait_on_limit)
-            result = self._run_with_session_timeout(run_fn, prompt)
+            result = self._run_with_session_timeout(executor, prompt)
         return result
 
 
 __all__ = [
+    "MIN_PLAN_ITERATIONS",
+    "MIN_REVIEW_ITERATIONS",
+    "PLAN_ITERATION_DIVISOR",
+    "REVIEW_ITERATION_DIVISOR",
     "Dependencies",
     "Executor",
     "GitChecker",

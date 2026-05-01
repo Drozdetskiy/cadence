@@ -48,6 +48,10 @@ def new_generic_section(label: str) -> Section:
     return Section(label=label)
 
 
+def new_finalize_section() -> Section:
+    return Section(label="finalize step")
+
+
 class PhaseHolder:
     def __init__(self) -> None:
         self._lock = threading.Lock()

@@ -1,6 +1,6 @@
 # rlx
 
-Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <file>` (plan creation) and `rlx --task <file>` (task execution: branch creation, iterative task execution, diff stats on completion). The `--impl` flag stores intent for auto-implementation after plan creation (not yet implemented).
+Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <file>` (plan creation), `rlx --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop → finalize), and `rlx --review` (review-only of the current branch: review_first → review_loop → finalize, no plan, no branch creation). The `--impl` flag stores intent for auto-implementation after plan creation (not yet implemented). `--review` is incompatible with `--impl`.
 
 ## Package structure
 
@@ -22,15 +22,17 @@ src/rlx/
     parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox
     plan.py         - Selector (numbered picker + find_recent), extract_branch_name
   processor/
-    signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED)
-    prompts.py      - Prompt loading with local override fallback, build_plan_prompt, build_task_prompt
-    runner.py       - Runner: orchestrates plan creation and task execution loops via Protocol dependencies; break/pause + session timeout
+    signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED, REVIEW_DONE) + is_* helpers
+    prompts.py      - Prompt loading with local override fallback; build_plan_prompt, build_task_prompt, build_review_first_prompt, build_review_second_prompt, build_finalize_prompt; expand_agent_references / format_agent_expansion / replace_prompt_variables
+    agents.py       - Agent loader (local .rlx/agents/<name>.txt → embedded rlx.defaults.agents); AgentDef, frontmatter parser, model normalization
+    runner.py       - Runner: orchestrates plan creation, task execution, review (run_claude_review + run_claude_review_loop), and finalize phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch
   progress/
     colors.py       - Rich Style mapping from ColorConfig
     flock.py        - File locking via fcntl.flock
     logger.py       - Dual file+stdout logger with timestamps and signal highlighting
   defaults/
-    prompts/        - Embedded prompt templates (make_plan.txt, task.txt)
+    prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt, finalize.txt)
+    agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt, documentation.txt) referenced from review prompts via {{agent:<name>}} markers
 ```
 
 ## Key commands
