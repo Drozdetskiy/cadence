@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import shutil
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
+
+import typer
+
+from rlx.config import Config, detect_local_dir, load_config, parse_duration
+from rlx.executor.claude_executor import ClaudeExecutor
+from rlx.git import get_default_branch, is_git_repo
+from rlx.input import TerminalCollector
+from rlx.processor.runner import (
+    Dependencies,
+    RunContext,
+    Runner,
+    UserAbortedError,
+)
+from rlx.progress.colors import Colors
+from rlx.progress.logger import Logger, ProgressLoggerConfig
+from rlx.status import Mode, PhaseHolder
+
+app = typer.Typer(add_completion=False)
+
+
+class SigintHandler:
+    def __init__(self) -> None:
+        self.shutdown_event = threading.Event()
+        self._last_time = 0.0
+
+    def reset(self) -> None:
+        self.shutdown_event.clear()
+        self._last_time = 0.0
+
+    def install(self) -> None:
+        signal.signal(signal.SIGINT, self)
+
+    def __call__(self, signum: int, frame: object) -> None:
+        now = time.monotonic()
+        if self.shutdown_event.is_set() and (now - self._last_time) < 5.0:
+            sys.exit(1)
+        self._last_time = now
+        self.shutdown_event.set()
+        raise KeyboardInterrupt
+
+
+_sigint = SigintHandler()
+
+
+def resolve_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("rlx")
+    except Exception:
+        return "unknown"
+
+
+def determine_mode(
+    plan: Path | None,
+    task: Path | None,
+    review: bool,
+) -> Mode:
+    if plan is not None:
+        return Mode.PLAN
+    if task is not None:
+        return Mode.FULL
+    if review:
+        return Mode.REVIEW
+    raise typer.BadParameter(
+        "one of --plan, --task, or --review is required"
+    )
+
+
+def check_claude_dep(cfg: Config) -> None:
+    cmd = cfg.claude_command or "claude"
+    if shutil.which(cmd) is None:
+        typer.echo(f"error: '{cmd}' not found in PATH", err=True)
+        raise SystemExit(1)
+
+
+def to_rel_path(p: Path) -> str:
+    try:
+        return str(p.relative_to(Path.cwd()))
+    except ValueError:
+        return str(p)
+
+
+def derive_plan_path(prompt_file: Path) -> str:
+    name = prompt_file.name
+    idx = name.rfind("prompt")
+    if idx != -1:
+        plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+    else:
+        stem = prompt_file.stem
+        plan_name = f"{stem}-plan{prompt_file.suffix}"
+    return str(prompt_file.parent / plan_name)
+
+
+def _read_plan_file(plan_file: Path) -> str:
+    if not plan_file.is_file():
+        typer.echo(f"error: file not found: {plan_file}", err=True)
+        raise SystemExit(1)
+    content = plan_file.read_text(encoding="utf-8").strip()
+    if not content:
+        typer.echo("error: plan file is empty", err=True)
+        raise SystemExit(1)
+    return content
+
+
+def _ensure_git_repo(vcs_command: str) -> None:
+    if not is_git_repo(vcs_command=vcs_command):
+        typer.echo(
+            "error: not a git repository (or not at repo root)",
+            err=True,
+        )
+        raise SystemExit(1)
+
+
+def _build_logger(
+    plan_file: Path, content: str, colors: Colors, holder: PhaseHolder
+) -> Logger:
+    logger_cfg = ProgressLoggerConfig(
+        plan_file=to_rel_path(plan_file),
+        plan_description=content,
+        mode=Mode.PLAN,
+        branch="",
+    )
+    try:
+        return Logger(logger_cfg, colors, holder)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+
+def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
+    content = _read_plan_file(plan_file)
+
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+
+    check_claude_dep(cfg)
+
+    vcs = cfg.vcs_command or "git"
+    _ensure_git_repo(vcs)
+
+    default_branch = cfg.default_branch or get_default_branch(vcs_command=vcs)
+
+    holder = PhaseHolder()
+    colors = Colors(cfg.colors)
+    log = _build_logger(plan_file, content, colors, holder)
+
+    log.print("rlx %s", resolve_version())
+    log.print("mode: plan")
+    log.print("plan file: %s", to_rel_path(plan_file))
+    log.print("progress: %s", log.path)
+
+    ctx = RunContext(
+        mode=Mode.PLAN,
+        plan_file=to_rel_path(plan_file),
+        plan_description=content,
+        progress_path=log.path,
+        default_branch=default_branch,
+        local_dir=local_dir,
+    )
+
+    idle_timeout = parse_duration(cfg.idle_timeout)
+
+    def activity_handler(tool_name: str) -> None:
+        log.print("claude: %s", tool_name)
+
+    def output_handler(text: str) -> None:
+        log.log_claude_output(text)
+
+    claude = ClaudeExecutor(
+        command=cfg.claude_command,
+        args=cfg.claude_args,
+        model=cfg.claude_model,
+        error_patterns=cfg.claude_error_patterns,
+        limit_patterns=cfg.claude_limit_patterns,
+        idle_timeout=idle_timeout,
+        activity_handler=activity_handler,
+        output_handler=output_handler,
+    )
+
+    deps = Dependencies(
+        executor=claude,
+        input_collector=TerminalCollector(),
+        logger=log,
+        holder=holder,
+    )
+
+    run_success = False
+    try:
+        runner = Runner(ctx, cfg, deps)
+        run_success = runner.run()
+        if run_success:
+            plan_path = derive_plan_path(plan_file)
+            typer.echo(f"run: rlx --task {plan_path}")
+            if impl:
+                typer.echo("(implementation not available in v0.1)")
+    except KeyboardInterrupt:
+        log.print("interrupted by user")
+        return
+    except UserAbortedError:
+        log.print("aborted by user")
+        return
+    except Exception as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        log.close(success=run_success)
+
+
+_PLAN_OPT: Path | None = typer.Option(None, "--plan", help="Path to plan description file")
+_TASK_OPT: Path | None = typer.Option(None, "--task", help="Path to plan file for task execution")
+_REVIEW_OPT: bool = typer.Option(False, "--review", help="Review current branch only")
+_IMPL_OPT: bool = typer.Option(False, "--impl", help="Auto-implement after plan creation")
+_VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
+
+
+@app.command()
+def main(
+    plan: Path | None = _PLAN_OPT,
+    task: Path | None = _TASK_OPT,
+    review: bool = _REVIEW_OPT,
+    impl: bool = _IMPL_OPT,
+    version: bool = _VERSION_OPT,
+) -> None:
+    if version:
+        typer.echo(f"rlx {resolve_version()}")
+        raise SystemExit(0)
+
+    if impl and plan is None:
+        typer.echo(
+            "error: --impl requires --plan",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    _sigint.reset()
+    _sigint.install()
+
+    active = sum([plan is not None, task is not None, review])
+    if active > 1:
+        typer.echo(
+            "error: --plan, --task, and --review are mutually exclusive",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    mode = determine_mode(plan, task, review)
+
+    if mode == Mode.PLAN:
+        assert plan is not None
+        run_plan_mode(plan, impl=impl)
+    elif mode == Mode.FULL:
+        typer.echo("error: --task mode not implemented in v0.1", err=True)
+        raise SystemExit(1)
+    elif mode == Mode.REVIEW:
+        typer.echo("error: --review mode not implemented in v0.1", err=True)
+        raise SystemExit(1)
