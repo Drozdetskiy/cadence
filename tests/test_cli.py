@@ -717,7 +717,7 @@ class TestRunTaskMode:
         mock_svc.ensure_has_commits.assert_called_once()
         mock_svc.create_branch_for_plan.assert_called_once()
         mock_svc.diff_stats.assert_called_once_with("main")
-        mock_svc.move_plan_to_completed.assert_called_once()
+        mock_svc.mark_plan_completed.assert_called_once()
         mock_log.close.assert_called_once()
 
     @patch("rlx.cli._install_sigquit")
@@ -769,7 +769,7 @@ class TestRunTaskMode:
         mock_log.print.assert_any_call("aborted by user")
         mock_log.close.assert_called_once()
         mock_svc.diff_stats.assert_not_called()
-        mock_svc.move_plan_to_completed.assert_not_called()
+        mock_svc.mark_plan_completed.assert_not_called()
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")
@@ -839,7 +839,7 @@ class TestRunTaskMode:
         mock_svc.get_default_branch.return_value = "main"
         mock_svc.current_branch.return_value = "feature"
         mock_svc.diff_stats.return_value = DiffStats()
-        mock_svc.move_plan_to_completed.side_effect = RuntimeError("git failed")
+        mock_svc.mark_plan_completed.side_effect = RuntimeError("git failed")
         mock_service_cls.return_value = mock_svc
 
         mock_executor = MagicMock()
@@ -856,8 +856,8 @@ class TestRunTaskMode:
         run_task_mode(f)
 
         mock_log.warn.assert_any_call(
-            "could not move plan to completed: %s",
-            mock_svc.move_plan_to_completed.side_effect,
+            "could not mark plan completed: %s",
+            mock_svc.mark_plan_completed.side_effect,
         )
         mock_log.close.assert_called_once()
 
@@ -975,7 +975,7 @@ class TestRunReviewMode:
 
         mock_svc.set_commit_trailer.assert_called()
         mock_svc.diff_stats.assert_called_once_with("main")
-        mock_svc.move_plan_to_completed.assert_not_called()
+        mock_svc.mark_plan_completed.assert_not_called()
         mock_svc.create_branch_for_plan.assert_not_called()
         mock_svc.ensure_has_commits.assert_not_called()
         mock_display.assert_called_once()

@@ -16,7 +16,7 @@ src/rlx/
   git/
     __init__.py     - Re-exports: GitChecker, is_git_repo, get_default_branch, head_hash, Service, DiffStats
     backend.py      - ExternalBackend: git subprocess wrapper; DiffStats dataclass
-    service.py      - Service: high-level git ops (branch creation for plan, commit trailer, move plan to completed/)
+    service.py      - Service: high-level git ops (branch creation for plan, commit trailer, rename plan in-place with -completed suffix, no commit)
   plan/
     __init__.py     - Re-exports: Plan, Task, Checkbox, TaskStatus, parse_plan, Selector, extract_branch_name
     parse.py        - Plan/Task/Checkbox dataclasses, markdown parsing, file_has_uncompleted_checkbox

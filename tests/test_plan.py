@@ -352,3 +352,37 @@ class TestSelector:
         os.utime(f, (past, past))
         sel, _ = self._make(str(tmp_path))
         assert sel.find_recent(datetime.now()) == ""
+
+    def test_select_numbered_excludes_completed(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("x")
+        (tmp_path / "b-completed.md").write_text("x")
+        sel, _ = self._make(str(tmp_path))
+        result = sel.select("", optional=False)
+        assert result == str((tmp_path / "a.md").resolve())
+
+    def test_select_numbered_only_completed_raises(self, tmp_path: Path) -> None:
+        (tmp_path / "a-completed.md").write_text("x")
+        sel, _ = self._make(str(tmp_path))
+        with pytest.raises(NoPlansFoundError):
+            sel.select("", optional=False)
+
+    def test_select_numbered_picker_hides_completed(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("x")
+        (tmp_path / "b.md").write_text("x")
+        (tmp_path / "c-completed.md").write_text("x")
+        sel, stdout = self._make(str(tmp_path), input_text="2\n")
+        result = sel.select("", optional=False)
+        assert result == str((tmp_path / "b.md").resolve())
+        assert "c-completed.md" not in stdout.getvalue()
+
+    def test_find_recent_skips_completed(self, tmp_path: Path) -> None:
+        start = datetime.now() - timedelta(seconds=5)
+        plain = tmp_path / "plain.md"
+        plain.write_text("x")
+        completed = tmp_path / "plan-completed.md"
+        completed.write_text("x")
+        future = time.time() + 2
+        os.utime(plain, (future - 1, future - 1))
+        os.utime(completed, (future, future))
+        sel, _ = self._make(str(tmp_path))
+        assert sel.find_recent(start) == str(plain.resolve())

@@ -348,6 +348,58 @@ class TestRunnerPlanCreationIdleTimeout:
         assert executor.run.call_count == 2
 
 
+def _make_resolver_runner(plan_file: str) -> Runner:
+    ctx = RunContext(mode=Mode.REVIEW, plan_file=plan_file)
+    log = MagicMock()
+    log.path = "/tmp/progress.txt"
+    holder = PhaseHolder()
+    deps = Dependencies(
+        executor=MagicMock(),
+        input_collector=MagicMock(),
+        logger=log,
+        holder=holder,
+    )
+    cfg = AppConfig(max_iterations=1, iteration_delay_ms=0)
+    return Runner(ctx, cfg, deps)
+
+
+class TestResolvePlanFilePath:
+    def test_returns_empty_when_no_plan_file(self) -> None:
+        runner = _make_resolver_runner("")
+        assert runner.resolve_plan_file_path() == ""
+
+    def test_returns_original_when_exists(self, tmp_path: Path) -> None:
+        plan = tmp_path / "plan.md"
+        plan.write_text("# plan\n")
+        runner = _make_resolver_runner(str(plan))
+        assert runner.resolve_plan_file_path() == str(plan)
+
+    def test_falls_back_to_completed_sibling_with_extension(
+        self, tmp_path: Path
+    ) -> None:
+        plan = tmp_path / "plan.md"
+        completed = tmp_path / "plan-completed.md"
+        completed.write_text("# done\n")
+        runner = _make_resolver_runner(str(plan))
+        assert runner.resolve_plan_file_path() == str(completed)
+
+    def test_falls_back_to_completed_sibling_no_extension(
+        self, tmp_path: Path
+    ) -> None:
+        plan = tmp_path / "preprompt"
+        completed = tmp_path / "preprompt-completed"
+        completed.write_text("# done\n")
+        runner = _make_resolver_runner(str(plan))
+        assert runner.resolve_plan_file_path() == str(completed)
+
+    def test_returns_original_when_neither_exists(
+        self, tmp_path: Path
+    ) -> None:
+        plan = tmp_path / "missing.md"
+        runner = _make_resolver_runner(str(plan))
+        assert runner.resolve_plan_file_path() == str(plan)
+
+
 def _make_task_runner(
     executor: object,
     *,
@@ -527,11 +579,9 @@ class TestHasUncompletedTasks:
         runner, _log, _ = _make_task_runner(MagicMock(), plan_file=str(plan))
         assert runner.has_uncompleted_tasks() is True
 
-    def test_resolves_completed_subdir(self, tmp_path: Path) -> None:
-        completed_dir = tmp_path / "completed"
-        completed_dir.mkdir()
-        moved = completed_dir / "plan.md"
-        moved.write_text(_PLAN_PENDING)
+    def test_resolves_completed_sibling(self, tmp_path: Path) -> None:
+        completed = tmp_path / "plan-completed.md"
+        completed.write_text(_PLAN_PENDING)
 
         original = str(tmp_path / "plan.md")
         runner, _log, _ = _make_task_runner(MagicMock(), plan_file=original)
