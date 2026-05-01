@@ -48,6 +48,7 @@ class TestConfigDefaults:
         assert cfg.wait_on_limit == "0"
         assert cfg.finalize_enabled is False
         assert cfg.plans_dir == "docs/plans"
+        assert cfg.tasks_root == "cdc-tasks"
         assert cfg.default_branch == ""
         assert cfg.vcs_command == "git"
         assert cfg.commit_trailer == ""
@@ -110,6 +111,12 @@ class TestLoadConfig:
         assert cfg.claude_command == "my-claude"
         assert cfg.plans_dir == "my-plans"
         assert cfg.task_model == "claude-opus-4-7"
+
+    def test_load_tasks_root_override(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("tasks_root: my-tasks\n")
+        cfg = load_config(tmp_path)
+        assert cfg.tasks_root == "my-tasks"
 
     def test_load_int_fields(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

@@ -35,6 +35,7 @@ class Config:
     wait_on_limit: str = "0"
     finalize_enabled: bool = False
     plans_dir: str = "docs/plans"
+    tasks_root: str = "cdc-tasks"
     default_branch: str = ""
     vcs_command: str = "git"
     commit_trailer: str = ""
@@ -102,6 +103,7 @@ def load_config(config_dir: Path | None) -> Config:
         "idle_timeout",
         "wait_on_limit",
         "plans_dir",
+        "tasks_root",
         "default_branch",
         "vcs_command",
         "commit_trailer",

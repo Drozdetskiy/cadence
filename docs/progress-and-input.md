@@ -24,10 +24,13 @@
 ```python
 @dataclass
 class Config:
-    plan_file: str = ""        # имя файла плана (для генерации имени progress файла)
-    plan_description: str = "" # описание плана для plan mode (для имени файла)
+    plan_file: str = ""        # путь к файлу плана (определяет каталог progress-файла в plan/full)
+    plan_description: str = "" # описание плана (исторический параметр, в путях больше не используется)
     mode: str = ""             # "full", "review", "plan"
-    branch: str = ""           # текущая ветка
+    branch: str = ""           # текущая ветка (для review)
+    tasks_root: str = "cdc-tasks"  # корень для review-прогресса
+    default_branch: str = ""   # имя default-ветки репозитория
+    head_hash: str = ""        # HEAD commit hash (используется в review на default/detached)
     no_color: bool = False     # отключить цвета
 ```
 
@@ -44,7 +47,7 @@ class Logger:
 ```
 
 Процедура создания:
-1. Генерация имени файла через `_progress_filename(cfg)`
+1. Вычисление пути через `_progress_path(cfg)` (см. ниже)
 2. Резолвинг в абсолютный путь
 3. Создание parent директории (0o750)
 4. Открытие файла с append mode (0o600)
@@ -130,18 +133,23 @@ Completed: 2006-01-02 15:04:05 (1h23m45s)
 3. Если файл > 0 без footer -> restart separator, существующий контент сохраняется
 4. Если файл пуст -> свежий header
 
-### Генерация имени файла (_progress_filename)
+### Вычисление пути (_progress_path)
 
-| Ситуация | Шаблон |
-|---|---|
-| Plan mode с описанием | `progress-plan-{sanitized}.txt` |
-| Plan file + full mode | `progress-{planFileBase}.txt` |
-| Plan file + review mode | `progress-{planFileBase}-review.txt` |
-| Без plan + plan mode | `progress-plan.txt` |
-| Без plan + review mode | `progress-review.txt` |
-| Без plan + full mode | `progress.txt` |
+Путь к progress-файлу зависит от режима:
 
-Санитизация (`_sanitize_plan_name`): lowercase, пробелы в дефисы, только alphanumeric + дефисы, collapse, trim, limit 50 chars, fallback "unnamed".
+- `Mode.PLAN` (требуется `cfg.plan_file`): `<dirname(plan_file)>/progress-plan.txt`
+- `Mode.FULL` (требуется `cfg.plan_file`): `<dirname(plan_file)>/progress-task.txt`
+- `Mode.REVIEW`: `<tasks_root>/<segment>/progress-review.txt`, где `segment` --
+  `_sanitize_plan_name(cfg.branch)`, если ветка непустая и не совпадает с `cfg.default_branch`;
+  иначе `cfg.head_hash` (на default-ветке или detached HEAD). Если и ветка пустая, и hash пустой --
+  `RuntimeError`.
+
+Если `Mode.PLAN`/`Mode.FULL` вызван без `plan_file` -- `RuntimeError`. Fallback на старый
+`.cadence/progress/` каталог не предусмотрен.
+
+Санитизация (`_sanitize_plan_name`): lowercase, `/` и `\` в дефисы, пробелы в дефисы,
+только alphanumeric + дефисы, collapse, trim, limit 50 chars, fallback "unnamed". Поэтому
+ветка `feat/foo` превращается в сегмент `feat-foo`.
 
 ### File locking
 
