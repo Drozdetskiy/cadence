@@ -35,11 +35,8 @@ class Backend(Protocol):
     def checkout_branch(self, name: str) -> None: ...
     def diff_fingerprint(self) -> str: ...
     def is_dirty(self) -> bool: ...
-    def file_has_changes(self, path: str) -> bool: ...
     def has_changes_other_than(self, path: str) -> list[str]: ...
-    def add(self, path: str) -> None: ...
     def move_file(self, src: str, dst: str) -> None: ...
-    def commit(self, msg: str) -> None: ...
     def commit_files(self, msg: str, *paths: str) -> None: ...
     def create_initial_commit(self, msg: str) -> None: ...
     def diff_stats(self, base_branch: str) -> DiffStats: ...
@@ -89,8 +86,6 @@ def _append_trailer(self, msg: str) -> str  # private
 ```
 
 Если `trailer` не пуст, `_append_trailer()` добавляет `"\n\n" + trailer` к сообщению коммита. Применяется ко всем коммитам через Service:
-- `create_branch_for_plan()` -- "add plan: <branch>"
-- `commit_plan_file()` -- "add plan: <branch>"
 - `ensure_has_commits()` -- "initial commit"
 
 `mark_plan_completed()` коммитов не создаёт -- это in-place rename без обращения к git.
@@ -107,7 +102,6 @@ def _append_trailer(self, msg: str) -> str  # private
 | `get_default_branch() -> str` | Определяет default branch (алгоритм ниже) |
 | `has_commits() -> bool` | Есть ли хотя бы один коммит |
 | `diff_stats(base_branch: str) -> DiffStats` | Статистика изменений base...HEAD |
-| `file_has_changes(path: str) -> bool` | Есть ли незакоммиченные изменения файла |
 
 ### Алгоритм определения default branch
 
@@ -130,24 +124,20 @@ def _append_trailer(self, msg: str) -> str  # private
 
 **create_branch_for_plan(plan_file: str, default_branch: str) -> None**
 - Основной метод для создания feature-ветки при запуске плана
+- Plan-файл не коммитится: ветка создаётся (или checkout-ится), plan остаётся в working tree как раньше
 - Последовательность:
   1. `_resolve_filesystem_case(plan_file)` -- разрешение регистра имени файла
   2. `_prepare_plan_branch()` -- валидация, извлечение имени ветки, проверка dirty files
   3. Если уже не на default branch -- return (уже на feature branch)
   4. Если ветка существует -- `checkout`, иначе `checkout -b`
-  5. Если plan file имеет изменения (единственный dirty файл) -- auto-commit: `git add` + `git commit "add plan: <branch>"`
 
-**_prepare_plan_branch(plan_file: str, default_branch: str) -> tuple[str, bool]** (private)
-- Проверяет текущую ветку: если не на default branch, возвращает пустое имя (caller skip)
+**_prepare_plan_branch(plan_file: str, default_branch: str) -> str** (private)
+- Проверяет текущую ветку: если не на default branch, возвращает пустую строку (caller skip)
 - Извлекает имя ветки через `plan.extract_branch_name(plan_file)`
 - Проверяет dirty files через `has_changes_other_than(plan_file)` -- ошибка если есть
-- Проверяет `file_has_changes(plan_file)` -- возвращает bool для auto-commit
+- Возвращает имя ветки
 
 ### Операции с plan-файлами
-
-**commit_plan_file(plan_file: str) -> None**
-- Коммитит plan-файл
-- `git add` + `git commit "add plan: <branch>"`
 
 **mark_plan_completed(plan_file: str) -> None**
 - Переименовывает plan-файл in-place: `<stem><ext>` -> `<stem>-completed<ext>` в той же директории (например, `plan.md` -> `plan-completed.md`, `preprompt` -> `preprompt-completed`)
@@ -179,7 +169,7 @@ def _resolve_filesystem_case(self, path: str) -> str
 3. Если case-insensitive match найден -- возвращает путь с реальным регистром
 4. Fallback -- оригинальный path
 
-Используется в: `create_branch_for_plan()`, `commit_plan_file()`.
+Используется в: `create_branch_for_plan()`, `mark_plan_completed()`.
 
 ## ExternalBackend
 
@@ -240,12 +230,7 @@ SHA256 хэш состояния working tree для stalemate detection:
 - Проходит по строкам, игнорирует untracked (`??`) -- они не считаются dirty
 - Любая другая строка (modified, staged, deleted) -> dirty
 
-### file_has_changes / has_changes_other_than
-
-`file_has_changes(path)`:
-- Конвертирует в relative через `_to_relative()`
-- `git status --porcelain -uall -- <rel>` (-uall для развёрнутых путей, не collapsed директорий)
-- Непустой output = есть изменения
+### has_changes_other_than
 
 `has_changes_other_than(path)`:
 - `git status --porcelain -uall` -- все файлы
@@ -307,9 +292,7 @@ def _to_relative(self, path: str) -> str
 
 | Метод backend | git команда |
 |---|---|
-| `add(path)` | `git add -- <rel>` |
 | `move_file(src, dst)` | `git mv -- <srcRel> <dstRel>` |
-| `commit(msg)` | `git commit -m <msg>` |
 | `commit_files(msg, *paths)` | `git commit -m <msg> -- <rel1> <rel2> ...` |
 | `create_initial_commit(msg)` | `git add -A` + проверка staged + `git commit -m <msg>` |
 | `create_branch(name)` | `git checkout -b <name>` |
@@ -481,7 +464,7 @@ Sentinel error. Проверяется через `isinstance()` в caller'е д
 
 Модуль `git` импортирует `plan` для одной функции: `plan.extract_branch_name()` используется в `_prepare_plan_branch()` для извлечения имени ветки из plan-файла. Это единственная зависимость.
 
-`mark_plan_completed()` исторически находится в модуле `git` (как замена `move_plan_to_completed`); сейчас это просто `os.rename` без обращения к git, но метод оставлен в `Service` рядом с другими операциями над plan-файлами (`commit_plan_file`, `create_branch_for_plan`).
+`mark_plan_completed()` исторически находится в модуле `git` (как замена `move_plan_to_completed`); сейчас это просто `os.rename` без обращения к git, но метод оставлен в `Service` рядом с другими операциями над plan-файлами (`create_branch_for_plan`).
 
 ## Соображения для Python-порта
 

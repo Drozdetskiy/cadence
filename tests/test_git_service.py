@@ -154,19 +154,6 @@ class TestExternalBackendDirty:
         be = ExternalBackend(str(tmp_path))
         assert be.is_dirty() is True
 
-    def test_file_has_changes_true(self, tmp_path: Path) -> None:
-        _init_repo(str(tmp_path))
-        _make_commit(str(tmp_path))
-        (tmp_path / "README.md").write_text("changed")
-        be = ExternalBackend(str(tmp_path))
-        assert be.file_has_changes("README.md") is True
-
-    def test_file_has_changes_false(self, tmp_path: Path) -> None:
-        _init_repo(str(tmp_path))
-        _make_commit(str(tmp_path))
-        be = ExternalBackend(str(tmp_path))
-        assert be.file_has_changes("README.md") is False
-
     def test_has_changes_other_than(self, tmp_path: Path) -> None:
         _init_repo(str(tmp_path))
         _make_commit(str(tmp_path))
@@ -177,9 +164,7 @@ class TestExternalBackendDirty:
         assert "other.txt" in others
         assert "plan.md" not in others
 
-    def test_has_changes_other_than_case_insensitive(
-        self, tmp_path: Path
-    ) -> None:
+    def test_has_changes_other_than_case_insensitive(self, tmp_path: Path) -> None:
         _init_repo(str(tmp_path))
         _make_commit(str(tmp_path))
         (tmp_path / "Plan.md").write_text("plan")
@@ -320,20 +305,42 @@ class TestResolveFilesystemCase:
 
 
 class TestCreateBranchForPlan:
-    def test_creates_branch_and_commits(self, tmp_path: Path) -> None:
+    def test_creates_branch_no_commit(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
         _make_commit(path)
         plan = tmp_path / "2024-01-01-feature-login.md"
         plan.write_text("# Plan")
 
+        be = ExternalBackend(path)
+        head_before = be.head_hash()
+
         svc = Service(path, _Log())
         svc.create_branch_for_plan(str(plan), "main")
 
-        be = ExternalBackend(path)
         assert be.current_branch() == "feature-login"
-        result = _git(path, "log", "--format=%s", "-n", "1")
-        assert "add plan: feature-login" in result.stdout
+        assert be.head_hash() == head_before
+        assert plan.exists()
+        status = _git(path, "status", "--porcelain", "-uall").stdout
+        assert "2024-01-01-feature-login.md" in status
+
+    def test_does_not_commit_uncommitted_plan(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        plan = tmp_path / "feature-x.md"
+        plan.write_text("# Plan")
+
+        be = ExternalBackend(path)
+        head_before = be.head_hash()
+
+        svc = Service(path, _Log())
+        svc.create_branch_for_plan(str(plan), "main")
+
+        assert be.current_branch() == "feature-x"
+        assert be.head_hash() == head_before
+        status = _git(path, "status", "--porcelain", "-uall").stdout
+        assert "feature-x.md" in status
 
     def test_skip_when_on_feature_branch(self, tmp_path: Path) -> None:
         path = str(tmp_path)
@@ -373,9 +380,7 @@ class TestCreateBranchForPlan:
         with pytest.raises(RuntimeError):
             svc.create_branch_for_plan(str(plan), "main")
 
-    def test_no_commit_when_plan_already_committed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_creates_branch_when_plan_already_tracked_and_clean(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
         _make_commit(path)
@@ -384,12 +389,14 @@ class TestCreateBranchForPlan:
         _git(path, "add", "feature.md")
         _git(path, "commit", "-m", "pre-add plan")
 
+        be = ExternalBackend(path)
+        head_before = be.head_hash()
+
         svc = Service(path, _Log())
         svc.create_branch_for_plan(str(plan), "main")
-        be = ExternalBackend(path)
+
         assert be.current_branch() == "feature"
-        result = _git(path, "log", "--format=%s", "-n", "1")
-        assert result.stdout.strip() == "pre-add plan"
+        assert be.head_hash() == head_before
 
 
 class TestMarkPlanCompleted:
