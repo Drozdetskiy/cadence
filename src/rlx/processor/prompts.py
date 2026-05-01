@@ -105,3 +105,24 @@ def build_plan_prompt(
     prompt = prompt.replace(_PLAN_DESC_PLACEHOLDER, plan_description)
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
     return prompt
+
+
+def build_task_prompt(
+    *,
+    local_dir: Path | None = None,
+    plan_file: str = "",
+    progress_file: str = "",
+    default_branch: str = "",
+    commit_trailer: str = "",
+) -> str:
+    prompt = load_prompt("task", local_dir=local_dir)
+    goal = f"implementation of plan at {plan_file}"
+    prompt = replace_base_variables(
+        prompt,
+        plan_file=plan_file,
+        progress_file=progress_file,
+        goal=goal,
+        default_branch=default_branch,
+    )
+    prompt = append_commit_trailer_instruction(prompt, commit_trailer)
+    return prompt

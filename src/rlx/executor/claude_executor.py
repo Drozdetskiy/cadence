@@ -206,6 +206,7 @@ class ClaudeExecutor:
         self._limit_patterns = limit_patterns or []
         self._idle_timeout = idle_timeout
         self._cmd_runner = cmd_runner
+        self._active_cleanup: ProcessGroupCleanup | None = None
 
     def run(self, prompt: str) -> Result:
         cmd = self._build_command()
@@ -213,17 +214,27 @@ class ClaudeExecutor:
         if handle is None:
             return Result(error=launch_err)
 
+        self._active_cleanup = handle.cleanup
+
         def on_idle() -> None:
             if handle.cleanup is not None:
                 handle.cleanup.kill_process_group()
 
         watchdog = _IdleWatchdog(self._idle_timeout, on_idle)
-        result = self._parse_stream(handle, watchdog)
+        try:
+            result = self._parse_stream(handle, watchdog)
+            exit_code = handle.wait()
+        finally:
+            self._active_cleanup = None
 
-        exit_code = handle.wait()
         if watchdog.triggered.is_set():
             return self._finalize_idle(result)
         return self._finalize_exit(result, exit_code)
+
+    def cancel(self) -> None:
+        cleanup = self._active_cleanup
+        if cleanup is not None:
+            cleanup.kill_process_group()
 
     def _parse_stream(
         self,
@@ -244,7 +255,7 @@ class ClaudeExecutor:
 
                 try:
                     raw = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
+                except ValueError:
                     output_parts.append(line + "\n")
                     recent.append(line)
                     if self._output_handler:

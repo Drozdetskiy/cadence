@@ -217,6 +217,25 @@ class Logger:
         self._console.print(text)
         self._buffer.mark_line_start()
 
+    def print_aligned(self, text: str) -> None:
+        if not text:
+            return
+        ts = _timestamp()
+        for line in text.rstrip("\n").split("\n"):
+            if not line:
+                continue
+            self._file.write(f"{ts} {line}")
+        self._buffer.ensure_newline(sys.stdout)
+        style = self._colors.for_phase(self._holder.get())
+        for line in text.rstrip("\n").split("\n"):
+            if not line:
+                continue
+            t = Text()
+            t.append(ts, style=self._colors.timestamp())
+            t.append(f" {line}", style=style)
+            self._console.print(t)
+        self._buffer.mark_line_start()
+
     def log_question(self, question: str, options: list[str]) -> None:
         ts = _timestamp()
         self._file.write(f"{ts} QUESTION: {question}")
