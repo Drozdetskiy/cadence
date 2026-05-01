@@ -198,13 +198,6 @@ class TestEmbeddedDefaults:
             "Detect over-engineered and overcomplicated code"
         )
 
-    def test_documentation_body_loads(self) -> None:
-        result = load_agent("documentation")
-        assert result is not None
-        assert result.body.startswith(
-            "Review code changes and identify missing documentation updates."
-        )
-
     @pytest.mark.parametrize(
         "name",
         [
@@ -212,7 +205,6 @@ class TestEmbeddedDefaults:
             "implementation",
             "testing",
             "simplification",
-            "documentation",
         ],
     )
     def test_all_shipped_agents_load(self, name: str) -> None:
