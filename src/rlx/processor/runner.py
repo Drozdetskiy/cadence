@@ -91,6 +91,7 @@ class RunContext:
     progress_path: str = ""
     default_branch: str = ""
     local_dir: Path | None = None
+    derived_plan_path: str = ""
 
 
 @dataclass
@@ -450,6 +451,7 @@ class Runner:
                 default_branch=self._ctx.default_branch,
                 plans_dir=self._app.plans_dir,
                 commit_trailer=self._app.commit_trailer,
+                derived_plan_path=self._ctx.derived_plan_path,
             )
 
             result = self._run_with_limit_retry(claude, prompt)
