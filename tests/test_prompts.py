@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rlx.processor.prompts import (
     build_finalize_prompt,
     build_review_first_prompt,
@@ -21,6 +23,35 @@ class TestLoadTaskPrompt:
         assert "{{PROGRESS_FILE}}" in prompt
         assert "<<<RLX:ALL_TASKS_DONE>>>" in prompt
         assert "<<<RLX:TASK_FAILED>>>" in prompt
+
+    def test_missing_prompt_raises_runtime_error_with_diagnostic(
+        self,
+    ) -> None:
+        with pytest.raises(RuntimeError) as excinfo:
+            load_prompt("does_not_exist")
+        message = str(excinfo.value)
+        assert "does_not_exist" in message
+        assert "prompt" in message
+        assert "rlx" in message
+        assert "reinstall" in message
+        assert "pip install" in message
+        assert isinstance(excinfo.value.__cause__, FileNotFoundError)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "make_plan",
+            "task",
+            "review_first",
+            "review_second",
+            "finalize",
+        ],
+    )
+    def test_all_shipped_prompts_load(self, name: str) -> None:
+        prompt = load_prompt(name)
+        assert prompt.strip(), (
+            f"shipped prompt {name!r} loaded but is empty"
+        )
 
 
 class TestBuildTaskPrompt:
@@ -133,6 +164,27 @@ class TestExpandAgentReferences:
         assert "{{agent:nonexistent}}" in result
         assert warnings, "expected at least one warning"
         assert any("nonexistent" in w for w in warnings)
+
+    def test_missing_embedded_agent_surfaces_diagnostic_via_warn(
+        self,
+    ) -> None:
+        warnings: list[str] = []
+        result = expand_agent_references(
+            "x {{agent:not-a-real-agent}} y",
+            local_dir=None,
+            warn=warnings.append,
+            base_vars={},
+        )
+        assert "{{agent:not-a-real-agent}}" in result
+        assert any(
+            "not-a-real-agent" in w
+            and "reinstall" in w
+            and "pip install" in w
+            for w in warnings
+        ), (
+            "expected the load_agent diagnostic to be forwarded "
+            "to the warn callback, not swallowed"
+        )
 
     def test_recursion_guard(self, tmp_path: Path) -> None:
         agents_dir = tmp_path / "agents"

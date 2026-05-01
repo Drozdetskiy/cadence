@@ -45,7 +45,14 @@ def load_prompt(name: str, local_dir: Path | None = None) -> str:
     ref = importlib.resources.files("rlx.defaults.prompts").joinpath(
         f"{name}.txt"
     )
-    content = ref.read_text(encoding="utf-8")
+    try:
+        content = ref.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"default prompt {name!r} not found in installed rlx "
+            "package; the install may be incomplete or out of date — "
+            "reinstall with 'pip install -e .'"
+        ) from exc
     return normalize_crlf(content)
 
 
@@ -112,10 +119,11 @@ def expand_agent_references(
 ) -> str:
     def _sub(match: re.Match[str]) -> str:
         name = match.group(1)
-        agent = load_agent(name, local_dir=local_dir, warn=warn)
-        if agent is None:
+        try:
+            agent = load_agent(name, local_dir=local_dir, warn=warn)
+        except RuntimeError as exc:
             if warn is not None:
-                warn(f"agent {name!r} not found, leaving marker in place")
+                warn(str(exc))
             return match.group(0)
         body = replace_base_variables(agent.body, **base_vars)
         return format_agent_expansion(
