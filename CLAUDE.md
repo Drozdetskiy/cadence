@@ -7,7 +7,7 @@ Python CLI for autonomous task execution via Claude Code. Supports `cadence --pl
 ```
 src/cadence/
   cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base/--config flags, SIGINT/SIGQUIT handling
-  config.py         - Config/ColorConfig dataclasses, YAML loading via PyYAML, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config)
+  config.py         - Config/ColorConfig dataclasses, YAML loading via PyYAML, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config); `tasks_root` (default `cdc-tasks`) is configurable in `.cadence/config.yaml`
   status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
   input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
   executor/
@@ -30,7 +30,7 @@ src/cadence/
   progress/
     colors.py       - Rich Style mapping from ColorConfig
     flock.py        - File locking via fcntl.flock
-    logger.py       - Dual file+stdout logger with timestamps and signal highlighting
+    logger.py       - Dual file+stdout logger with timestamps and signal highlighting; resolves the progress path per mode (`progress-plan.txt`/`progress-task.txt` next to the plan file for plan/full; `<tasks_root>/<branch-or-head-hash>/progress-review.txt` for review)
   defaults/
     prompts/        - Embedded prompt templates (make_plan.txt, task.txt, review_first.txt, review_second.txt, finalize.txt)
     agents/         - Embedded agent bodies (quality.txt, implementation.txt, testing.txt, simplification.txt) referenced from review prompts via {{agent:<name>}} markers

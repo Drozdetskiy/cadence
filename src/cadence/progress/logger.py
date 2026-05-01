@@ -22,6 +22,9 @@ class ProgressLoggerConfig:
     mode: Mode = Mode.PLAN
     branch: str = ""
     no_color: bool = False
+    tasks_root: str = "cdc-tasks"
+    default_branch: str = ""
+    head_hash: str = ""
 
 
 _DASHES = "-" * 60
@@ -29,6 +32,7 @@ _DASHES = "-" * 60
 
 def _sanitize_plan_name(name: str) -> str:
     name = name.lower()
+    name = re.sub(r"[\\/]+", "-", name)
     name = re.sub(r"\s+", "-", name)
     name = re.sub(r"[^a-z0-9-]", "", name)
     name = re.sub(r"-{2,}", "-", name)
@@ -37,23 +41,32 @@ def _sanitize_plan_name(name: str) -> str:
     return name or "unnamed"
 
 
-def _progress_filename(cfg: ProgressLoggerConfig) -> str:
-    if cfg.mode == Mode.PLAN and cfg.plan_file:
-        base = os.path.splitext(os.path.basename(cfg.plan_file))[0]
-        sanitized = _sanitize_plan_name(base)
-        return f"progress-plan-{sanitized}.txt"
-
-    if cfg.plan_file:
-        base = os.path.splitext(os.path.basename(cfg.plan_file))[0]
-        if cfg.mode == Mode.REVIEW:
-            return f"progress-{base}-review.txt"
-        return f"progress-{base}.txt"
-
+def _progress_path(cfg: ProgressLoggerConfig) -> str:
     if cfg.mode == Mode.PLAN:
-        return "progress-plan.txt"
+        if not cfg.plan_file:
+            raise RuntimeError("cannot derive progress path: plan mode requires a plan file")
+        directory = os.path.dirname(cfg.plan_file) or "."
+        return os.path.join(directory, "progress-plan.txt")
+
+    if cfg.mode == Mode.FULL:
+        if not cfg.plan_file:
+            raise RuntimeError("cannot derive progress path: task mode requires a plan file")
+        directory = os.path.dirname(cfg.plan_file) or "."
+        return os.path.join(directory, "progress-task.txt")
+
     if cfg.mode == Mode.REVIEW:
-        return "progress-review.txt"
-    return "progress.txt"
+        default = cfg.default_branch
+        if default.startswith("origin/"):
+            default = default[len("origin/"):]
+        if cfg.branch and cfg.branch != default:
+            segment = _sanitize_plan_name(cfg.branch)
+        elif cfg.head_hash:
+            segment = cfg.head_hash[:12]
+        else:
+            raise RuntimeError("cannot derive progress path: no branch and no head hash")
+        return os.path.join(cfg.tasks_root, segment, "progress-review.txt")
+
+    raise RuntimeError(f"cannot derive progress path: unsupported mode {cfg.mode}")
 
 
 def _is_progress_completed(f: IO[str]) -> bool:
@@ -79,10 +92,11 @@ class _ProgressFile:
     """Owns the file handle, lock, path resolution, header/restart markers."""
 
     def __init__(self, cfg: ProgressLoggerConfig) -> None:
-        filename = _progress_filename(cfg)
-        progress_dir = os.path.join(".cadence", "progress")
-        os.makedirs(progress_dir, mode=0o750, exist_ok=True)
-        self._path = os.path.abspath(os.path.join(progress_dir, filename))
+        path = _progress_path(cfg)
+        progress_dir = os.path.dirname(path)
+        if progress_dir:
+            os.makedirs(progress_dir, mode=0o750, exist_ok=True)
+        self._path = os.path.abspath(path)
 
         self._file: IO[str] = open(self._path, "a+", encoding="utf-8")  # noqa: SIM115
         try:
@@ -117,7 +131,8 @@ class _ProgressFile:
 
     def _write_header(self, cfg: ProgressLoggerConfig) -> None:
         self.write("# CADENCE Progress Log")
-        self.write(f"Plan: {cfg.plan_file}")
+        if cfg.plan_file:
+            self.write(f"Plan: {cfg.plan_file}")
         self.write(f"Branch: {cfg.branch}")
         self.write(f"Mode: {cfg.mode}")
         self.write(f"Started: {_now_str()}")
@@ -155,16 +170,12 @@ class _PartialLineBuffer:
 
 
 class Logger:
-    def __init__(
-        self, cfg: ProgressLoggerConfig, colors: Colors, holder: PhaseHolder
-    ) -> None:
+    def __init__(self, cfg: ProgressLoggerConfig, colors: Colors, holder: PhaseHolder) -> None:
         self._colors = colors
         self._holder = holder
         self._start_time = datetime.now(tz=UTC)
         self._no_color = cfg.no_color
-        self._console = Console(
-            file=sys.stdout, no_color=cfg.no_color, highlight=False
-        )
+        self._console = Console(file=sys.stdout, no_color=cfg.no_color, highlight=False)
         self._buffer = _PartialLineBuffer()
         self._file = _ProgressFile(cfg)
 
@@ -254,9 +265,7 @@ class Logger:
         parts = text.split("\n")
         for i, part in enumerate(parts):
             if self._buffer.at_line_start and part:
-                self._console.print(
-                    Text(f"{ts} ", style=self._colors.timestamp()), end=""
-                )
+                self._console.print(Text(f"{ts} ", style=self._colors.timestamp()), end="")
                 self._buffer.mark_mid_line()
             sys.stdout.write(part)
             if i < len(parts) - 1:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from cadence.config import ColorConfig
 from cadence.progress.colors import Colors
 from cadence.progress.flock import lock_file, unlock_file
@@ -9,7 +11,7 @@ from cadence.progress.logger import (
     Logger,
     ProgressLoggerConfig,
     _is_progress_completed,
-    _progress_filename,
+    _progress_path,
     _sanitize_plan_name,
 )
 from cadence.status import (
@@ -73,31 +75,95 @@ class TestFlock:
             os.unlink(path)
 
 
-
-class TestProgressFilename:
+class TestProgressPath:
     def test_plan_mode_with_plan_file(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.PLAN, plan_file="my-great-plan.md")
-        assert _progress_filename(cfg) == "progress-plan-my-great-plan.txt"
+        cfg = ProgressLoggerConfig(mode=Mode.PLAN, plan_file="some/dir/plan.md")
+        assert _progress_path(cfg) == os.path.join("some/dir", "progress-plan.txt")
+
+    def test_plan_mode_plan_file_no_dir(self) -> None:
+        cfg = ProgressLoggerConfig(mode=Mode.PLAN, plan_file="plan.md")
+        assert _progress_path(cfg) == os.path.join(".", "progress-plan.txt")
+
+    def test_plan_mode_no_plan_file_raises(self) -> None:
+        cfg = ProgressLoggerConfig(mode=Mode.PLAN)
+        with pytest.raises(RuntimeError):
+            _progress_path(cfg)
 
     def test_full_mode_with_plan_file(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.FULL, plan_file="my-plan.md")
-        assert _progress_filename(cfg) == "progress-my-plan.txt"
+        cfg = ProgressLoggerConfig(mode=Mode.FULL, plan_file="some/dir/plan.md")
+        assert _progress_path(cfg) == os.path.join("some/dir", "progress-task.txt")
 
-    def test_review_mode_with_plan_file(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.REVIEW, plan_file="my-plan.md")
-        assert _progress_filename(cfg) == "progress-my-plan-review.txt"
-
-    def test_plan_mode_no_description(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.PLAN)
-        assert _progress_filename(cfg) == "progress-plan.txt"
-
-    def test_review_mode_no_plan(self) -> None:
-        cfg = ProgressLoggerConfig(mode=Mode.REVIEW)
-        assert _progress_filename(cfg) == "progress-review.txt"
-
-    def test_full_mode_no_plan(self) -> None:
+    def test_full_mode_no_plan_file_raises(self) -> None:
         cfg = ProgressLoggerConfig(mode=Mode.FULL)
-        assert _progress_filename(cfg) == "progress.txt"
+        with pytest.raises(RuntimeError):
+            _progress_path(cfg)
+
+    def test_review_mode_feature_branch(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="feat/foo",
+            default_branch="main",
+            tasks_root="cdc-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join("cdc-tasks", "feat-foo", "progress-review.txt")
+
+    def test_review_mode_default_branch_uses_hash(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="main",
+            default_branch="main",
+            head_hash="abc1234",
+            tasks_root="cdc-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join("cdc-tasks", "abc1234", "progress-review.txt")
+
+    def test_review_mode_default_branch_with_origin_prefix_uses_hash(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="main",
+            default_branch="origin/main",
+            head_hash="abc1234def567",
+            tasks_root="cdc-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join(
+            "cdc-tasks", "abc1234def56", "progress-review.txt"
+        )
+
+    def test_review_mode_full_length_hash_truncated_to_12(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="",
+            default_branch="main",
+            head_hash="0123456789abcdef0123456789abcdef01234567",
+            tasks_root="cdc-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join(
+            "cdc-tasks", "0123456789ab", "progress-review.txt"
+        )
+
+    def test_review_mode_detached_head_uses_hash(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="",
+            default_branch="main",
+            head_hash="def5678",
+            tasks_root="cdc-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join("cdc-tasks", "def5678", "progress-review.txt")
+
+    def test_review_mode_custom_tasks_root(self) -> None:
+        cfg = ProgressLoggerConfig(
+            mode=Mode.REVIEW,
+            branch="feature-x",
+            default_branch="main",
+            tasks_root="my-tasks",
+        )
+        assert _progress_path(cfg) == os.path.join("my-tasks", "feature-x", "progress-review.txt")
+
+    def test_review_mode_no_branch_no_hash_raises(self) -> None:
+        cfg = ProgressLoggerConfig(mode=Mode.REVIEW, branch="", default_branch="main", head_hash="")
+        with pytest.raises(RuntimeError):
+            _progress_path(cfg)
 
 
 class TestSanitizePlanName:
@@ -117,6 +183,15 @@ class TestSanitizePlanName:
         result = _sanitize_plan_name("a" * 100)
         assert len(result) <= 50
 
+    def test_slash_becomes_dash(self) -> None:
+        assert _sanitize_plan_name("feat/foo") == "feat-foo"
+
+    def test_multiple_slashes(self) -> None:
+        assert _sanitize_plan_name("a/b/c") == "a-b-c"
+
+    def test_backslash_becomes_dash(self) -> None:
+        assert _sanitize_plan_name("a\\b") == "a-b"
+
 
 class TestLogger:
     def _make_logger(self, tmp_path: object, **kwargs: object) -> Logger:
@@ -126,10 +201,20 @@ class TestLogger:
         original_cwd = os.getcwd()
         os.chdir(p)
         try:
+            mode = Mode(str(kwargs.get("mode", "full")))
+            branch = str(kwargs.get("branch", "feat"))
+            default_branch = str(kwargs.get("default_branch", "main"))
+            head_hash = str(kwargs.get("head_hash", "deadbeef"))
+            tasks_root = str(kwargs.get("tasks_root", "cdc-tasks"))
+            plan_file_default = "" if mode == Mode.REVIEW else "test.md"
+            plan_file = str(kwargs.get("plan_file", plan_file_default))
             cfg = ProgressLoggerConfig(
-                plan_file=str(kwargs.get("plan_file", "test.md")),
-                mode=Mode(str(kwargs.get("mode", "full"))),
-                branch=str(kwargs.get("branch", "main")),
+                plan_file=plan_file,
+                mode=mode,
+                branch=branch,
+                default_branch=default_branch,
+                head_hash=head_hash,
+                tasks_root=tasks_root,
             )
             colors = Colors(ColorConfig())
             holder = PhaseHolder()
@@ -159,6 +244,21 @@ class TestLogger:
             assert "Branch: feat" in content
             assert "Mode: full" in content
             assert "Started:" in content
+        finally:
+            os.chdir(original)
+
+    def test_header_review_mode_omits_empty_plan_line(self, tmp_path: object) -> None:
+        original = os.getcwd()
+        try:
+            logger = self._make_logger(
+                tmp_path, mode="review", branch="feat", default_branch="main"
+            )
+            logger.close()
+            with open(logger.path) as f:
+                content = f.read()
+            assert "Plan:" not in content
+            assert "Branch: feat" in content
+            assert "Mode: review" in content
         finally:
             os.chdir(original)
 
@@ -208,10 +308,9 @@ class TestLogger:
                 content = f.read()
             assert "--- test section ---" in content
             import re as _re
+
             ts_pat = r"\[\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]"
-            assert _re.search(
-                ts_pat + r" --- test section ---", content
-            )
+            assert _re.search(ts_pat + r" --- test section ---", content)
         finally:
             os.chdir(original)
 
@@ -365,12 +464,17 @@ class TestLogger:
         p = pathlib.Path(str(tmp_path))
         os.chdir(p)
         try:
-            progress_dir = p / ".cadence" / "progress"
-            progress_dir.mkdir(parents=True, exist_ok=True)
-            progress_file = progress_dir / "progress-incomplete.txt"
+            plan_dir = p / "plans"
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            progress_file = plan_dir / "progress-task.txt"
             progress_file.write_text("some incomplete data\n")
 
-            cfg = ProgressLoggerConfig(plan_file="incomplete.md", mode="full", branch="main")
+            cfg = ProgressLoggerConfig(
+                plan_file="plans/incomplete.md",
+                mode=Mode.FULL,
+                branch="feat",
+                default_branch="main",
+            )
             colors = Colors(ColorConfig())
             holder = PhaseHolder()
             logger = Logger(cfg, colors, holder)

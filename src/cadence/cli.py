@@ -162,13 +162,20 @@ def _apply_yaml_overrides(
 
 
 def _build_plan_logger(
-    plan_file: Path, content: str, colors: Colors, holder: PhaseHolder
+    plan_file: Path,
+    content: str,
+    colors: Colors,
+    holder: PhaseHolder,
+    tasks_root: str,
+    default_branch: str,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
         plan_file=to_rel_path(plan_file),
         plan_description=content,
         mode=Mode.PLAN,
         branch="",
+        tasks_root=tasks_root,
+        default_branch=default_branch,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -178,13 +185,20 @@ def _build_plan_logger(
 
 
 def _build_task_logger(
-    plan_file: Path, colors: Colors, holder: PhaseHolder, branch: str
+    plan_file: Path,
+    colors: Colors,
+    holder: PhaseHolder,
+    branch: str,
+    tasks_root: str,
+    default_branch: str,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
         plan_file=to_rel_path(plan_file),
         plan_description="",
         mode=Mode.FULL,
         branch=branch,
+        tasks_root=tasks_root,
+        default_branch=default_branch,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -194,13 +208,21 @@ def _build_task_logger(
 
 
 def _build_review_logger(
-    colors: Colors, holder: PhaseHolder, branch: str
+    colors: Colors,
+    holder: PhaseHolder,
+    branch: str,
+    tasks_root: str,
+    default_branch: str,
+    head_hash: str,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
         plan_file="",
         plan_description="",
         mode=Mode.REVIEW,
         branch=branch,
+        tasks_root=tasks_root,
+        default_branch=default_branch,
+        head_hash=head_hash,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -254,7 +276,9 @@ def run_plan_mode(
 
     holder = PhaseHolder()
     colors = Colors(cfg.colors)
-    log = _build_plan_logger(plan_file, content, colors, holder)
+    log = _build_plan_logger(
+        plan_file, content, colors, holder, cfg.tasks_root, default_branch
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: plan")
@@ -393,7 +417,9 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
 
     branch = git_svc.current_branch()
 
-    log = _build_task_logger(task_file, colors, holder, branch)
+    log = _build_task_logger(
+        task_file, colors, holder, branch, cfg.tasks_root, default_branch
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: full")
@@ -499,8 +525,15 @@ def run_review_mode(
 
     default_branch = base or cfg.default_branch or git_svc.get_default_branch()
     branch = git_svc.current_branch()
+    try:
+        head_hash = git_svc.head_hash()
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
 
-    log = _build_review_logger(colors, holder, branch)
+    log = _build_review_logger(
+        colors, holder, branch, cfg.tasks_root, default_branch, head_hash
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: review")

@@ -2060,3 +2060,274 @@ class TestConfigFlag:
         ]
         assert "yaml-plan" in models_used
         assert "yaml-task" in models_used
+
+
+class TestProgressPathWiring:
+    """Verify CLI plumbs tasks_root, default_branch, and head_hash through to the Logger."""
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_on_default_branch_uses_head_hash_segment(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, tasks_root="cdc-tasks"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.head_hash.return_value = "abc123def456"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.Runner") as mock_runner_cls,
+            ):
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_review_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        expected = tmp_path / "cdc-tasks" / "abc123def456" / "progress-review.txt"
+        assert expected.is_file()
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_on_feature_branch_uses_branch_segment(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, tasks_root="cdc-tasks"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feat/foo"
+        mock_svc.head_hash.return_value = "abc123"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.Runner") as mock_runner_cls,
+            ):
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_review_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        expected = tmp_path / "cdc-tasks" / "feat-foo" / "progress-review.txt"
+        assert expected.is_file()
+
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.get_default_branch", return_value="main")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_plan_mode_writes_progress_plan_next_to_plan_file(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_dir = tmp_path / "tasks" / "0001-foo"
+        plan_dir.mkdir(parents=True)
+        plan_file = plan_dir / "preprompt.md"
+        plan_file.write_text("implement feature X")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_plan_mode(plan_file)
+        finally:
+            os.chdir(original_cwd)
+
+        expected = plan_dir / "progress-plan.txt"
+        assert expected.is_file()
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_task_mode_writes_progress_task_next_to_plan_file(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalCompleted
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_dir = tmp_path / "tasks" / "0002-bar"
+        plan_dir.mkdir(parents=True)
+        plan_file = plan_dir / "plan.md"
+        plan_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.Runner") as mock_runner_cls:
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_task_mode(plan_file)
+        finally:
+            os.chdir(original_cwd)
+
+        expected = plan_dir / "progress-task.txt"
+        assert expected.is_file()
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.is_git_repo", return_value=True)
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_no_branch_no_hash_exits_with_error(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, tasks_root="cdc-tasks"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = ""
+        mock_svc.head_hash.return_value = ""
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_review_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "no branch and no head hash" in captured.err
