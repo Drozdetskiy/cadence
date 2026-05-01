@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Protocol
 
-from rlx.executor.events import (
+from cadence.executor.events import (
     AssistantEvent,
     ClaudeEvent,
     ContentBlockDeltaEvent,
@@ -22,8 +22,8 @@ from rlx.executor.events import (
     ToolUseBlock,
     parse_event,
 )
-from rlx.executor.process_group import ProcessGroupCleanup
-from rlx.status import (
+from cadence.executor.process_group import ProcessGroupCleanup
+from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanDraft,

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from rich.style import Style
 
-from rlx.config import ColorConfig
-from rlx.status import (
+from cadence.config import ColorConfig
+from cadence.status import (
     Phase,
     PhaseFinalize,
     PhasePlan,

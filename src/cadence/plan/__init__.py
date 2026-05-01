@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rlx.plan.parse import (
+from cadence.plan.parse import (
     Checkbox,
     Plan,
     Task,
@@ -10,7 +10,7 @@ from rlx.plan.parse import (
     parse_plan,
     parse_plan_file,
 )
-from rlx.plan.plan import (
+from cadence.plan.plan import (
     NoPlansFoundError,
     Selector,
     extract_branch_name,

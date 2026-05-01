@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from rlx.progress.logger import _PartialLineBuffer
+from cadence.progress.logger import _PartialLineBuffer
 
 
 class TestPartialLineBuffer:

@@ -11,7 +11,7 @@ if sys.platform != "win32":
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError(
-                "another rlx instance is already using this progress file"
+                "another cadence instance is already using this progress file"
             ) from None
 
     def unlock_file(f: IO[str]) -> None:

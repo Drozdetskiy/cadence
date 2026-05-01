@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from rlx.git import GitChecker, get_default_branch, head_hash, is_git_repo
+from cadence.git import GitChecker, get_default_branch, head_hash, is_git_repo
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "test",

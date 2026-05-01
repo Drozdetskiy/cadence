@@ -137,9 +137,9 @@ def load_config(config_dir: Path | None) -> Config:
 
 
 def detect_local_dir() -> Path | None:
-    rlx_dir = Path.cwd() / ".rlx"
-    if rlx_dir.is_dir():
-        return rlx_dir
+    cadence_dir = Path.cwd() / ".cadence"
+    if cadence_dir.is_dir():
+        return cadence_dir
     return None
 
 
@@ -181,7 +181,7 @@ def parse_yaml_overrides(text: str) -> YamlOverrides:
 
         if ":" not in stripped:
             raise ValueError(
-                f"invalid rlx-config.yaml: line {lineno}: expected 'key:' or 'key: value'"
+                f"invalid cadence-config.yaml: line {lineno}: expected 'key:' or 'key: value'"
             )
 
         key, _, value = stripped.partition(":")
@@ -192,7 +192,7 @@ def parse_yaml_overrides(text: str) -> YamlOverrides:
         if not is_indented:
             if value:
                 raise ValueError(
-                    f"invalid rlx-config.yaml: line {lineno}: "
+                    f"invalid cadence-config.yaml: line {lineno}: "
                     f"top-level key {key!r} must be a section, not a scalar"
                 )
             current_section = key
@@ -200,7 +200,7 @@ def parse_yaml_overrides(text: str) -> YamlOverrides:
 
         if current_section is None:
             raise ValueError(
-                f"invalid rlx-config.yaml: line {lineno}: "
+                f"invalid cadence-config.yaml: line {lineno}: "
                 "nested key without a top-level section"
             )
         if current_section not in _YAML_KNOWN_SECTIONS:
@@ -234,7 +234,7 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
 
 
 def find_yaml_config(start_dir: Path) -> Path | None:
-    candidate = start_dir / "rlx-config.yaml"
+    candidate = start_dir / "cadence-config.yaml"
     if candidate.is_file():
         return candidate
     return None

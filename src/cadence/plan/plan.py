@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO, Protocol
 
-from rlx.config import ColorConfig
+from cadence.config import ColorConfig
 
 _DATE_PREFIX_RE = re.compile(r"^[\d-]+")
 

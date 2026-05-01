@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from rlx.config import ColorConfig
-from rlx.plan import (
+from cadence.config import ColorConfig
+from cadence.plan import (
     Checkbox,
     NoPlansFoundError,
     Selector,

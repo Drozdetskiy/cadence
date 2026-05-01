@@ -7,26 +7,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from rlx.config import Config as AppConfig
-from rlx.config import parse_duration
-from rlx.executor.claude_executor import (
+from cadence.config import Config as AppConfig
+from cadence.config import parse_duration
+from cadence.executor.claude_executor import (
     LimitPatternError,
     PatternMatchError,
     Result,
 )
-from rlx.git.service import completed_plan_path
-from rlx.plan import (
+from cadence.git.service import completed_plan_path
+from cadence.plan import (
     file_has_uncompleted_checkbox,
     parse_plan_file,
 )
-from rlx.processor.prompts import (
+from cadence.processor.prompts import (
     build_finalize_prompt,
     build_plan_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
     build_task_prompt,
 )
-from rlx.processor.signals import (
+from cadence.processor.signals import (
     is_all_tasks_done,
     is_plan_ready,
     is_review_done,
@@ -34,7 +34,7 @@ from rlx.processor.signals import (
     parse_plan_draft_payload,
     parse_question_payload,
 )
-from rlx.status import (
+from cadence.status import (
     Mode,
     PhaseFinalize,
     PhaseHolder,

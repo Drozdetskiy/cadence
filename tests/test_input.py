@@ -4,7 +4,7 @@ import io
 
 import pytest
 
-from rlx.input import (
+from cadence.input import (
     TerminalCollector,
     ask_yes_no,
     read_line_with_context,
