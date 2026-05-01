@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+
+from rlx.status import (
+    SignalEnd,
+    SignalPlanDraft,
+    SignalPlanReady,
+    SignalQuestion,
+)
+
+
+def _payload_regex(opener: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"{re.escape(opener)}\s*(.*?)\s*{re.escape(SignalEnd)}",
+        re.DOTALL,
+    )
+
+
+_QUESTION_RE = _payload_regex(SignalQuestion)
+_PLAN_DRAFT_RE = _payload_regex(SignalPlanDraft)
+
+
+@dataclass
+class QuestionPayload:
+    question: str
+    options: list[str]
+
+
+def _extract_payload(output: str, opener: str, regex: re.Pattern[str]) -> str | None:
+    if opener not in output:
+        return None
+    m = regex.search(output)
+    if m is None:
+        return None
+    raw = m.group(1).strip()
+    return raw or None
+
+
+def parse_question_payload(output: str) -> QuestionPayload | None:
+    raw = _extract_payload(output, SignalQuestion, _QUESTION_RE)
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    question = data.get("question")
+    options = data.get("options")
+    if not isinstance(question, str) or not question:
+        return None
+    if not isinstance(options, list) or not options:
+        return None
+    if not all(isinstance(o, str) for o in options):
+        return None
+    return QuestionPayload(question=question, options=options)
+
+
+def parse_plan_draft_payload(output: str) -> str | None:
+    return _extract_payload(output, SignalPlanDraft, _PLAN_DRAFT_RE)
+
+
+def is_plan_ready(signal: str) -> bool:
+    return signal == SignalPlanReady
