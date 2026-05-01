@@ -22,8 +22,9 @@ class ColorConfig:
 class Config:
     claude_command: str = "claude"
     claude_args: str = "--dangerously-skip-permissions --output-format stream-json --verbose"
-    claude_model: str = ""
-    review_model: str = ""
+    plan_model: str = "claude-opus-4-7"
+    task_model: str = "claude-opus-4-7"
+    review_model: str = "claude-opus-4-7"
     iteration_delay_ms: int = 2000
     task_retry_count: int = 1
     max_iterations: int = 50
@@ -82,7 +83,8 @@ def load_config(config_dir: Path | None) -> Config:
     _STR_FIELDS = {
         "claude_command",
         "claude_args",
-        "claude_model",
+        "plan_model",
+        "task_model",
         "review_model",
         "session_timeout",
         "idle_timeout",
@@ -138,4 +140,101 @@ def detect_local_dir() -> Path | None:
     rlx_dir = Path.cwd() / ".rlx"
     if rlx_dir.is_dir():
         return rlx_dir
+    return None
+
+
+@dataclass
+class YamlOverrides:
+    plan_model: str | None = None
+    task_model: str | None = None
+    review_model: str | None = None
+
+
+_YAML_KNOWN_SECTIONS = ("plan", "task", "review")
+
+
+def _strip_trailing_comment(value: str) -> str:
+    idx = value.find(" #")
+    if idx != -1:
+        value = value[:idx]
+    return value.rstrip()
+
+
+def _strip_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def parse_yaml_overrides(text: str) -> YamlOverrides:
+    overrides = YamlOverrides()
+    current_section: str | None = None
+
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        if raw_line.lstrip().startswith("#"):
+            continue
+
+        is_indented = raw_line[:1] in (" ", "\t")
+        stripped = raw_line.strip()
+
+        if ":" not in stripped:
+            raise ValueError(
+                f"invalid rlx-config.yaml: line {lineno}: expected 'key:' or 'key: value'"
+            )
+
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = _strip_trailing_comment(value.strip())
+        value = _strip_quotes(value.strip())
+
+        if not is_indented:
+            if value:
+                raise ValueError(
+                    f"invalid rlx-config.yaml: line {lineno}: "
+                    f"top-level key {key!r} must be a section, not a scalar"
+                )
+            current_section = key
+            continue
+
+        if current_section is None:
+            raise ValueError(
+                f"invalid rlx-config.yaml: line {lineno}: "
+                "nested key without a top-level section"
+            )
+        if current_section not in _YAML_KNOWN_SECTIONS:
+            continue
+        if key != "model":
+            continue
+        if not value:
+            continue
+        if current_section == "plan":
+            overrides.plan_model = value
+        elif current_section == "task":
+            overrides.task_model = value
+        else:
+            overrides.review_model = value
+
+    return overrides
+
+
+def load_yaml_config(path: Path) -> YamlOverrides:
+    text = path.read_text(encoding="utf-8")
+    return parse_yaml_overrides(text)
+
+
+def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
+    if overrides.plan_model is not None:
+        cfg.plan_model = overrides.plan_model
+    if overrides.task_model is not None:
+        cfg.task_model = overrides.task_model
+    if overrides.review_model is not None:
+        cfg.review_model = overrides.review_model
+
+
+def find_yaml_config(start_dir: Path) -> Path | None:
+    candidate = start_dir / "rlx-config.yaml"
+    if candidate.is_file():
+        return candidate
     return None

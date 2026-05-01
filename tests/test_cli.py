@@ -332,7 +332,7 @@ class TestMainCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["--review"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with(None)
+        mock_run.assert_called_once_with(None, config=None)
 
     def test_review_with_impl_errors(self) -> None:
         from typer.testing import CliRunner
@@ -411,7 +411,7 @@ class TestMainCommand:
         runner = CliRunner()
         result = runner.invoke(app, ["--review", "--base", "develop"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with("develop")
+        mock_run.assert_called_once_with("develop", config=None)
 
     def test_base_without_review_errors(self) -> None:
         from typer.testing import CliRunner
@@ -469,6 +469,21 @@ class TestDerivePlanPath:
         result = derive_plan_path(prompt)
         assert result == str(tmp_path / "fix-prompt-validation-plan.md")
 
+    def test_preprompt_bare_maps_to_plan(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "preprompt"
+        result = derive_plan_path(prompt)
+        assert result == str(tmp_path / "plan")
+
+    def test_preprompt_with_extension_maps_to_plan(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "preprompt.md"
+        result = derive_plan_path(prompt)
+        assert result == str(tmp_path / "plan.md")
+
+    def test_preprompt_substring_replaced(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "fix-preprompt.md"
+        result = derive_plan_path(prompt)
+        assert result == str(tmp_path / "fix-plan.md")
+
 
 class TestRunPlanModeImplFlag:
     @patch("rlx.cli.run_task_mode")
@@ -521,7 +536,9 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("rlx --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
-        mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)))
+        mock_run_task_mode.assert_called_once_with(
+            Path(derive_plan_path(f)), config=None
+        )
         ordered_names = [c[0] for c in parent.mock_calls]
         assert ordered_names.index("close") < ordered_names.index("task")
 
@@ -866,22 +883,10 @@ class TestInstallSigquit:
 
 
 class TestBuildReviewExecutor:
-    def test_returns_none_when_review_model_empty(self) -> None:
+    def test_returns_none_when_review_matches_task(self) -> None:
         from rlx.config import Config
 
-        cfg = Config(claude_model="sonnet", review_model="")
-        result = _build_review_executor(
-            cfg,
-            activity_handler=lambda _t: None,
-            output_handler=lambda _t: None,
-            idle_timeout=0.0,
-        )
-        assert result is None
-
-    def test_returns_none_when_review_matches_claude(self) -> None:
-        from rlx.config import Config
-
-        cfg = Config(claude_model="sonnet", review_model="sonnet")
+        cfg = Config(task_model="sonnet", review_model="sonnet")
         result = _build_review_executor(
             cfg,
             activity_handler=lambda _t: None,
@@ -896,7 +901,7 @@ class TestBuildReviewExecutor:
     ) -> None:
         from rlx.config import Config
 
-        cfg = Config(claude_model="sonnet", review_model="opus")
+        cfg = Config(task_model="sonnet", review_model="opus")
         mock_executor_cls.return_value = MagicMock()
         result = _build_review_executor(
             cfg,
@@ -985,7 +990,7 @@ class TestRunReviewMode:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_review_model_distinct_builds_two_executors(
+    def test_review_mode_uses_single_executor_with_review_model(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1002,7 +1007,7 @@ class TestRunReviewMode:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="opus",
         )
 
@@ -1018,8 +1023,7 @@ class TestRunReviewMode:
         mock_service_cls.return_value = mock_svc
 
         primary = MagicMock(name="primary")
-        secondary = MagicMock(name="secondary")
-        mock_executor_cls.side_effect = [primary, secondary]
+        mock_executor_cls.return_value = primary
 
         mock_terminal_cls.return_value = MagicMock()
 
@@ -1030,17 +1034,13 @@ class TestRunReviewMode:
 
             run_review_mode()
 
-            assert mock_executor_cls.call_count == 2
-            models = [
-                call.kwargs["model"]
-                for call in mock_executor_cls.call_args_list
-            ]
-            assert "sonnet" in models
-            assert "opus" in models
+            assert mock_executor_cls.call_count == 1
+            kwargs = mock_executor_cls.call_args.kwargs
+            assert kwargs["model"] == "opus"
 
             deps = mock_runner_cls.call_args.args[2]
             assert deps.executor is primary
-            assert deps.review_executor is secondary
+            assert deps.review_executor is None
 
     @patch("rlx.cli._install_sigquit")
     @patch("rlx.cli.TerminalCollector")
@@ -1051,7 +1051,7 @@ class TestRunReviewMode:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_review_model_equal_to_claude_uses_single_executor(
+    def test_review_model_equal_to_task_uses_single_executor(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1068,7 +1068,7 @@ class TestRunReviewMode:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="sonnet",
         )
 
@@ -1096,6 +1096,8 @@ class TestRunReviewMode:
             run_review_mode()
 
             assert mock_executor_cls.call_count == 1
+            kwargs = mock_executor_cls.call_args.kwargs
+            assert kwargs["model"] == "sonnet"
 
             deps = mock_runner_cls.call_args.args[2]
             assert deps.executor is primary
@@ -1400,7 +1402,7 @@ class TestRunTaskModeReviewExecutor:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
+            task_model="sonnet",
             review_model="opus",
         )
 
@@ -1445,7 +1447,7 @@ class TestRunTaskModeReviewExecutor:
     @patch("rlx.cli.detect_local_dir", return_value=None)
     @patch("rlx.cli.check_claude_dep")
     @patch("rlx.cli.Logger")
-    def test_no_review_model_leaves_review_executor_none(
+    def test_matching_review_model_leaves_review_executor_none(
         self,
         mock_logger_cls: MagicMock,
         _check: MagicMock,
@@ -1462,8 +1464,8 @@ class TestRunTaskModeReviewExecutor:
 
         mock_config.return_value = Config(
             iteration_delay_ms=0,
-            claude_model="sonnet",
-            review_model="",
+            task_model="sonnet",
+            review_model="sonnet",
         )
 
         mock_log = MagicMock()
@@ -1496,3 +1498,565 @@ class TestRunTaskModeReviewExecutor:
             deps = mock_runner_cls.call_args.args[2]
             assert deps.executor is primary
             assert deps.review_executor is None
+
+
+class TestConfigFlag:
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_plan_explicit_config_applies_overrides(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        yaml_dir = tmp_path / "elsewhere"
+        yaml_dir.mkdir()
+        yaml_path = yaml_dir / "explicit.yaml"
+        yaml_path.write_text("plan:\n  model: yaml-plan\n")
+
+        run_plan_mode(plan_file, config=yaml_path)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "yaml-plan"
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_plan_autodiscovers_yaml_next_to_plan(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path.write_text("plan:\n  model: discovered-plan\n")
+
+        run_plan_mode(plan_file)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "discovered-plan"
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_plan_no_yaml_no_overrides(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, plan_model="toml-plan-default"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        run_plan_mode(plan_file)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "toml-plan-default"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_task_explicit_config_applies_overrides(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        task_file = tmp_path / "plan.md"
+        task_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        yaml_dir = tmp_path / "elsewhere"
+        yaml_dir.mkdir()
+        yaml_path = yaml_dir / "explicit.yaml"
+        yaml_path.write_text("task:\n  model: yaml-task\n")
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_task_mode(task_file, config=yaml_path)
+
+        primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
+        assert primary_kwargs["model"] == "yaml-task"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_task_autodiscovers_yaml_next_to_task(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        task_file = tmp_path / "plan.md"
+        task_file.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+        yaml_path = tmp_path / "rlx-config.yaml"
+        yaml_path.write_text("task:\n  model: discovered-task\n")
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_task_mode(task_file)
+
+        primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
+        assert primary_kwargs["model"] == "discovered-task"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_review_explicit_config_applies_overrides(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        yaml_path = tmp_path / "explicit.yaml"
+        yaml_path.write_text("review:\n  model: yaml-review\n")
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode(config=yaml_path)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "yaml-review"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    @patch("rlx.cli.find_yaml_config")
+    def test_review_skips_autodiscovery(
+        self,
+        mock_find: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, review_model="toml-review-default"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode()
+
+        mock_find.assert_not_called()
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "toml-review-default"
+
+    def test_explicit_missing_config_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+        missing = tmp_path / "missing.yaml"
+
+        result = runner.invoke(
+            app, ["--plan", str(plan_file), "--config", str(missing)]
+        )
+        assert result.exit_code != 0
+        assert "config file not found" in result.output
+
+    def test_invalid_yaml_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from rlx.cli import app
+
+        runner = CliRunner()
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+        bad_yaml = tmp_path / "bad.yaml"
+        bad_yaml.write_text("not-valid-yaml-no-colon\n")
+
+        result = runner.invoke(
+            app, ["--plan", str(plan_file), "--config", str(bad_yaml)]
+        )
+        assert result.exit_code != 0
+        assert "error" in result.output.lower()
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_explicit_config_wins_over_autodiscovery(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        sibling_yaml = tmp_path / "rlx-config.yaml"
+        sibling_yaml.write_text("plan:\n  model: sibling-plan\n")
+
+        explicit_yaml = tmp_path / "explicit.yaml"
+        explicit_yaml.write_text("plan:\n  model: explicit-plan\n")
+
+        run_plan_mode(plan_file, config=explicit_yaml)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "explicit-plan"
+
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_autodiscovery_does_not_walk_to_parent(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, plan_model="toml-plan-default"
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        parent_yaml = tmp_path / "rlx-config.yaml"
+        parent_yaml.write_text("plan:\n  model: parent-yaml\n")
+
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        plan_file = subdir / "prompt.md"
+        plan_file.write_text("implement feature X")
+
+        run_plan_mode(plan_file)
+
+        kwargs = mock_executor_cls.call_args.kwargs
+        assert kwargs["model"] == "toml-plan-default"
+
+    @patch("rlx.cli._install_sigquit")
+    @patch("rlx.cli.TerminalCollector")
+    @patch("rlx.cli.ClaudeExecutor")
+    @patch("rlx.cli.Service")
+    @patch("rlx.cli.is_git_repo", return_value=True)
+    @patch("rlx.cli.get_default_branch", return_value="main")
+    @patch("rlx.cli.load_config")
+    @patch("rlx.cli.detect_local_dir", return_value=None)
+    @patch("rlx.cli.check_claude_dep")
+    @patch("rlx.cli.Logger")
+    def test_impl_propagates_config_to_task_mode(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _branch: MagicMock,
+        _git: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from rlx.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.get_default_branch.return_value = "main"
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output="done", signal=SignalPlanReady
+        )
+        mock_executor_cls.return_value = mock_executor
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_file = tmp_path / "prompt.md"
+        plan_file.write_text("implement feature X")
+        derived_plan = tmp_path / "plan.md"
+        derived_plan.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        explicit_yaml = tmp_path / "explicit.yaml"
+        explicit_yaml.write_text(
+            "plan:\n  model: yaml-plan\ntask:\n  model: yaml-task\n"
+        )
+
+        with patch("rlx.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_plan_mode(plan_file, impl=True, config=explicit_yaml)
+
+        models_used = [
+            call.kwargs["model"] for call in mock_executor_cls.call_args_list
+        ]
+        assert "yaml-plan" in models_used
+        assert "yaml-task" in models_used

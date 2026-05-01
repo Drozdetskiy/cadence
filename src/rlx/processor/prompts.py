@@ -169,6 +169,7 @@ def build_plan_prompt(
     default_branch: str = "",
     plans_dir: str = "",
     commit_trailer: str = "",
+    derived_plan_path: str = "",
 ) -> str:
     prompt = load_prompt("make_plan", local_dir=local_dir)
     prompt = replace_base_variables(
@@ -179,6 +180,10 @@ def build_plan_prompt(
         plans_dir=plans_dir,
     )
     prompt = prompt.replace(_PLAN_DESC_PLACEHOLDER, plan_description)
+    prompt = prompt.replace(
+        "{{DERIVED_PLAN_PATH}}",
+        derived_plan_path or "(next to the prompt file)",
+    )
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
     return prompt
 

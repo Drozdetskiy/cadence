@@ -6,8 +6,8 @@ Python CLI for autonomous task execution via Claude Code. Supports `rlx --plan <
 
 ```
 src/rlx/
-  cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base flags, SIGINT/SIGQUIT handling
-  config.py         - Config/ColorConfig dataclasses, TOML loading, parse_duration()
+  cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base/--config flags, SIGINT/SIGQUIT handling
+  config.py         - Config/ColorConfig dataclasses, TOML loading, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config)
   status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
   input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
   executor/

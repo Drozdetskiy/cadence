@@ -26,7 +26,9 @@ from rlx.executor.process_group import ProcessGroupCleanup
 from rlx.status import (
     SignalCompleted,
     SignalFailed,
+    SignalPlanDraft,
     SignalPlanReady,
+    SignalQuestion,
     SignalReviewDone,
 )
 
@@ -63,7 +65,14 @@ class CommandRunner(Protocol):
 
 
 def detect_signal(text: str) -> str:
-    for sig in (SignalCompleted, SignalFailed, SignalReviewDone, SignalPlanReady):
+    for sig in (
+        SignalCompleted,
+        SignalFailed,
+        SignalReviewDone,
+        SignalPlanReady,
+        SignalQuestion,
+        SignalPlanDraft,
+    ):
         if sig in text:
             return sig
     return ""
@@ -270,7 +279,7 @@ class ClaudeExecutor:
                     continue
 
                 last_output_text = self._handle_event(
-                    event, output_parts, recent, result, last_output_text
+                    event, output_parts, result, last_output_text
                 )
 
         except BaseException:
@@ -290,7 +299,6 @@ class ClaudeExecutor:
         self,
         event: ClaudeEvent,
         output_parts: list[str],
-        recent: deque[str],
         result: Result,
         last_output_text: str,
     ) -> str:
@@ -309,7 +317,6 @@ class ClaudeExecutor:
         text = _extract_text_from_event(event)
         if text:
             output_parts.append(text)
-            recent.append(text)
             last_output_text = text
             sig = detect_signal(text)
             if sig:
@@ -342,6 +349,9 @@ class ClaudeExecutor:
                     f"claude exited with code {exit_code} without completing"
                 )
                 return result
+
+        if exit_code == 0 and result.signal:
+            return result
 
         limit_pat = match_pattern(result.recent_text, self._limit_patterns)
         if limit_pat:

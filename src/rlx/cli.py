@@ -10,7 +10,15 @@ from pathlib import Path
 
 import typer
 
-from rlx.config import Config, detect_local_dir, load_config, parse_duration
+from rlx.config import (
+    Config,
+    apply_yaml_overrides,
+    detect_local_dir,
+    find_yaml_config,
+    load_config,
+    load_yaml_config,
+    parse_duration,
+)
 from rlx.executor.claude_executor import ClaudeExecutor
 from rlx.git import DiffStats, Service, get_default_branch, is_git_repo
 from rlx.input import TerminalCollector, ask_yes_no
@@ -92,12 +100,15 @@ def to_rel_path(p: Path) -> str:
 
 def derive_plan_path(prompt_file: Path) -> str:
     name = prompt_file.name
-    idx = name.rfind("prompt")
-    if idx != -1:
-        plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+    if "preprompt" in name:
+        plan_name = name.replace("preprompt", "plan", 1)
     else:
-        stem = prompt_file.stem
-        plan_name = f"{stem}-plan{prompt_file.suffix}"
+        idx = name.rfind("prompt")
+        if idx != -1:
+            plan_name = name[:idx] + "plan" + name[idx + len("prompt"):]
+        else:
+            stem = prompt_file.stem
+            plan_name = f"{stem}-plan{prompt_file.suffix}"
     return str(prompt_file.parent / plan_name)
 
 
@@ -119,6 +130,35 @@ def _ensure_git_repo(vcs_command: str) -> None:
             err=True,
         )
         raise SystemExit(1)
+
+
+def _apply_yaml_overrides(
+    cfg: Config,
+    config_arg: Path | None,
+    anchor: Path | None,
+) -> None:
+    if config_arg is not None:
+        if not config_arg.is_file():
+            typer.echo(
+                f"error: config file not found: {config_arg}", err=True
+            )
+            raise SystemExit(1)
+        yaml_path: Path | None = config_arg
+    elif anchor is not None:
+        yaml_path = find_yaml_config(anchor.parent)
+    else:
+        yaml_path = None
+
+    if yaml_path is None:
+        return
+
+    try:
+        overrides = load_yaml_config(yaml_path)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    apply_yaml_overrides(cfg, overrides)
 
 
 def _build_plan_logger(
@@ -175,7 +215,7 @@ def _build_review_executor(
     output_handler: Callable[[str], None],
     idle_timeout: float,
 ) -> ClaudeExecutor | None:
-    if not cfg.review_model or cfg.review_model == cfg.claude_model:
+    if cfg.review_model == cfg.task_model:
         return None
     return ClaudeExecutor(
         command=cfg.claude_command,
@@ -196,11 +236,14 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
+def run_plan_mode(
+    plan_file: Path, *, impl: bool = False, config: Path | None = None
+) -> None:
     content = _read_plan_file(plan_file)
 
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, plan_file)
 
     check_claude_dep(cfg)
 
@@ -218,6 +261,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
     log.print("plan file: %s", to_rel_path(plan_file))
     log.print("progress: %s", log.path)
 
+    plan_path = derive_plan_path(plan_file)
     ctx = RunContext(
         mode=Mode.PLAN,
         plan_file=to_rel_path(plan_file),
@@ -225,6 +269,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         progress_path=log.path,
         default_branch=default_branch,
         local_dir=local_dir,
+        derived_plan_path=plan_path,
     )
 
     idle_timeout = parse_duration(cfg.idle_timeout)
@@ -238,7 +283,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.plan_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
@@ -253,7 +298,6 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         holder=holder,
     )
 
-    plan_path = derive_plan_path(plan_file)
     run_success = False
     try:
         runner = Runner(ctx, cfg, deps)
@@ -273,7 +317,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False) -> None:
         log.close(success=run_success)
 
     if impl and run_success:
-        run_task_mode(Path(plan_path))
+        run_task_mode(Path(plan_path), config=config)
 
 
 def _install_sigquit(break_event: threading.Event) -> None:
@@ -303,13 +347,14 @@ def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     return pause
 
 
-def run_task_mode(task_file: Path) -> None:
+def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
         raise SystemExit(1)
 
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, task_file)
 
     check_claude_dep(cfg)
 
@@ -370,7 +415,7 @@ def run_task_mode(task_file: Path) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.task_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
@@ -429,9 +474,12 @@ def run_task_mode(task_file: Path) -> None:
         log.close(success=run_success)
 
 
-def run_review_mode(base: str | None = None) -> None:
+def run_review_mode(
+    base: str | None = None, *, config: Path | None = None
+) -> None:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, None)
 
     check_claude_dep(cfg)
 
@@ -474,15 +522,12 @@ def run_review_mode(base: str | None = None) -> None:
     claude = ClaudeExecutor(
         command=cfg.claude_command,
         args=cfg.claude_args,
-        model=cfg.claude_model,
+        model=cfg.review_model,
         error_patterns=cfg.claude_error_patterns,
         limit_patterns=cfg.claude_limit_patterns,
         idle_timeout=idle_timeout,
         activity_handler=activity_handler,
         output_handler=output_handler,
-    )
-    review_claude = _build_review_executor(
-        cfg, activity_handler, output_handler, idle_timeout
     )
 
     deps = Dependencies(
@@ -490,7 +535,7 @@ def run_review_mode(base: str | None = None) -> None:
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
-        review_executor=review_claude,
+        review_executor=None,
     )
 
     ctx = RunContext(
@@ -552,6 +597,11 @@ _BASE_OPT: str | None = typer.Option(
     "--base",
     help="Base branch for review diff (overrides config default_branch)",
 )
+_CONFIG_OPT: Path | None = typer.Option(
+    None,
+    "--config",
+    help="Path to optional rlx-config.yaml model overrides",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -562,6 +612,7 @@ def main(
     review: bool = _REVIEW_OPT,
     impl: bool = _IMPL_OPT,
     base: str | None = _BASE_OPT,
+    config: Path | None = _CONFIG_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
@@ -604,9 +655,9 @@ def main(
 
     if mode == Mode.PLAN:
         assert plan is not None
-        run_plan_mode(plan, impl=impl)
+        run_plan_mode(plan, impl=impl, config=config)
     elif mode == Mode.FULL:
         assert task is not None
-        run_task_mode(task)
+        run_task_mode(task, config=config)
     elif mode == Mode.REVIEW:
-        run_review_mode(base)
+        run_review_mode(base, config=config)
