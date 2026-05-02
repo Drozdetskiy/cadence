@@ -74,12 +74,52 @@ Never commit directly on `main`. Every change — features, fixes, release prep,
 
 ## Commit messages
 
-Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line.
+Format: subject line `<branch-name>.`, then a blank line, then a body with one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. Include only the lines that apply. English. The subject + blank line + body shape is required so GitHub auto-fills the PR title from the subject and the PR description from the body.
 
-Each section is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the subject line. If a section needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+Each body line is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. If a line needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
 
-Good: `0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file / file_has_changes helpers.`
+Good:
+```
+0014-no-plan-commit-on-start.
+
+Changed: cadence no longer auto-commits the plan file when starting a task.
+Deleted: now-unused commit_plan_file / file_has_changes helpers.
+```
 
 Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: _prepare_plan_branch returns only branch name (drops needs_commit), create_branch_for_plan no longer auto-commits, ruff format applied, test_creates_branch_and_commits renamed to test_creates_branch_no_commit, ...`
 
 Author as the user — no `Co-Authored-By` trailer.
+
+## Releasing a new version
+
+The package is published as `cadence-runner` on PyPI; the Homebrew formula lives in [Drozdetskiy/homebrew-cadence](https://github.com/Drozdetskiy/homebrew-cadence) and exposes the CLI as `cadence`.
+
+1. **Bump version** in `src/cadence/__init__.py` on a `<NNNN>-<slug>` branch; merge to `main` via PR.
+2. **Build and publish to PyPI**:
+   ```bash
+   rm -rf dist/ && pdm build
+   python3 - <<'PY'
+   import configparser, os, subprocess
+   c = configparser.ConfigParser(); c.read(os.path.expanduser("~/.pypirc"))
+   env = {**os.environ, "PDM_PUBLISH_USERNAME": "__token__", "PDM_PUBLISH_PASSWORD": c["pypi"]["password"]}
+   subprocess.run(["pdm", "publish", "--repository", "pypi", "--no-build"], env=env, check=True)
+   PY
+   ```
+   `--no-build` ensures the artifact whose `sha256` you'll paste into the formula is byte-identical to what PyPI serves.
+3. **Tag and create a GitHub Release**:
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+   Then write release notes at https://github.com/Drozdetskiy/cadence/releases/new (focus on user-visible changes — new flags, behavior changes, fixes — not the release mechanics).
+4. **Update the Homebrew formula** in `homebrew-cadence/Formula/cadence.rb`:
+   - Replace `url` and `sha256` with the new sdist values from `https://pypi.org/pypi/cadence-runner/X.Y.Z/json` (look for the entry where `packagetype == "sdist"`).
+   - **Only if `pyproject.toml` dependencies changed**, regenerate the `resource` blocks. `brew update-python-resources` cannot see packages newer than its internal PyPI snapshot, so resolve manually:
+     ```bash
+     python3.14 -m venv /tmp/r && /tmp/r/bin/pip install --dry-run --report /tmp/r.json cadence-runner==X.Y.Z
+     ```
+     Then for each resolved dependency fetch the sdist URL/sha256 from `https://pypi.org/pypi/<name>/<version>/json` and write the `resource "<name>" do … end` block.
+   - Verify locally: `brew audit --strict drozdetskiy/cadence/cadence && brew install --build-from-source drozdetskiy/cadence/cadence && brew test drozdetskiy/cadence/cadence`.
+   - Commit, push.
+5. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install cadence && cadence --version`.
+
+PyPI versions are immutable (no re-uploads under the same `X.Y.Z`); if anything goes wrong after step 2, bump the patch version and start again.

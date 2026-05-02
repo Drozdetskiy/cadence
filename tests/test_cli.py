@@ -500,20 +500,25 @@ class TestDerivePlanPath:
         result = derive_plan_path(prompt)
         assert result == str(tmp_path / "fix-prompt-validation-plan.md")
 
-    def test_preprompt_bare_maps_to_plan(self, tmp_path: Path) -> None:
-        prompt = tmp_path / "preprompt"
+    def test_init_bare_maps_to_plan(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "init"
         result = derive_plan_path(prompt)
         assert result == str(tmp_path / "plan")
 
-    def test_preprompt_with_extension_maps_to_plan(self, tmp_path: Path) -> None:
-        prompt = tmp_path / "preprompt.md"
+    def test_init_with_extension_maps_to_plan(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "init.md"
         result = derive_plan_path(prompt)
         assert result == str(tmp_path / "plan.md")
 
-    def test_preprompt_substring_replaced(self, tmp_path: Path) -> None:
-        prompt = tmp_path / "fix-preprompt.md"
+    def test_init_substring_replaced(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "fix-init.md"
         result = derive_plan_path(prompt)
         assert result == str(tmp_path / "fix-plan.md")
+
+    def test_custom_init_prompt_name_maps_to_plan(self, tmp_path: Path) -> None:
+        prompt = tmp_path / "preprompt.md"
+        result = derive_plan_path(prompt, init_prompt_name="preprompt")
+        assert result == str(tmp_path / "plan.md")
 
 
 class TestRunPlanModeImplFlag:

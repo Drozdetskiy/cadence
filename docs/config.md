@@ -66,9 +66,11 @@ wait_on_limit: "0"
 # Paths and VCS
 default_branch: main
 commit_trailer: ""
+init_prompt_name: init
 commit_format: |
-  Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.
-  Include only the sections that apply. English, single line.
+  Format: subject line `<branch-name>.`, then a blank line, then a body with
+  one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`.
+  Include only the lines that apply. English.
 
 # Error patterns
 claude_error_patterns:
@@ -125,8 +127,9 @@ YAML overrides via `--config <path>` (or auto-discovered `config.yaml` next to t
 | YAML key | Type | Default | Описание |
 |----------|------|---------|----------|
 | `default_branch` | string | `"main"` | Имя default branch; переопределяется через local `.cadence/config.yaml` |
+| `init_prompt_name` | string | `"init"` | Имя prompt-файла, который мапится на `plan` (используется в `derive_plan_path`) |
 | `commit_trailer` | string | `""` (disabled) | Trailer для всех коммитов (e.g., Co-authored-by) |
-| `commit_format` | string | встроенный default (`<branch-name>. Added: ...`) | Блок с правилами оформления commit message; добавляется к task/review промптам |
+| `commit_format` | string | встроенный multi-line default (subject `<branch-name>.` + blank line + `Added:`/`Changed:`/`Deleted:` body lines) | Блок с правилами оформления commit message; добавляется к task/review промптам |
 
 ### Error pattern detection
 

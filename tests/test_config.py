@@ -46,9 +46,12 @@ class TestConfigDefaults:
         assert cfg.wait_on_limit == "0"
         assert cfg.tasks_root == "cdc-tasks"
         assert cfg.default_branch == "main"
+        assert cfg.init_prompt_name == "init"
         assert cfg.commit_trailer == ""
         assert cfg.commit_format != ""
-        assert "<branch-name>. Added:" in cfg.commit_format
+        assert "subject line `<branch-name>.`" in cfg.commit_format
+        assert "\n\nChanged:" in cfg.commit_format
+        assert "no Co-Authored-By trailer" in cfg.commit_format
         assert "You've hit your limit" in cfg.claude_error_patterns
         assert "API Error:" in cfg.claude_error_patterns
         assert "You've hit your limit" in cfg.claude_limit_patterns
@@ -120,6 +123,12 @@ class TestLoadConfig:
         yaml_path.write_text("tasks_root: my-tasks\n")
         cfg = load_config(tmp_path)
         assert cfg.tasks_root == "my-tasks"
+
+    def test_load_init_prompt_name_override(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("init_prompt_name: preprompt\n")
+        cfg = load_config(tmp_path)
+        assert cfg.init_prompt_name == "preprompt"
 
     def test_load_int_fields(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
