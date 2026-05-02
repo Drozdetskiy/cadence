@@ -64,7 +64,7 @@ def resolve_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("cadence")
+        return version("cadence-runner")
     except Exception:
         return "unknown"
 
