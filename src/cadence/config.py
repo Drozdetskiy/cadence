@@ -35,6 +35,24 @@ class Config:
     tasks_root: str = "cdc-tasks"
     default_branch: str = "main"
     commit_trailer: str = ""
+    commit_format: str = (
+        "Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>. "
+        "Include only the sections that apply. English, single line.\n"
+        "Each section is one short clause in plain language describing the user-visible "
+        "outcome — what someone reading `git log --oneline` cares about. Implementation "
+        "details (method/test/file names, renames, formatter passes, doc syncs) belong "
+        "in the diff, not the subject line. If a section needs more than one clause, "
+        "the commit is probably too big. When squashing, write a fresh summary — do "
+        "not concatenate the sub-commit messages.\n"
+        "Good: `0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits "
+        "the plan file when starting a task. Deleted: now-unused commit_plan_file / "
+        "file_has_changes helpers.`\n"
+        "Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: "
+        "_prepare_plan_branch returns only branch name (drops needs_commit), "
+        "create_branch_for_plan no longer auto-commits, ruff format applied, "
+        "test_creates_branch_and_commits renamed to test_creates_branch_no_commit, ...`\n"
+        "Author as the user — no Co-Authored-By trailer (unless `commit_trailer` is configured)."
+    )
     claude_error_patterns: list[str] = field(
         default_factory=lambda: [
             "You've hit your limit",
@@ -101,6 +119,7 @@ def load_config(config_dir: Path | None) -> Config:
         "tasks_root",
         "default_branch",
         "commit_trailer",
+        "commit_format",
     }
     _INT_FIELDS = {
         "iteration_delay_ms",

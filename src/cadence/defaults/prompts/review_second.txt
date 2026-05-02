@@ -52,7 +52,7 @@ Path A - NO issues found in this iteration:
 Path B - Issues found AND fixed:
 1. Fix verified critical/major issues only
 2. Run tests and linter - ALL tests must pass, ALL linter issues resolved
-3. Commit fixes: `git commit -m "fix: address code review findings"`
+3. Commit fixes; the commit message MUST follow the format block at the end of this prompt.
 4. STOP HERE. Do NOT output any signal. Do NOT output REVIEW_DONE.
    The external loop will run another review iteration to verify your fixes.
    Your fixes might have introduced new issues - another iteration must check.

@@ -120,6 +120,8 @@ wait_on_limit:      "0"   # >0 → retry on rate-limit instead of failing
 tasks_root:     cdc-tasks # root for per-task subdirectories (preprompt/plan/config.yaml)
 default_branch: main      # override per-project in local config
 commit_trailer: ""        # appended to all cadence-made commits
+commit_format:  |         # appended to task/review prompts (default shown below)
+  Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>. ...
 
 # Output
 colors:
@@ -146,6 +148,40 @@ default_branch: develop
 ```
 
 If `--config` is omitted, cadence auto-discovers `config.yaml` next to the plan/task file — typically `cdc-tasks/<NNNN-slug>/config.yaml` (no parent walk). For `--review` (no plan/task file) auto-discovery is skipped — only an explicit `--config` is honored. An explicit path that does not exist is a hard error; an auto-discovered missing file is silently ignored. YAML parse errors are always fatal.
+
+### Commit message format
+
+`commit_format` is appended verbatim to every task and review prompt, telling Claude how to write the commit subject. Plan creation does not commit, so the format is not added there.
+
+The built-in default produces messages like:
+
+```
+0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file / file_has_changes helpers.
+```
+
+Pattern: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` — sections are included only when they apply, one short clause each, English, single line.
+
+Override from `.cadence/config.yaml` with any free-form text. Example of a tighter restatement (the shipped default also includes Good/Bad examples and guidance about implementation details belonging in the diff — see `Config.commit_format` in `src/cadence/config.py` for the verbatim text):
+
+```yaml
+commit_format: |
+  Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.
+  Include only the sections that apply. English, single line.
+  Each section is one short clause describing the user-visible outcome.
+  Author as the user — no Co-Authored-By trailer (unless `commit_trailer` is configured).
+```
+
+Switch to Conventional Commits:
+
+```yaml
+commit_format: |
+  Use Conventional Commits: <type>(<scope>): <subject>
+  Types: feat, fix, refactor, docs, test, chore.
+  Subject is imperative, lowercase, no trailing period, ≤72 chars.
+  Example: feat(executor): add idle-timeout retry
+```
+
+If you need finer control than a free-form block (e.g. different wording per phase), drop a custom `task.txt` / `review_first.txt` / `review_second.txt` under `.cadence/prompts/` — the format block is appended to whatever prompt body you supply.
 
 ### Customizing prompts and agents
 

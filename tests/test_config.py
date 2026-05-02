@@ -47,6 +47,8 @@ class TestConfigDefaults:
         assert cfg.tasks_root == "cdc-tasks"
         assert cfg.default_branch == "main"
         assert cfg.commit_trailer == ""
+        assert cfg.commit_format != ""
+        assert "<branch-name>. Added:" in cfg.commit_format
         assert "You've hit your limit" in cfg.claude_error_patterns
         assert "API Error:" in cfg.claude_error_patterns
         assert "You've hit your limit" in cfg.claude_limit_patterns
@@ -106,6 +108,12 @@ class TestLoadConfig:
         assert cfg.claude_command == "my-claude"
         assert cfg.commit_trailer == "my-trailer"
         assert cfg.task_model == "claude-opus-4-7"
+
+    def test_load_commit_format_override(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('commit_format: "custom"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.commit_format == "custom"
 
     def test_load_tasks_root_override(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
