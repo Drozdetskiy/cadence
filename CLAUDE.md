@@ -68,6 +68,10 @@ make check                      # all of the above
 
 Module-level details live in `docs/`: `config.md`, `processor.md`, `executor.md`, `git-and-plans.md`, `progress-and-input.md`. Read on demand.
 
+## Branch and commit flow
+
+Never commit directly on `main`. Every change — features, fixes, release prep, version bumps, metadata edits — lands on a numbered feature branch named `<NNNN>-<slug>` (continuing the sequence visible in `git log`, e.g. after `0019-…` use `0020-…`). The user pushes the branch and merges via GitHub PR. If you find yourself on `main` with edits to commit, create the branch first (`git switch -c <NNNN>-<slug>`).
+
 ## Commit messages
 
 Format: `<branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.` Include only the sections that apply. English, single line.

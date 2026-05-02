@@ -1,5 +1,5 @@
 [project]
-name = "cadence"
+name = "cadence-runner"
 dynamic = ["version"]
 description = "CLI tool for autonomous task execution via Claude Code"
 readme = "README.md"
