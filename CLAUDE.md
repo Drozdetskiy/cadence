@@ -40,6 +40,8 @@ src/cadence/
 
 Run tools directly from the project venv (`source venv/bin/activate`). Do NOT use `pdm run`.
 
+For package operations (build, install, publish, dependency management) always use `pdm` — `pdm build`, `pdm add`, `pdm install`, `pdm publish`. Do NOT use raw `pip install`, `python -m build`, or other pip-based workflows; the project is configured around PDM (`pdm.lock`, `pdm-backend`).
+
 ```bash
 pytest tests/ -v                # run tests
 ruff check src/ tests/          # lint
