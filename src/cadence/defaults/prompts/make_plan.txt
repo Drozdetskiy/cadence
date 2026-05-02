@@ -94,11 +94,6 @@ When you have enough information to create a plan, write it directly to disk:
 - [ ] run full test suite (use project-specific command)
 - [ ] run linter (use project-specific command)
 - [ ] verify test coverage meets 80%+
-
-### Task N+1: Update documentation
-
-- [ ] update README.md if user-facing changes
-- [ ] update CLAUDE.md if internal patterns changed
 ---
 
 ## Step 4.5: Validate Plan Before Writing
