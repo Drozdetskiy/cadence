@@ -34,19 +34,27 @@ class Config:
     wait_on_limit: str = "0"
     tasks_root: str = "cdc-tasks"
     default_branch: str = "main"
+    init_prompt_name: str = "init"
     commit_trailer: str = ""
     commit_format: str = (
-        "Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>. "
-        "Include only the sections that apply. English, single line.\n"
-        "Each section is one short clause in plain language describing the user-visible "
-        "outcome — what someone reading `git log --oneline` cares about. Implementation "
-        "details (method/test/file names, renames, formatter passes, doc syncs) belong "
-        "in the diff, not the subject line. If a section needs more than one clause, "
-        "the commit is probably too big. When squashing, write a fresh summary — do "
-        "not concatenate the sub-commit messages.\n"
-        "Good: `0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits "
-        "the plan file when starting a task. Deleted: now-unused commit_plan_file / "
-        "file_has_changes helpers.`\n"
+        "Format: subject line `<branch-name>.`, then a blank line, then a body with "
+        "one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. "
+        "Include only the lines that apply. English. The subject + blank line + body "
+        "shape is required so GitHub auto-fills the PR title from the subject and the "
+        "PR description from the body.\n"
+        "Each body line is one short clause in plain language describing the "
+        "user-visible outcome — what someone reading `git log --oneline` cares about. "
+        "Implementation details (method/test/file names, renames, formatter passes, "
+        "doc syncs) belong in the diff, not the commit. If a line needs more than one "
+        "clause, the commit is probably too big. When squashing, write a fresh "
+        "summary — do not concatenate the sub-commit messages.\n"
+        "Good:\n"
+        "```\n"
+        "0014-no-plan-commit-on-start.\n"
+        "\n"
+        "Changed: cadence no longer auto-commits the plan file when starting a task.\n"
+        "Deleted: now-unused commit_plan_file / file_has_changes helpers.\n"
+        "```\n"
         "Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: "
         "_prepare_plan_branch returns only branch name (drops needs_commit), "
         "create_branch_for_plan no longer auto-commits, ruff format applied, "
@@ -118,6 +126,7 @@ def load_config(config_dir: Path | None) -> Config:
         "wait_on_limit",
         "tasks_root",
         "default_branch",
+        "init_prompt_name",
         "commit_trailer",
         "commit_format",
     }

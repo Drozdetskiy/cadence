@@ -37,6 +37,8 @@ def _init_repo(path: str, branch: str = "main") -> None:
         capture_output=True,
         check=True,
     )
+    _git(path, "config", "user.email", _GIT_ENV["GIT_COMMITTER_EMAIL"])
+    _git(path, "config", "user.name", _GIT_ENV["GIT_COMMITTER_NAME"])
 
 
 def _make_commit(path: str, filename: str = "README.md", content: str = "hi") -> None:

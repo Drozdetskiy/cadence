@@ -126,10 +126,10 @@ def to_rel_path(p: Path) -> str:
         return str(p)
 
 
-def derive_plan_path(prompt_file: Path) -> str:
+def derive_plan_path(prompt_file: Path, init_prompt_name: str = "init") -> str:
     name = prompt_file.name
-    if "preprompt" in name:
-        plan_name = name.replace("preprompt", "plan", 1)
+    if init_prompt_name in name:
+        plan_name = name.replace(init_prompt_name, "plan", 1)
     else:
         idx = name.rfind("prompt")
         if idx != -1:
@@ -321,7 +321,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False, config: Path | None = 
     log.print("plan file: %s", plan_file_rel)
     log.print("progress: %s", log.path)
 
-    plan_path = derive_plan_path(plan_file)
+    plan_path = derive_plan_path(plan_file, cfg.init_prompt_name)
     ctx = RunContext(
         mode=Mode.PLAN,
         plan_file=plan_file_rel,
