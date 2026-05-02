@@ -52,7 +52,7 @@ Do NOT reject issues just because they existed before this branch - fix them any
 ### 3.3 Fix All Confirmed Issues
 1. Fix all CONFIRMED issues (all types: bugs, tests, smells, etc.)
 2. Run tests and linter to verify fixes - ALL tests must pass, ALL linter issues resolved
-3. Commit fixes: `git commit -m "fix: address code review findings"`
+3. Commit fixes; the commit message MUST follow the format block at the end of this prompt.
 
 ## Step 4: Signal Completion
 

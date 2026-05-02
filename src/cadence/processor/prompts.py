@@ -85,6 +85,16 @@ def append_commit_trailer_instruction(prompt: str, commit_trailer: str) -> str:
     return prompt + instruction
 
 
+COMMIT_FORMAT_SENTINEL = "Format every git commit message using these rules:"
+
+
+def append_commit_format_instruction(prompt: str, commit_format: str) -> str:
+    if not commit_format:
+        return prompt
+    instruction = f"\n\n{COMMIT_FORMAT_SENTINEL}\n{commit_format}"
+    return prompt + instruction
+
+
 _PLAN_DESC_PLACEHOLDER = "{{PLAN_DESCRIPTION}}"
 _AGENT_REF_RE = re.compile(r"\{\{agent:([a-zA-Z0-9_-]+)\}\}")
 
@@ -132,6 +142,7 @@ def replace_prompt_variables(
     commit_trailer: str,
     local_dir: Path | None,
     warn: Callable[[str], None] | None = None,
+    commit_format: str = "",
 ) -> str:
     base_vars: dict[str, str] = {
         "plan_file": plan_file,
@@ -142,6 +153,7 @@ def replace_prompt_variables(
     prompt = replace_base_variables(prompt, **base_vars)
     prompt = expand_agent_references(prompt, local_dir=local_dir, warn=warn, base_vars=base_vars)
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
+    prompt = append_commit_format_instruction(prompt, commit_format)
     return prompt
 
 
@@ -178,6 +190,7 @@ def build_task_prompt(
     progress_file: str = "",
     default_branch: str = "",
     commit_trailer: str = "",
+    commit_format: str = "",
 ) -> str:
     prompt = load_prompt("task", local_dir=local_dir)
     goal = f"implementation of plan at {plan_file}"
@@ -189,6 +202,7 @@ def build_task_prompt(
         default_branch=default_branch,
     )
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
+    prompt = append_commit_format_instruction(prompt, commit_format)
     return prompt
 
 
@@ -206,6 +220,7 @@ def build_review_first_prompt(
     default_branch: str = "",
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
+    commit_format: str = "",
 ) -> str:
     prompt = load_prompt("review_first", local_dir=local_dir)
     return replace_prompt_variables(
@@ -217,6 +232,7 @@ def build_review_first_prompt(
         commit_trailer=commit_trailer,
         local_dir=local_dir,
         warn=warn,
+        commit_format=commit_format,
     )
 
 
@@ -228,6 +244,7 @@ def build_review_second_prompt(
     default_branch: str = "",
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
+    commit_format: str = "",
 ) -> str:
     prompt = load_prompt("review_second", local_dir=local_dir)
     return replace_prompt_variables(
@@ -239,10 +256,13 @@ def build_review_second_prompt(
         commit_trailer=commit_trailer,
         local_dir=local_dir,
         warn=warn,
+        commit_format=commit_format,
     )
 
 
 __all__ = [
+    "COMMIT_FORMAT_SENTINEL",
+    "append_commit_format_instruction",
     "append_commit_trailer_instruction",
     "build_plan_prompt",
     "build_review_first_prompt",

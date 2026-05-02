@@ -897,6 +897,51 @@ class TestRunClaudeReviewLoop:
         assert runner.run_claude_review_loop() is False
 
 
+class TestRunnerForwardsCommitFormat:
+    def test_task_phase_forwards_commit_format(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalCompleted)
+        cfg = AppConfig(
+            max_iterations=10,
+            iteration_delay_ms=0,
+            commit_format="MARKER_TASK_FORMAT",
+        )
+        runner, _log, _ = _make_task_runner(executor, plan_file=str(plan), app_cfg=cfg)
+        runner.run_task_phase()
+        prompt = executor.run.call_args_list[0][0][0]
+        assert "MARKER_TASK_FORMAT" in prompt
+        assert "Format every git commit message using these rules:" in prompt
+
+    def test_review_first_forwards_commit_format(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        ctx = RunContext(mode=Mode.REVIEW, plan_file="")
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+        )
+        cfg = AppConfig(
+            max_iterations=10,
+            iteration_delay_ms=0,
+            commit_format="MARKER_REVIEW_FORMAT",
+        )
+        runner = Runner(ctx, cfg, deps)
+        runner.run_review_only()
+        # run_review_only issues both the review_first prompt and the loop's
+        # review_second prompt. Both must carry commit_format — assert across
+        # every executor call so a regression in either build site is caught.
+        assert executor.run.call_count >= 2
+        for call in executor.run.call_args_list:
+            prompt = call[0][0]
+            assert "MARKER_REVIEW_FORMAT" in prompt
+            assert "Format every git commit message using these rules:" in prompt
+
+
 class TestRunFullPipeline:
     def test_task_then_review(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_DONE)

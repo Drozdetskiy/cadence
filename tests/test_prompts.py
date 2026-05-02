@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from cadence.processor.prompts import (
+    COMMIT_FORMAT_SENTINEL,
+    append_commit_format_instruction,
     build_plan_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
@@ -249,6 +251,27 @@ class TestReplacePromptVariables:
         )
         assert "trailer" not in result.lower()
 
+    def test_format_appended_after_trailer(self) -> None:
+        trailer = "Co-Authored-By: Bot"
+        prompt = "x"
+        result = replace_prompt_variables(
+            prompt,
+            plan_file="",
+            progress_file="",
+            goal="",
+            default_branch="main",
+            commit_trailer=trailer,
+            local_dir=None,
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(trailer) == 1
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.index(trailer) < result.index(COMMIT_FORMAT_SENTINEL)
+        # Format block must remain at the very end of the prompt — Claude reads
+        # it as the authoritative commit-message spec, so nothing should sit
+        # between the sentinel/body and EOF.
+        assert result.rstrip().endswith("CUSTOM_FMT_BODY")
+
 
 class TestBuildReviewFirstPrompt:
     def test_expands_all_four_agents_and_substitutes(self) -> None:
@@ -349,3 +372,139 @@ class TestBuildReviewSecondPrompt:
             assert f"{{{{agent:{name}}}}}" not in result
         assert result.count("Report findings only - no positive observations.") == 2
         assert "<<<CADENCE:REVIEW_DONE>>>" in result
+
+
+class TestAppendCommitFormatInstruction:
+    def test_empty_format_unchanged(self) -> None:
+        assert append_commit_format_instruction("prompt", "") == "prompt"
+
+    def test_appends_sentinel_and_body(self) -> None:
+        result = append_commit_format_instruction("prompt", "BODY_X")
+        assert COMMIT_FORMAT_SENTINEL in result
+        assert "BODY_X" in result
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("BODY_X") == 1
+
+
+class TestCommitFormatInBuilders:
+    def test_task_prompt_no_format_when_empty(self) -> None:
+        result = build_task_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_task_prompt_injects_custom_format(self) -> None:
+        result = build_task_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+
+    def test_review_first_prompt_no_format_when_empty(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_review_first_prompt_injects_custom_format(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+
+    def test_review_second_prompt_no_format_when_empty(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_review_second_prompt_injects_custom_format(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+
+    def test_trailer_and_format_both_appear_once(self) -> None:
+        trailer = "Co-Authored-By: Bot"
+        result = build_task_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            commit_trailer=trailer,
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(trailer) == 1
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+
+    def test_review_first_trailer_and_format_both_appear_once(self) -> None:
+        trailer = "Co-Authored-By: Bot"
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            commit_trailer=trailer,
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(trailer) == 1
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+
+
+class TestNoHardcodedCommitExamplesInDefaults:
+    def test_task_prompt_drops_feat_example(self) -> None:
+        for commit_format in ("", "CUSTOM_FMT_BODY"):
+            result = build_task_prompt(
+                plan_file="/tmp/plan.md",
+                progress_file="/tmp/progress.txt",
+                commit_format=commit_format,
+            )
+            assert "feat: <brief task description>" not in result
+
+    def test_review_first_prompt_drops_fix_example(self) -> None:
+        for commit_format in ("", "CUSTOM_FMT_BODY"):
+            result = build_review_first_prompt(
+                plan_file="/tmp/plan.md",
+                progress_file="/tmp/progress.txt",
+                default_branch="main",
+                commit_format=commit_format,
+            )
+            assert "fix: address code review findings" not in result
+
+    def test_review_second_prompt_drops_fix_example(self) -> None:
+        for commit_format in ("", "CUSTOM_FMT_BODY"):
+            result = build_review_second_prompt(
+                plan_file="/tmp/plan.md",
+                progress_file="/tmp/progress.txt",
+                default_branch="main",
+                commit_format=commit_format,
+            )
+            assert "fix: address code review findings" not in result
+
+
+class TestPlanPromptHasNoCommitFormat:
+    def test_plan_prompt_does_not_inject_commit_format_block(self) -> None:
+        # build_plan_prompt does not accept commit_format; the sentinel must
+        # never leak into the plan prompt.
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result

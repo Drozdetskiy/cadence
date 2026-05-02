@@ -66,6 +66,9 @@ wait_on_limit: "0"
 # Paths and VCS
 default_branch: main
 commit_trailer: ""
+commit_format: |
+  Format: <branch-name>. Added: <what>. Changed: <what>. Deleted: <what>.
+  Include only the sections that apply. English, single line.
 
 # Error patterns
 claude_error_patterns:
@@ -123,6 +126,7 @@ YAML overrides via `--config <path>` (or auto-discovered `config.yaml` next to t
 |----------|------|---------|----------|
 | `default_branch` | string | `"main"` | Имя default branch; переопределяется через local `.cadence/config.yaml` |
 | `commit_trailer` | string | `""` (disabled) | Trailer для всех коммитов (e.g., Co-authored-by) |
+| `commit_format` | string | встроенный default (`<branch-name>. Added: ...`) | Блок с правилами оформления commit message; добавляется к task/review промптам |
 
 ### Error pattern detection
 

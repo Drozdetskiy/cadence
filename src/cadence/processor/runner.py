@@ -163,6 +163,7 @@ class Runner:
             progress_file=self._ctx.progress_path or self._deps.logger.path,
             default_branch=self._ctx.default_branch,
             commit_trailer=self._app.commit_trailer,
+            commit_format=self._app.commit_format,
             warn=self._deps.logger.warn,
         )
         if not self.run_claude_review(review_prompt):
@@ -185,6 +186,7 @@ class Runner:
             progress_file=self._ctx.progress_path or log.path,
             default_branch=self._ctx.default_branch,
             commit_trailer=self._app.commit_trailer,
+            commit_format=self._app.commit_format,
         )
 
         max_iterations = self._app.max_iterations
@@ -313,6 +315,7 @@ class Runner:
             progress_file=self._ctx.progress_path or log.path,
             default_branch=self._ctx.default_branch,
             commit_trailer=self._app.commit_trailer,
+            commit_format=self._app.commit_format,
             warn=log.warn,
         )
 
