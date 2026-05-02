@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from cadence.processor.prompts import (
+    build_plan_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
     build_task_prompt,
@@ -108,6 +109,20 @@ class TestBuildTaskPrompt:
         assert result == (
             "Custom task: /tmp/p.md goal=implementation of plan at /tmp/p.md branch=develop"
         )
+
+
+class TestBuildPlanPrompt:
+    def test_does_not_include_documentation_update_task(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "Update documentation" not in result
+        assert "update README.md" not in result
+        assert "update CLAUDE.md" not in result
 
 
 class TestFormatAgentExpansion:
@@ -310,6 +325,14 @@ class TestBuildReviewFirstPrompt:
             local_dir=tmp_path,
         )
         assert "OVERRIDE_QUALITY_BODY for feature-branch" in result
+
+    def test_does_not_list_docs_as_issue_category(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert ", docs," not in result
 
 
 class TestBuildReviewSecondPrompt:
