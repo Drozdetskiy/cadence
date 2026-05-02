@@ -34,6 +34,9 @@ class TestResolveVersion:
         v = resolve_version()
         assert v == __version__
 
+    def test_does_not_return_unknown(self) -> None:
+        assert resolve_version() != "unknown"
+
 
 class TestDetermineMode:
     def test_plan_mode(self, tmp_path: Path) -> None:
