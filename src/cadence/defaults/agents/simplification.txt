@@ -14,9 +14,6 @@ Detect over-engineered and overcomplicated code - code that works but is more co
 ## Unnecessary Indirection
 
 - Pass-through wrappers - methods that only delegate to dependencies
-- Excessive method chaining - builder pattern for simple constructions
-- Interface wrapping primitives - custom types for standard library types
-- Middleware stacking - multiple middlewares that could be one
 
 ## Future-Proofing Excess
 
@@ -35,8 +32,6 @@ Detect over-engineered and overcomplicated code - code that works but is more co
 
 - Caching rarely-accessed data - cache for data read once at startup
 - Custom data structures - complex structures when arrays/maps work
-- Worker pools for occasional tasks - pooling for operations/hour
-- Connection pooling overkill - complex pooling for single connection
 
 ## What to Report
 
