@@ -1,5 +1,7 @@
 # cadence
 
+[![CI](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml)
+
 Autonomous task-execution pipeline on top of [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 `cadence` drives Claude through a structured loop: plan → branch → iterative implementation → multi-agent code review → review-loop until clean. It is a thin orchestrator — Claude does the work, `cadence` keeps it on rails (signals, retries, idle/session timeouts, break/resume, per-phase models, git integration).
