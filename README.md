@@ -1,8 +1,10 @@
 # cadence
 
-[![CI](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/cadence-runner.svg)](https://pypi.org/project/cadence-runner/) [![Python versions](https://img.shields.io/pypi/pyversions/cadence-runner.svg)](https://pypi.org/project/cadence-runner/) [![License](https://img.shields.io/pypi/l/cadence-runner.svg)](LICENSE) [![CI](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/Drozdetskiy/cadence/actions/workflows/ci.yml) [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230.svg)](https://github.com/astral-sh/ruff)
 
 Autonomous task-execution pipeline on top of [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+
+Inspired by the [ralphex](https://ralphex.com/) project.
 
 `cadence` drives Claude through a structured loop: plan → branch → iterative implementation → multi-agent code review → review-loop until clean. It is a thin orchestrator — Claude does the work, `cadence` keeps it on rails (signals, retries, idle/session timeouts, break/resume, per-phase models, git integration).
 

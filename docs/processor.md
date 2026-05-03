@@ -1,33 +1,33 @@
 # Processor / Orchestration Layer
 
-Справочный документ по оркестрационному слою для планирования Python-порта.
+Reference document for the orchestration layer.
 
-## Обзор
+## Overview
 
-Модуль processor -- ядро cadence. Содержит `Runner`, который управляет всем жизненным циклом исполнения: от запуска задач до review. Runner не знает о CLI, конфигурационных файлах или git-операциях напрямую -- он работает через интерфейсы.
+The processor module is the core of cadence. It contains `Runner`, which drives the entire execution lifecycle: from running tasks through review. Runner does not know about the CLI, configuration files, or git operations directly — it works through interfaces.
 
-Ключевые модули:
-- `processor/runner.py` -- Runner class, все run-методы, циклы итераций
-- `processor/prompts.py` -- шаблонная система промптов, подстановка переменных, раскрытие агентов
-- `processor/signals.py` -- парсинг сигналов (QUESTION, PLAN_DRAFT), helper-функции
+Key modules:
+- `processor/runner.py` — Runner class, all run-methods, iteration loops
+- `processor/prompts.py` — prompt template system, variable substitution, agent expansion
+- `processor/signals.py` — signal parsing (QUESTION, PLAN_DRAFT), helper functions
 
-## Runner class и зависимости
+## Runner class and dependencies
 
 ```python
 class Runner:
-    cfg: Config                          # конфигурация Runner
-    log: Logger                          # логирование прогресса
-    claude: Executor                     # executor для task phase
-    review_claude: Executor              # executor для review phases (может отличаться моделью)
-    git: GitChecker                      # проверка HEAD hash / diff fingerprint
-    input_collector: InputCollector      # пользовательский ввод (plan creation)
-    phase_holder: PhaseHolder            # thread-safe текущая фаза
-    iteration_delay: float               # пауза между итерациями (default 2.0 сек)
-    task_retry_count: int                # количество retry при FAILED (default 1)
-    wait_on_limit: float                 # время ожидания при rate limit (сек)
-    break_event: threading.Event         # event для break-сигнала (Ctrl+\)
-    pause_handler: Callable[[],  bool]   # callback pause/resume
-    last_session_timed_out: bool         # флаг: последняя сессия завершилась по timeout
+    cfg: Config                          # Runner configuration
+    log: Logger                          # progress logging
+    claude: Executor                     # executor for task phase
+    review_claude: Executor              # executor for review phases (may use a different model)
+    git: GitChecker                      # HEAD hash / diff fingerprint inspection
+    input_collector: InputCollector      # user input (plan creation)
+    phase_holder: PhaseHolder            # thread-safe current phase
+    iteration_delay: float               # pause between iterations (default 2.0 sec)
+    task_retry_count: int                # retry count on FAILED (default 1)
+    wait_on_limit: float                 # wait time on rate limit (sec)
+    break_event: threading.Event         # event for break signal (Ctrl+\)
+    pause_handler: Callable[[],  bool]   # pause/resume callback
+    last_session_timed_out: bool         # flag: last session ended via timeout
     task_phase_override: Callable | None # test seam
 ```
 
@@ -36,119 +36,118 @@ class Runner:
 ```python
 @dataclass
 class Config:
-    plan_file: str              # путь к plan-файлу
-    plan_description: str       # описание для plan creation mode
-    progress_path: str          # путь к файлу прогресса
-    mode: Mode                  # режим исполнения
-    max_iterations: int         # макс итераций task phase
+    plan_file: str              # path to the plan file
+    plan_description: str       # description for plan creation mode
+    progress_path: str          # path to the progress file
+    mode: Mode                  # execution mode
+    max_iterations: int         # max iterations of task phase
     debug: bool                 # debug output
-    no_color: bool              # отключить цвета
-    iteration_delay_ms: int     # задержка между итерациями (ms)
-    task_retry_count: int       # retry при FAILED
-    plan_model: str             # модель для plan creation phase
-    task_model: str             # модель для task phase
-    review_model: str           # модель для review phases
-    default_branch: str         # default branch (из git)
-    app_config: AppConfig       # полный application config
+    no_color: bool              # disable colors
+    iteration_delay_ms: int     # delay between iterations (ms)
+    task_retry_count: int       # retry on FAILED
+    plan_model: str             # model for plan creation phase
+    task_model: str             # model for task phase
+    review_model: str           # model for review phases
+    default_branch: str         # default branch (from git)
+    app_config: AppConfig       # full application config
 ```
 
-### Протоколы (интерфейсы)
+### Protocols (interfaces)
 
-Runner определяет 4 протокола:
+Runner defines 4 protocols:
 
-**Executor** -- запуск CLI и получение результата:
+**Executor** — runs the CLI and returns the result:
 ```python
 class Executor(Protocol):
     def run(self, prompt: str) -> Result: ...
 ```
 
-**Logger** -- логирование прогресса с поддержкой structured секций и Q&A:
+**Logger** — progress logging with support for structured sections and Q&A:
 ```python
 class Logger(Protocol):
-    def print(self, format: str, *args) -> None: ...        # форматированная строка с timestamp
-    def print_raw(self, format: str, *args) -> None: ...    # алиас для print()
-    def print_section(self, section: Section) -> None: ...  # заголовок секции
-    def print_aligned(self, text: str) -> None: ...         # выравненный вывод (для streaming)
-    def log_question(self, question: str, options: list[str]) -> None: ...  # Q&A для plan creation
+    def print(self, format: str, *args) -> None: ...        # formatted line with timestamp
+    def print_section(self, section: Section) -> None: ...  # section header
+    def print_aligned(self, text: str) -> None: ...         # aligned output (for streaming)
+    def log_question(self, question: str, options: list[str]) -> None: ...  # Q&A for plan creation
     def log_answer(self, answer: str) -> None: ...
     def log_draft_review(self, action: str, feedback: str) -> None: ...
-    def path(self) -> str: ...                              # путь к файлу прогресса
+    def path(self) -> str: ...                              # path to the progress file
 ```
 
-**InputCollector** -- интерактивный ввод для plan creation:
+**InputCollector** — interactive input for plan creation:
 ```python
 class InputCollector(Protocol):
     def ask_question(self, question: str, options: list[str]) -> str: ...
     def ask_draft_review(self, question: str, plan_content: str) -> tuple[str, str]: ...
 ```
 
-**GitChecker** -- инспекция git-состояния для review loop optimization. Этот Protocol живёт в `processor/runner.py` (а не в модуле `git/`) и удовлетворяется `Service` -- никакого отдельного `GitChecker` класса в `cadence.git` нет:
+**GitChecker** — git-state inspection for review-loop optimization. This Protocol lives in `processor/runner.py` (not in the `git/` module) and is satisfied by `Service` — there is no separate `GitChecker` class in `cadence.git`:
 ```python
 class GitChecker(Protocol):
-    def head_hash(self) -> str: ...              # текущий HEAD commit hash
-    def diff_fingerprint(self) -> str: ...       # хеш рабочего дерева diff
+    def head_hash(self) -> str: ...              # current HEAD commit hash
+    def diff_fingerprint(self) -> str: ...       # working-tree diff hash
 ```
 
 ### Executors dataclass
 
-Группирует executor-зависимости:
+Groups executor dependencies:
 ```python
 @dataclass
 class Executors:
-    claude: Executor                     # обязателен: task phase
-    review_claude: Executor | None       # опционально: отдельная модель для reviews
+    claude: Executor                     # required: task phase
+    review_claude: Executor | None       # optional: separate model for reviews
 ```
 
-Если `review_claude` не задан (None), используется тот же executor что и claude.
+If `review_claude` is not set (None), the same executor is used as for claude.
 
-### Конструкторы
+### Constructors
 
-`Runner(cfg, log, holder)` -- основной конструктор:
-1. Создает `ClaudeExecutor` с параметрами из AppConfig (command, args, error/limit patterns, idle timeout, model)
-2. Если review_model отличается от task_model, создает отдельный review executor
-3. Вызывает `Runner.from_executors()`
+`Runner(cfg, log, holder)` — main constructor:
+1. Creates a `ClaudeExecutor` from AppConfig (command, args, error/limit patterns, idle timeout, model)
+2. If review_model differs from task_model, creates a separate review executor
+3. Calls `Runner.from_executors()`
 
-`Runner.from_executors(cfg, log, execs, holder)` -- конструктор с готовыми executors (для тестирования):
-1. Устанавливает `iteration_delay` из config или default (2.0 сек)
-2. Устанавливает `task_retry_count` с учетом explicit zero vs not set
-3. Устанавливает `wait_on_limit` из AppConfig
-4. Если review_claude is None, копирует claude executor
+`Runner.from_executors(cfg, log, execs, holder)` — constructor with pre-built executors (for testing):
+1. Sets `iteration_delay` from config or default (2.0 sec)
+2. Sets `task_retry_count`, distinguishing explicit zero from "not set"
+3. Sets `wait_on_limit` from AppConfig
+4. If review_claude is None, copies the claude executor
 
-### Setter-методы
+### Setter methods
 
 ```
-set_input_collector(c)   -- устанавливает input collector (plan creation mode)
-set_git_checker(g)       -- устанавливает git checker (review loops)
-set_break_event(event)   -- устанавливает break event (Ctrl+\, через threading.Event)
-set_pause_handler(fn)    -- устанавливает callback pause/resume
+set_input_collector(c)   -- sets the input collector (plan creation mode)
+set_git_checker(g)       -- sets the git checker (review loops)
+set_break_event(event)   -- sets the break event (Ctrl+\, via threading.Event)
+set_pause_handler(fn)    -- sets the pause/resume callback
 ```
 
-## Методы режимов исполнения
+## Execution mode methods
 
-`run()` -- entry point, dispatches по `cfg.mode`:
+`run()` — entry point, dispatches on `cfg.mode`:
 
 ### run_full()
 
-Полный pipeline: tasks -> review_first -> review_loop.
+Full pipeline: tasks -> review_first -> review_loop.
 
 ```
 1. PhaseTask: run_task_phase()
-   - при UserAbortedError: логирует и возвращает UserAbortedError
-   - при ошибке: оборачивает в "task phase: ..."
+   - on UserAbortedError: log and return UserAbortedError
+   - on error: wrap as "task phase: ..."
 
 2. PhaseReview: run_claude_review(ReviewFirstPrompt)
    - section "claude review 0: all findings"
-   - single pass, 4 агента
+   - single pass, 4 agents
 
 3. PhaseReview: run_claude_review_loop()
    - review loop (critical/major)
 ```
 
-Требует: plan_file != ""
+Requires: plan_file != ""
 
 ### run_review_only()
 
-Review pipeline без task phase.
+Review pipeline without task phase.
 
 ```
 1. PhaseReview: run_claude_review(ReviewFirstPrompt)
@@ -157,17 +156,17 @@ Review pipeline без task phase.
 
 ### run_tasks_only()
 
-Только task phase, без reviews.
+Task phase only, no reviews.
 
 ```
 1. PhaseTask: run_task_phase()
 ```
 
-Требует: plan_file != ""
+Requires: plan_file != ""
 
 ### run_plan_creation()
 
-Интерактивное создание плана через Q&A с Claude.
+Interactive plan creation through Q&A with Claude.
 
 ```
 max_plan_iterations = max(5, max_iterations // 5)
@@ -175,108 +174,108 @@ last_revision_feedback = ""
 
 loop 1..max_plan_iterations:
   1. print_section(PlanIterationSection(i))
-  2. Собрать prompt = build_plan_prompt()
-  3. Если есть last_revision_feedback: добавить "PREVIOUS DRAFT FEEDBACK: ..."
+  2. Build prompt = build_plan_prompt()
+  3. If last_revision_feedback present: append "PREVIOUS DRAFT FEEDBACK: ..."
   4. run_with_limit_retry(claude.run, prompt, "claude")
 
-  Обработка результата:
+  Result handling:
   - Error: handle_pattern_match_error, return
   - FAILED signal: return error
-  - PLAN_READY signal: return (успех)
+  - PLAN_READY signal: return (success)
   - Session timeout: skip output parsing, retry (preserve last_revision_feedback)
 
-  Если не timed out:
-  - Clear last_revision_feedback (если был)
-  - Проверить PLAN_DRAFT: handle_plan_draft(output)
+  If not timed out:
+  - Clear last_revision_feedback (if it was set)
+  - Check PLAN_DRAFT: handle_plan_draft(output)
     - accept: continue (last_revision_feedback = "")
     - revise: continue (last_revision_feedback = feedback)
     - reject: raise UserRejectedPlanError
-  - Проверить QUESTION: handle_plan_question(output)
+  - Check QUESTION: handle_plan_question(output)
     - question handled: continue
-  - Иначе: continue (ждем следующий iteration)
+  - Otherwise: continue (wait for next iteration)
 ```
 
-Требует: plan_description != "", input_collector is not None
+Requires: plan_description != "", input_collector is not None
 
-## Фазы исполнения (детальное описание)
+## Execution phases (detailed)
 
 ### Task phase: run_task_phase()
 
-Цикл исполнения задач из плана. Каждая итерация -- одна задача (один Task section).
+Loop that executes tasks from the plan. Each iteration handles one task (one Task section).
 
 ```
 prompt = replace_prompt_variables(TaskPrompt)
 retry_count = 0
 
 loop i = 1..max_iterations:
-  1. Определить номер задачи:
-     - task_num = next_plan_task_position() (из плана, 1-indexed)
-     - если 0: fallback на i (loop counter)
+  1. Determine the task number:
+     - task_num = next_plan_task_position() (from the plan, 1-indexed)
+     - if 0: fall back to i (loop counter)
   2. print_section(TaskIterationSection(task_num))
 
-  3. Создать break scope:
-     - отдельный threading.Event, проверяемый при break
-     - для отмены только текущей сессии при Ctrl+\
+  3. Create a break scope:
+     - a separate threading.Event checked on break
+     - cancels only the current session on Ctrl+\
 
   4. result = run_with_limit_retry(claude.run, prompt, "claude")
 
-  5. Проверить manual break:
-     - is_break(): break_event.is_set() и основной поток не отменен
+  5. Check for manual break:
+     - is_break(): break_event.is_set() and the main thread is not cancelled
 
-  6. Если manual break:
-     - break_event.clear() (очистить pending signal)
-     - если pause_handler is None или not pause_handler(): raise UserAbortedError
-     - break_event.clear() (очистить signal полученный во время pause prompt)
-     - i -= 1 (сохранить iteration budget, перезапустить ту же задачу)
+  6. On manual break:
+     - break_event.clear() (clear pending signal)
+     - if pause_handler is None or not pause_handler(): raise UserAbortedError
+     - break_event.clear() (clear signal received during pause prompt)
+     - i -= 1 (preserve iteration budget, restart the same task)
      - retry_count = 0
      - continue
 
-  7. Если result.error:
+  7. If result.error:
      - handle_pattern_match_error -> return
-     - иначе: raise error
+     - otherwise: raise error
 
-  8. Если COMPLETED signal:
-     - has_uncompleted_tasks(): проверить план на наличие [ ]
-     - если есть uncompleted: warning, continue
-     - если все done: return
+  8. If COMPLETED signal:
+     - has_uncompleted_tasks(): check the plan for remaining [ ]
+     - if any uncompleted: warning, continue
+     - if all done: return
 
-  9. Если FAILED signal:
-     - если retry_count < task_retry_count: retry_count += 1, sleep, continue
-     - иначе: raise error
+  9. If FAILED signal:
+     - if retry_count < task_retry_count: retry_count += 1, sleep, continue
+     - otherwise: raise error
 
-  10. Сброс retry_count = 0
+  10. Reset retry_count = 0
   11. sleep(iteration_delay)
 ```
 
-Ключевые особенности:
-- Prompt один и тот же каждую итерацию -- Claude перечитывает план из файла
-- next_plan_task_position() парсит план и находит первый uncompleted task section
-- has_uncompleted_tasks() проверяет только Task sections (не Success criteria/Overview/Context)
-- Для malformed plans (checkboxes без task headers): проверяет файл целиком
-- break-resume: та же задача перезапускается с fresh session, план перечитывается
+Key properties:
+- The prompt is the same on every iteration — Claude rereads the plan from the file
+- next_plan_task_position() parses the plan and finds the first uncompleted task section
+- has_uncompleted_tasks() checks Task sections only (not Success criteria/Overview/Context)
+- For malformed plans (checkboxes without task headers): checks the whole file
+- break-resume: the same task restarts with a fresh session, the plan is reread
 
 ### Review phase: run_claude_review(prompt)
 
-Одиночный review pass. Используется для "review 0: all findings" с ReviewFirstPrompt (4 агента).
+A single review pass. Used for "review 0: all findings" with ReviewFirstPrompt (4 agents).
 
 ```
 1. result = run_with_limit_retry(review_claude.run, prompt, "claude")
 2. Error: handle_pattern_match_error -> raise
 3. FAILED signal: raise error
 4. REVIEW_DONE signal: ok
-5. Нет REVIEW_DONE: warning "did not complete cleanly", continue
+5. No REVIEW_DONE: warning "did not complete cleanly", continue
 ```
 
 ### Review loop: run_claude_review_loop()
 
-Итеративный review loop с ReviewSecondPrompt (2 агента: critical/major findings only).
+Iterative review loop with ReviewSecondPrompt (2 agents: critical/major findings only).
 
 ```
 max_review_iterations = max(3, max_iterations // 10)
 
 loop i = 1..max_review_iterations:
   1. print_section(ClaudeReviewSection(i, ": critical/major"))
-  2. head_before = head_hash() (для no-commit detection)
+  2. head_before = head_hash() (for no-commit detection)
   3. result = run_with_limit_retry(review_claude.run, ReviewSecondPrompt, "claude")
   4. Error: handle_pattern_match_error -> return
   5. FAILED signal: raise error
@@ -289,43 +288,43 @@ loop i = 1..max_review_iterations:
 max iterations reached: log warning, return
 ```
 
-Логика no-commit detection: если Claude не сделал коммитов, значит нечего было исправлять. Session timeout обходит эту проверку (сессия могла быть убита до коммита).
+No-commit detection logic: if Claude made no commits, there was nothing to fix. Session timeout bypasses this check (the session may have been killed before a commit landed).
 
-## Session timeout и idle timeout
+## Session timeout and idle timeout
 
 ### Session timeout
 
 `run_with_session_timeout(run, prompt, tool_name)`:
 
 ```
-Если session_timeout <= 0 или tool_name != "claude":
+If session_timeout <= 0 or tool_name != "claude":
   result = run(prompt)
-  Если result.idle_timed_out and signal == "":
-    last_session_timed_out = True  # treat как session timeout для review loops
+  If result.idle_timed_out and signal == "":
+    last_session_timed_out = True  # treat as session timeout for review loops
   return result
 
-# Запуск с таймаутом через threading.Timer
-result = run(prompt)  # с отдельным threading.Timer на session_timeout
+# Run with timeout via threading.Timer
+result = run(prompt)  # with a separate threading.Timer for session_timeout
 
-Если session timed out:
+If session timed out:
   result.error = None
-  result.signal = ""  # нельзя доверять partial session
+  result.signal = ""  # cannot trust a partial session
   last_session_timed_out = True
 
-Если result.idle_timed_out and signal == "":
-  last_session_timed_out = True  # idle timeout без signal = session timeout behavior
+If result.idle_timed_out and signal == "":
+  last_session_timed_out = True  # idle timeout without a signal = session-timeout behavior
 ```
 
-`last_session_timed_out` используется в:
-- run_claude_review_loop(): skip HEAD-check и retry (не путать timeout с "ничего не нашел")
+`last_session_timed_out` is used in:
+- run_claude_review_loop(): skip the HEAD check and retry (do not confuse a timeout with "found nothing")
 
 ### Idle timeout
 
-Реализован в `ClaudeExecutor.run()` (модуль executor), не в processor.
-Processor обрабатывает результат через `result.idle_timed_out` flag.
+Implemented in `ClaudeExecutor.run()` (executor module), not in the processor.
+The processor handles the result via the `result.idle_timed_out` flag.
 
-Если idle timeout сработал без signal: `last_session_timed_out = True`.
-Это нужно потому что idle timeout без signal выглядит как "ничего не нашел" для review loops, но на самом деле сессия "зависла".
+If idle timeout fires without a signal: `last_session_timed_out = True`.
+This is needed because an idle timeout without a signal looks like "found nothing" to review loops, when in fact the session "hung".
 
 ## Rate limit retry: run_with_limit_retry
 
@@ -333,106 +332,106 @@ Processor обрабатывает результат через `result.idle_ti
 loop:
   result = run_with_session_timeout(run, prompt, tool_name)
 
-  Если not error: return result
-  Если не LimitPatternError: return result (не retry)
-  Если wait_on_limit <= 0: return result (нет wait config)
+  If not error: return result
+  If not LimitPatternError: return result (do not retry)
+  If wait_on_limit <= 0: return result (no wait config)
 
   log "rate limit detected, waiting..."
   sleep_with_cancel(wait_on_limit)
   -- retry indefinitely
 ```
 
-Порядок проверок:
-1. LimitPatternError: если есть wait -> retry, если нет wait -> return (упадет в error handling)
-2. PatternMatchError (обычная ошибка): return без retry
-3. Другие ошибки: return без retry
+Order of checks:
+1. LimitPatternError: if a wait is configured -> retry; if not -> return (will fall through to error handling)
+2. PatternMatchError (regular error): return without retry
+3. Other errors: return without retry
 
-Retry indefinitely: цикл не ограничен по количеству попыток, только по cancellation.
+Retry indefinitely: the loop is not bounded by attempt count, only by cancellation.
 
-## Break / pause / resume механизм
+## Break / pause / resume mechanism
 
 ### break_event (threading.Event)
 
-`threading.Event`, устанавливаемый при получении break-сигнала (Ctrl+\ на Unix).
-Если break_event is None: break-механизм отключен.
+`threading.Event`, set on receipt of a break signal (Ctrl+\ on Unix).
+If break_event is None: the break mechanism is disabled.
 
 ### is_break() -> bool
 
-Определяет, был ли break: `break_event.is_set()` и основной поток не отменен.
+Decides whether a break occurred: `break_event.is_set()` and the main thread is not cancelled.
 
 ### clear_break()
 
-`break_event.clear()` -- сброс события.
-Вызывается после pause+resume чтобы предотвратить немедленную отмену следующей итерации.
-Не вызывается на обычных границах итераций -- сохраняет legitimate Ctrl+\ между итерациями.
+`break_event.clear()` — clears the event.
+Called after pause+resume to prevent immediate cancellation of the next iteration.
+Not called on regular iteration boundaries — preserves a legitimate Ctrl+\ between iterations.
 
-### Поведение по фазам
+### Behavior by phase
 
 Task phase:
-- break_event проверяется на каждой итерации
-- на break: kill текущей сессии -> pause_handler -> resume (i -= 1) или abort (UserAbortedError)
-- clear_break() после pause prompt (очистка pending signal)
+- break_event is checked on every iteration
+- on break: kill the current session -> pause_handler -> resume (i -= 1) or abort (UserAbortedError)
+- clear_break() after pause prompt (clears pending signal)
 
 Claude review loop:
-- Нет break-проверки -- review loop не прерывается по Ctrl+\
-- (только cancellation через SIGINT/KeyboardInterrupt)
+- No break check — the review loop is not interrupted by Ctrl+\
+- (only cancellation via SIGINT/KeyboardInterrupt)
 
-## Расчет итераций
+## Iteration calculation
 
-Константы:
+Constants:
 ```
-MIN_REVIEW_ITERATIONS    = 3     # минимум для claude review
+MIN_REVIEW_ITERATIONS    = 3     # minimum for claude review
 REVIEW_ITERATION_DIVISOR = 10    # review iterations = max_iterations // 10
-MIN_PLAN_ITERATIONS      = 5     # минимум для plan creation
+MIN_PLAN_ITERATIONS      = 5     # minimum for plan creation
 PLAN_ITERATION_DIVISOR   = 5     # plan iterations = max_iterations // 5
 ```
 
-При max_iterations = 50 (default):
+When max_iterations = 50 (default):
 - Task: 1..50
 - Review: max(3, 50 // 10) = 5
 - Plan: max(5, 50 // 5) = 10
 
-## Система промптов
+## Prompt system
 
-### Шаблонные переменные
+### Template variables
 
-Определены в `processor/prompts.py`:
+Defined in `processor/prompts.py`:
 
-| Переменная                     | Значение                                          | Где используется              |
+| Variable                       | Value                                              | Used in                       |
 |-------------------------------|---------------------------------------------------|-------------------------------|
-| `{{PLAN_FILE}}`               | путь к план-файлу или "(no plan file...)"         | все промпты                   |
-| `{{PROGRESS_FILE}}`           | путь к progress файлу или "(no progress file...)" | все промпты                   |
-| `{{GOAL}}`                    | "implementation of plan at ..." или "current branch vs ..." | все промпты     |
-| `{{DEFAULT_BRANCH}}`          | имя default branch или "main"                     | все промпты                   |
-| `{{PLAN_DESCRIPTION}}`        | описание плана (user input)                       | make_plan prompt              |
-| `{{agent:name}}`              | раскрывается в Task tool instructions             | review промпты                |
+| `{{PLAN_FILE}}`               | path to the plan file or "(no plan file...)"      | all prompts                   |
+| `{{PROGRESS_FILE}}`           | path to the progress file or "(no progress file...)" | all prompts                |
+| `{{GOAL}}`                    | "implementation of plan at ..." or "current branch vs ..." | all prompts          |
+| `{{DEFAULT_BRANCH}}`          | name of the default branch or "main"              | all prompts                   |
+| `{{PLAN_DESCRIPTION}}`        | plan description (user input)                     | make_plan prompt              |
+| `{{agent:name}}`              | expanded into Task tool instructions              | review prompts                |
 
-### Иерархия замены
+### Replacement hierarchy
 
-Два уровня функций замены:
+Two levels of replacement functions:
 
-1. `replace_base_variables(prompt)` -- базовые: PLAN_FILE, PROGRESS_FILE, GOAL, DEFAULT_BRANCH
-2. `replace_prompt_variables(prompt)` -- базовые + agent references + commit trailer
+1. `replace_base_variables(prompt)` — base: PLAN_FILE, PROGRESS_FILE, GOAL, DEFAULT_BRANCH
+2. `replace_prompt_variables(prompt)` — base + agent references + commit trailer
 
-Порядок в replace_prompt_variables:
+Order inside replace_prompt_variables:
 1. replace_base_variables()
-2. expand_agent_references() -- раскрытие агентских ссылок
+2. expand_agent_references() — expand agent references
 3. append_commit_trailer_instruction()
 
 ### Agent expansion
 
 `expand_agent_references(prompt)`:
 - Regex: `\{\{agent:([a-zA-Z0-9_-]+)\}\}`
-- Строит dict name -> CustomAgent из app_config.custom_agents
-- Для каждого match:
-  - Если агент не найден: warning, оставить reference as-is
-  - Если найден: replace_base_variables() на контент агента, затем format_agent_expansion()
-  - Рекурсия не поддерживается: агентский контент не проходит через expand_agent_references()
+- Builds a dict name -> CustomAgent from app_config.custom_agents
+- For each match:
+  - If the agent is not found: warning, leave the reference as-is
+  - If found: run replace_base_variables() on the agent's content, then format_agent_expansion()
+  - Recursion is not supported: agent content does not pass through expand_agent_references()
 
 ```
 format_agent_expansion(prompt, opts):
   subagent = opts.agent_type or "general-purpose"
-  model_clause = f" with model={opts.model}" если opts.model задан
+  model_clause = f" with model={opts.model}" if opts.model is set
   -> "Use the Task tool{model_clause} to launch a {subagent} agent with this prompt:
       \"{prompt}\"
       Report findings only - no positive observations."
@@ -441,21 +440,21 @@ format_agent_expansion(prompt, opts):
 ### Commit trailer
 
 `append_commit_trailer_instruction(prompt)`:
-- Если app_config.commit_trailer пуст: return prompt unchanged
-- Иначе: добавляет instruction "When making git commits, add the following trailer..."
-- Вызывается ОДИН РАЗ на финальном собранном prompt (не внутри agent expansion)
+- If app_config.commit_trailer is empty: return prompt unchanged
+- Otherwise: append the instruction "When making git commits, add the following trailer..."
+- Called ONCE on the final assembled prompt (not inside agent expansion)
 
-### Build-функции для промптов
+### Build functions for prompts
 
-| Функция                         | Prompt source              | Специальные переменные          |
+| Function                        | Prompt source              | Special variables               |
 |--------------------------------|----------------------------|---------------------------------|
 | build_plan_prompt()             | MakePlanPrompt             | {{PLAN_DESCRIPTION}}            |
 
-## Парсинг сигналов
+## Signal parsing
 
-Определены в `processor/signals.py`.
+Defined in `processor/signals.py`.
 
-### Helper-функции
+### Helper functions
 
 ```
 is_review_done(signal)  -> signal == "<<<CADENCE:REVIEW_DONE>>>"
@@ -464,7 +463,7 @@ is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
 
 ### QUESTION signal
 
-Формат в output:
+Format in output:
 ```
 <<<CADENCE:QUESTION>>>
 {"question": "...", "options": ["...", "..."]}
@@ -472,14 +471,14 @@ is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
 ```
 
 `parse_question_payload(output)`:
-1. Проверить наличие `<<<CADENCE:QUESTION>>>` подстроки
-2. Regex extract JSON между QUESTION и END маркерами
-3. json.loads в QuestionPayload dataclass
-4. Валидация: question != "", options не пустой
+1. Check for the `<<<CADENCE:QUESTION>>>` substring
+2. Regex-extract the JSON between the QUESTION and END markers
+3. json.loads into a QuestionPayload dataclass
+4. Validation: question != "", options not empty
 
 ### PLAN_DRAFT signal
 
-Формат в output:
+Format in output:
 ```
 <<<CADENCE:PLAN_DRAFT>>>
 # Plan content...
@@ -487,15 +486,15 @@ is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
 ```
 
 `parse_plan_draft_payload(output)`:
-1. Проверить наличие `<<<CADENCE:PLAN_DRAFT>>>` подстроки
-2. Regex extract content между PLAN_DRAFT и END маркерами
-3. strip(), проверить непустоту
+1. Check for the `<<<CADENCE:PLAN_DRAFT>>>` substring
+2. Regex-extract the content between the PLAN_DRAFT and END markers
+3. strip(), check non-empty
 
 ### Draft review handling
 
 `handle_plan_draft(output) -> DraftReviewResult`:
 1. parse_plan_draft_payload(output)
-2. Если нет draft: return DraftReviewResult(handled=False)
+2. If no draft: return DraftReviewResult(handled=False)
 3. input_collector.ask_draft_review("Review the plan draft", plan_content)
 4. log_draft_review(action, feedback)
 5. Match action:
@@ -503,38 +502,38 @@ is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
    - "revise": return DraftReviewResult(handled=True, feedback=feedback)
    - "reject": return DraftReviewResult(handled=True, error=UserRejectedPlanError)
 
-## Вспомогательные функции
+## Helper functions
 
 ### Plan file resolution
 
 `resolve_plan_file_path()`:
-1. Если plan_file пуст: return ""
-2. Проверить Path(plan_file).exists():
+1. If plan_file is empty: return ""
+2. Check Path(plan_file).exists():
    - exists: return plan_file
    - permission error: return plan_file
-3. Проверить sibling-файл с суффиксом `-completed` (например, `plan.md` -> `plan-completed.md`, `preprompt` -> `preprompt-completed`)
-4. Fallback: return original plan_file
+3. Check the sibling file with the `-completed` suffix (e.g. `plan.md` -> `plan-completed.md`, `preprompt` -> `preprompt-completed`)
+4. Fallback: return the original plan_file
 
 ### has_uncompleted_tasks()
 
-Проверяет наличие uncompleted checkboxes в Task sections плана:
+Checks for uncompleted checkboxes inside Task sections of the plan:
 1. resolve_plan_file_path()
 2. parse_plan_file()
-3. Итерация по tasks: has_uncompleted_actionable_work()
-4. Malformed plans (нет task headers): file_has_uncompleted_checkbox()
+3. Iterate over tasks: has_uncompleted_actionable_work()
+4. Malformed plans (no task headers): file_has_uncompleted_checkbox()
 
-Игнорирует checkboxes в Success criteria, Overview, Context -- для корректного ALL_TASKS_DONE.
+Ignores checkboxes in Success criteria, Overview, and Context — for a correct ALL_TASKS_DONE.
 
 ### next_plan_task_position()
 
-Возвращает 1-indexed позицию первого uncompleted task:
+Returns the 1-indexed position of the first uncompleted task:
 1. parse_plan_file()
-2. Итерация по tasks: has_uncompleted_actionable_work()
-3. Return i + 1 (1-indexed) или 0 если нет
+2. Iterate over tasks: has_uncompleted_actionable_work()
+3. Return i + 1 (1-indexed) or 0 if none
 
 ### sleep_with_cancel(duration)
 
-Cancelable sleep через threading.Event.wait(timeout) или аналог.
+Cancelable sleep via threading.Event.wait(timeout) or equivalent.
 
 ## Sentinel errors
 
@@ -548,34 +547,34 @@ class UserRejectedPlanError(Exception):
     pass
 ```
 
-## Соображения для Python-порта
+## Python port considerations
 
 ### Concurrency model
 
-Python 3.14+, sync + threading (не asyncio). Для отмены и timeout:
-- `threading.Event` как замена break channel (Go `chan struct{}`)
-- `threading.Timer` для session timeout и idle timeout
-- Cancellation через kill процесса (subprocess.Popen.terminate/kill)
+Python 3.14+, sync + threading (not asyncio). For cancellation and timeouts:
+- `threading.Event` as a replacement for a break channel (Go `chan struct{}`)
+- `threading.Timer` for session timeout and idle timeout
+- Cancellation by killing the process (subprocess.Popen.terminate/kill)
 
 ### Executor interface
 
-Simple interface: `run(prompt) -> Result`. В Python:
+Simple interface: `run(prompt) -> Result`. In Python:
 - Protocol class
-- `def run(self, prompt: str) -> Result` (синхронный)
-- Cancellation через process.terminate() / process.kill()
+- `def run(self, prompt: str) -> Result` (synchronous)
+- Cancellation via process.terminate() / process.kill()
 
 ### Signal detection
 
-Строковый поиск подстрок в output. В Python: тривиальная реализация через `str.find()` / `re.search()`.
+Substring search in the output. In Python: trivial via `str.find()` / `re.search()`.
 
 ### Timer management
 
-`threading.Timer` с cancel/restart для idle timeout. На каждой строке вывода: timer.cancel() + создание нового timer.
+`threading.Timer` with cancel/restart for idle timeout. On every output line: timer.cancel() + create a new timer.
 
 ### Template system
 
-Simple string replacement `str.replace()`. Agent expansion regex: `re.sub()` с callback function.
+Simple string replacement with `str.replace()`. Agent expansion regex: `re.sub()` with a callback function.
 
 ### Plan parsing dependency
 
-Runner вызывает `parse_plan_file()` для has_uncompleted_tasks() и next_plan_task_position(). Эти вызовы происходят синхронно в loop, файл перечитывается каждую итерацию.
+Runner calls `parse_plan_file()` for has_uncompleted_tasks() and next_plan_task_position(). These calls happen synchronously in the loop; the file is reread on every iteration.

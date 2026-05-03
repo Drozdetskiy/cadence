@@ -265,7 +265,6 @@ class ClaudeExecutor:
 
                 event = parse_event(raw)
                 if event is None:
-                    output_parts.append(line + "\n")
                     continue
 
                 last_output_text = self._handle_event(event, output_parts, result, last_output_text)

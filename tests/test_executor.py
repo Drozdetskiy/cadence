@@ -24,6 +24,7 @@ from cadence.executor.claude_executor import (
 )
 from cadence.executor.events import parse_event
 from cadence.executor.process_group import ProcessGroupCleanup
+from cadence.processor.signals import parse_question_payload
 from cadence.status import (
     SignalCompleted,
     SignalFailed,
@@ -273,7 +274,7 @@ class TestClaudeExecutorWithMockRunner:
         result = executor.run("prompt")
         assert result.error is None
 
-    def test_pattern_in_unrecognized_json_event_not_matched(self) -> None:
+    def test_unrecognized_json_event_dropped_from_output(self) -> None:
         lines = [
             json.dumps(
                 {
@@ -304,9 +305,10 @@ class TestClaudeExecutorWithMockRunner:
         result = executor.run("prompt")
         assert result.error is None
         assert result.signal == SignalCompleted
-        assert "You've hit your limit" in result.output
+        assert "You've hit your limit" not in result.output
+        assert result.output == "done <<<CADENCE:ALL_TASKS_DONE>>>"
 
-    def test_pattern_in_unrecognized_json_event_no_signal_not_matched(self) -> None:
+    def test_unrecognized_json_event_dropped_when_no_signal(self) -> None:
         lines = [
             json.dumps(
                 {
@@ -331,7 +333,41 @@ class TestClaudeExecutorWithMockRunner:
         result = executor.run("prompt")
         assert result.error is None
         assert result.signal == ""
-        assert "You've hit your limit" in result.output
+        assert result.output == ""
+
+    def test_question_signal_in_tool_result_does_not_pollute_output(self) -> None:
+        tool_result_with_marker = (
+            "README.md mentions <<<CADENCE:QUESTION>>> as documentation,"
+            " followed by example payload <<<CADENCE:END>>>."
+        )
+        real_question = (
+            "<<<CADENCE:QUESTION>>>\n"
+            '{"question": "real?", "options": ["a", "b"]}\n'
+            "<<<CADENCE:END>>>"
+        )
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [{"type": "tool_result", "content": tool_result_with_marker}]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": real_question}]},
+                }
+            ),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(cmd_runner=runner)
+        result = executor.run("prompt")
+        payload = parse_question_payload(result.output)
+        assert payload is not None
+        assert payload.question == "real?"
+        assert payload.options == ["a", "b"]
 
     def test_pattern_in_non_json_line_still_matches(self) -> None:
         lines = ["You've hit your limit"]
