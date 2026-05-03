@@ -1,136 +1,136 @@
 # Executor Layer
 
-Справочный документ по слою исполнителей для планирования Python-порта.
+Reference document for the executor layer.
 
-## Обзор
+## Overview
 
-Модуль executor предоставляет единственный исполнитель -- ClaudeExecutor -- для запуска Claude CLI. Executor инкапсулирует запуск процесса, потоковый парсинг вывода, обнаружение сигналов и паттернов ошибок. Executor не знает об оркестрации -- он получает prompt и возвращает Result.
+The executor module provides a single executor -- ClaudeExecutor -- for running the Claude CLI. The executor encapsulates process launching, streaming output parsing, signal detection, and error pattern matching. The executor knows nothing about orchestration -- it receives a prompt and returns a Result.
 
-Ключевые модули:
-- `executor/claude_executor.py` -- CommandRunner protocol, ClaudeExecutor, парсинг JSON stream, detect_signal(), match_pattern(), типы ошибок
-- `executor/line_reader.py` -- чтение строк из process.stdout с cancellation
-- `executor/process_group.py` -- управление process group: start_new_session, SIGTERM/SIGKILL
+Key modules:
+- `executor/claude_executor.py` -- CommandRunner protocol, ClaudeExecutor, JSON stream parsing, detect_signal(), match_pattern(), error types
+- `executor/events.py` -- typed Claude stream event dataclasses (AssistantEvent, ContentBlockDeltaEvent, ResultEvent) and parse_event()
+- `executor/process_group.py` -- process group management: start_new_session, SIGTERM/SIGKILL
 
 ## Result dataclass
 
-Единый тип результата:
+A single result type:
 
 ```python
 @dataclass
 class Result:
-    output: str = ""          # весь накопленный текстовый вывод
-    recent_text: str = ""     # последние 10 текстовых блоков, используется для pattern matching
-    signal: str = ""          # обнаруженный сигнал (COMPLETED, FAILED, и т.д.) или пустая строка
-    error: Exception | None = None  # ошибка исполнения, если была
-    idle_timed_out: bool = False    # True когда сработал idle timeout (процесс убит, но не по запросу пользователя)
+    output: str = ""          # full accumulated text output
+    recent_text: str = ""     # last 10 text blocks, used for pattern matching
+    signal: str = ""          # detected signal (COMPLETED, FAILED, etc.) or empty string
+    error: Exception | None = None  # execution error, if any
+    idle_timed_out: bool = False    # True when idle timeout fired (process killed, but not by user request)
 ```
 
-### Поле recent_text
+### The recent_text field
 
-Последние `RECENT_BLOCK_COUNT` (10) текстовых блоков, объединённых в хронологическом порядке. Используется для pattern matching вместо полного вывода -- это предотвращает false positive, когда Claude в начале сессии анализирует текст, содержащий фразы вроде "rate limit".
+The last `RECENT_BLOCK_COUNT` (10) text blocks, joined in chronological order. Used for pattern matching instead of the full output -- this prevents false positives when Claude analyzes text containing phrases like "rate limit" at the start of a session.
 
-Реализация: кольцевой буфер (collections.deque(maxlen=10)). При сборке recent_text элементы объединяются в хронологическом порядке.
+Implementation: a ring buffer (collections.deque(maxlen=10)). When assembling recent_text, the elements are joined in chronological order.
 
-## Типы ошибок
+## Error types
 
 ### PatternMatchError
 
-Возвращается когда в выводе обнаружен настроенный error pattern:
+Returned when a configured error pattern is detected in the output:
 
 ```python
 class PatternMatchError(Exception):
     def __init__(self, pattern: str, help_cmd: str):
-        self.pattern = pattern    # паттерн, который сработал
-        self.help_cmd = help_cmd  # команда для справки (e.g., "claude /usage")
+        self.pattern = pattern    # the pattern that matched
+        self.help_cmd = help_cmd  # help command (e.g., "claude /usage")
 ```
 
 ### LimitPatternError
 
-Возвращается когда обнаружен паттерн rate limit. Если настроен `wait_on_limit`, вызывающий код (processor) ретраит вместо выхода:
+Returned when a rate limit pattern is detected. If `wait_on_limit` is configured, the calling code (processor) retries instead of exiting:
 
 ```python
 class LimitPatternError(Exception):
     def __init__(self, pattern: str, help_cmd: str):
-        self.pattern = pattern    # паттерн, который сработал
-        self.help_cmd = help_cmd  # команда для справки
+        self.pattern = pattern    # the pattern that matched
+        self.help_cmd = help_cmd  # help command
 ```
 
-### Приоритет проверки паттернов
+### Pattern check priority
 
-1. Сначала проверяются limit patterns
-2. Если limit pattern найден -- возвращается `LimitPatternError`
-3. Затем проверяются error patterns
-4. Если error pattern найден -- возвращается `PatternMatchError`
+1. Limit patterns are checked first
+2. If a limit pattern is found -- `LimitPatternError` is returned
+3. Then error patterns are checked
+4. If an error pattern is found -- `PatternMatchError` is returned
 
-Функция `match_pattern(output, patterns)` -- case-insensitive substring search. Пустые паттерны и пробельные строки пропускаются.
+The function `match_pattern(output, patterns)` is a case-insensitive substring search. Empty patterns and whitespace-only strings are skipped.
 
 ## ClaudeExecutor
 
-Единственный executor для всех фаз (task, review first, review second, plan creation).
+The single executor for all phases (task, review first, review second, plan creation).
 
-### Поля класса
+### Class fields
 
 ```python
 class ClaudeExecutor:
-    command: str                        # команда для запуска, по умолчанию "claude"
-    args: str                           # дополнительные аргументы (строка через пробел), по умолчанию стандартные
-    model: str                          # override модели ("opus", "sonnet", "haiku"); пустая = default CLI
-    output_handler: Callable[[str], None] | None  # callback для каждого текстового чанка
-    debug: bool                         # включить debug вывод
-    error_patterns: list[str]           # паттерны ошибок
-    limit_patterns: list[str]           # паттерны rate limit (проверяются перед error patterns)
-    idle_timeout: float                 # убить сессию после молчания (сек), 0 = отключено
-    cmd_runner: CommandRunner | None    # для тестирования, None = реальный runner
+    command: str                        # command to run, defaults to "claude"
+    args: str                           # additional arguments (space-separated string), defaults to standard
+    model: str                          # model override ("opus", "sonnet", "haiku"); empty = CLI default
+    output_handler: Callable[[str], None] | None  # callback for each text chunk
+    debug: bool                         # enable debug output
+    error_patterns: list[str]           # error patterns
+    limit_patterns: list[str]           # rate limit patterns (checked before error patterns)
+    idle_timeout: float                 # kill session after silence (seconds), 0 = disabled
+    cmd_runner: CommandRunner | None    # for testing, None = real runner
 ```
 
-### Построение команды
+### Command construction
 
-1. Если `command` пуст, используется `"claude"`
-2. Если `args` не пуст, парсится через `split_args()` (поддержка кавычек и escape) или `shlex.split()`
-3. Если `args` пуст, используются дефолтные флаги:
+1. If `command` is empty, `"claude"` is used
+2. If `args` is non-empty, it is parsed via `split_args()` (with quote and escape support) or `shlex.split()`
+3. If `args` is empty, the default flags are used:
    - `--dangerously-skip-permissions`
    - `--verbose`
-4. Если `model` не пуст, добавляются `--model <value>`
-5. Всегда добавляются `--output-format stream-json --print` в конец (stream-json формат и non-interactive mode)
-6. Prompt передаётся через stdin (не через `-p` аргумент) -- обходит лимит Windows 8191 символов
+4. If `model` is non-empty, `--model <value>` is appended
+5. `--output-format stream-json --print` is always appended at the end (stream-json format and non-interactive mode)
+6. The prompt is passed via stdin (not via the `-p` argument) -- this works around the Windows 8191-character limit
 
 ### split_args()
 
-Парсер строки аргументов в список. Поддерживает:
-- Одинарные и двойные кавычки (не включаются в результат)
-- Escape через backslash
-- Пробелы внутри кавычек сохраняются
+Parses an argument string into a list. Supports:
+- Single and double quotes (not included in the result)
+- Backslash escapes
+- Spaces inside quotes are preserved
 
-Альтернатива: `shlex.split()` из стандартной библиотеки Python.
+Alternative: `shlex.split()` from the Python standard library.
 
-### Фильтрация окружения
+### Environment filtering
 
-`filter_env()` удаляет из `os.environ`:
-- `ANTHROPIC_API_KEY` -- claude использует другую аутентификацию
-- `CLAUDECODE` -- предотвращает ошибки вложенных сессий
+`filter_env()` removes from `os.environ`:
+- `ANTHROPIC_API_KEY` -- claude uses a different authentication mechanism
+- `CLAUDECODE` -- prevents nested-session errors
 
 ### Idle Timeout
 
-Механизм обнаружения зависших сессий:
+A mechanism for detecting hung sessions:
 
-1. Если `idle_timeout > 0`, создаётся `threading.Timer(idle_timeout, kill_process)`
-2. На каждой строке вывода: timer.cancel() + создание нового timer (reset)
-3. Если timer срабатывает -- процесс убивается через process.terminate()
+1. If `idle_timeout > 0`, a `threading.Timer(idle_timeout, kill_process)` is created
+2. On every output line: timer.cancel() + a new timer is created (reset)
+3. If the timer fires -- the process is killed via process.terminate()
 
-При срабатывании idle timeout:
-- Процесс убит, но это не по запросу пользователя
-- Перед возвратом проверяются limit/error patterns (idle может сработать после rate limit сообщения)
-- Устанавливается `result.idle_timed_out = True`
-- `result.error` очищается (не ошибка, а нормальное завершение idle сессии)
+When the idle timeout fires:
+- The process is killed, but not at the user's request
+- Before returning, limit/error patterns are checked (idle may fire after a rate limit message)
+- `result.idle_timed_out = True` is set
+- `result.error` is cleared (this is not an error, it is a normal end of an idle session)
 
-### Парсинг JSON Stream
+### JSON Stream parsing
 
-Метод `parse_stream(idle_touch)` читает вывод claude построчно из `process.stdout`. Каждая строка парсится как JSON dict:
+The method `parse_stream(idle_touch)` reads claude's output line-by-line from `process.stdout`. Each line is parsed as a JSON dict:
 
 ```python
-# Структура stream event (JSON):
+# Stream event structure (JSON):
 {
-    "type": str,                    # тип события
+    "type": str,                    # event type
     "message": {
         "content": [
             {"type": str, "text": str}
@@ -144,51 +144,51 @@ class ClaudeExecutor:
         "type": str,
         "text": str
     },
-    "result": str | dict            # может быть string или {"output": "..."}
+    "result": str | dict            # may be a string or {"output": "..."}
 }
 ```
 
-### Извлечение текста из событий (extract_text)
+### Extracting text from events (extract_text)
 
-| Тип события | Логика извлечения |
+| Event type | Extraction logic |
 |---|---|
-| `"assistant"` | Все элементы `message["content"]` с `type == "text"` -- объединяются в строку |
-| `"content_block_delta"` | Если `delta["type"] == "text_delta"` -- возвращается `delta["text"]` |
-| `"message_stop"` | Первый элемент `message["content"]` с `type == "text"` |
-| `"result"` | Пробуется как string (session summary -- пропускается, контент уже стримился). Затем как `{"output": "..."}` -- возвращается output |
+| `"assistant"` | All elements of `message["content"]` with `type == "text"` -- joined into a string |
+| `"content_block_delta"` | If `delta["type"] == "text_delta"` -- returns `delta["text"]` |
+| `"message_stop"` | The first element of `message["content"]` with `type == "text"` |
+| `"result"` | Tried as a string (session summary -- skipped, content was already streamed). Then as `{"output": "..."}` -- returns output |
 
-Не-JSON строки записываются как есть в output и recent blocks (с debug-логом, если включён).
+Non-JSON lines are written as-is to output and recent blocks (with a debug log if enabled).
 
-### Обнаружение сигналов (detect_signal)
+### Signal detection (detect_signal)
 
-Функция `detect_signal(text)` ищет в тексте известные сигналы через `in`:
+The function `detect_signal(text)` searches the text for known signals via `in`:
 - `<<<CADENCE:ALL_TASKS_DONE>>>` (Completed)
 - `<<<CADENCE:TASK_FAILED>>>` (Failed)
 - `<<<CADENCE:REVIEW_DONE>>>` (ReviewDone)
 - `<<<CADENCE:PLAN_READY>>>` (PlanReady)
+- `<<<CADENCE:QUESTION>>>` (Question)
+- `<<<CADENCE:PLAN_DRAFT>>>` (PlanDraft)
 
-Примечание: `Question` и `PlanDraft` не проверяются в `detect_signal` -- они обрабатываются в processor'е через отдельные signal helpers.
+The most recent detected signal overwrites the previous one (no accumulation).
 
-Последний обнаруженный сигнал перезаписывает предыдущий (нет аккумуляции).
+### Error handling on exit
 
-### Обработка ошибок при выходе
+Logic after `process.wait()`:
+1. Idle timeout path: if the process was killed by idle timeout -- check patterns, return idle_timed_out=True
+2. If `process.returncode != 0`:
+   - If the process was killed by the user (cancelled) -- return cancellation error (bypasses pattern checks)
+   - If output is empty -- return the error directly ("claude exited with error")
+   - If output is non-empty and signal is empty -- claude did no useful work, return an error
+   - If output is non-empty and signal is non-empty -- work was done, ignore the exit code
+3. Check limit patterns (priority)
+4. Check error patterns
+5. Return the result
 
-Логика после `process.wait()`:
-1. Idle timeout path: если процесс убит по idle timeout -- проверить patterns, вернуть idle_timed_out=True
-2. Если `process.returncode != 0`:
-   - Если процесс был убит пользователем (cancelled) -- вернуть cancellation error (обходит pattern checks)
-   - Если output пуст -- вернуть ошибку напрямую ("claude exited with error")
-   - Если output не пуст и signal пуст -- claude не сделал полезной работы, вернуть ошибку
-   - Если output не пуст и signal не пуст -- работа сделана, игнорировать exit code
-3. Проверить limit patterns (приоритет)
-4. Проверить error patterns
-5. Вернуть результат
-
-Важный нюанс: cancellation paths обходят pattern checks. Это предотвращает ситуацию, когда cancellation маскируется как pattern match.
+Important nuance: cancellation paths bypass pattern checks. This prevents a situation where cancellation is masked as a pattern match.
 
 ## CommandRunner protocol
 
-Интерфейс для абстракции запуска процессов (используется для тестирования):
+An interface for abstracting process launching (used for testing):
 
 ```python
 class CommandRunner(Protocol):
@@ -201,11 +201,11 @@ class CommandRunner(Protocol):
         ...
 ```
 
-Реальная реализация использует `subprocess.Popen` с `start_new_session=True`.
+The real implementation uses `subprocess.Popen` with `start_new_session=True`.
 
-## Чтение строк из process.stdout
+## Reading lines from process.stdout
 
-В Python эквивалент Go `readLines()` -- итерация по `process.stdout`:
+The Python equivalent of Go's `readLines()` is iteration over `process.stdout`:
 
 ```python
 for line in process.stdout:
@@ -213,20 +213,20 @@ for line in process.stdout:
     handler(line)
 ```
 
-Особенности:
+Details:
 - `subprocess.Popen(stdout=PIPE, stderr=STDOUT, text=True)` -- stdout + stderr merged, text mode
-- Итерация по `process.stdout` блокируется до получения строки или EOF
-- Cancellation: idle timeout убивает процесс через process.terminate(), что закрывает pipe и прерывает итерацию
-- `line.rstrip()` для удаления trailing newlines
-- EOF завершает итерацию естественно
+- Iteration over `process.stdout` blocks until a line is received or EOF
+- Cancellation: idle timeout kills the process via process.terminate(), which closes the pipe and breaks the iteration
+- `line.rstrip()` to strip trailing newlines
+- EOF ends iteration naturally
 
-## Управление процессами
+## Process management
 
 ### Unix
 
-Полное управление process group через subprocess.Popen:
+Full process group management via subprocess.Popen:
 
-**Запуск процесса:**
+**Process startup:**
 ```python
 process = subprocess.Popen(
     cmd,
@@ -234,50 +234,50 @@ process = subprocess.Popen(
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
     text=True,
-    start_new_session=True,  # эквивалент Go Setsid: true
+    start_new_session=True,  # equivalent of Go Setsid: true
     env=filtered_env,
 )
 ```
 
-`start_new_session=True` -- создаёт новую сессию, отделяя child от controlling terminal родителя. Предотвращает SIGTTIN/SIGTTOU сигналы от потомков. Child становится session leader своей process group.
+`start_new_session=True` creates a new session, detaching the child from the parent's controlling terminal. Prevents SIGTTIN/SIGTTOU signals from descendants. The child becomes the session leader of its process group.
 
 **ProcessGroupCleanup class:**
-- `process: subprocess.Popen` -- процесс
-- `_killed: bool` -- защита от повторного kill
+- `process: subprocess.Popen` -- the process
+- `_killed: bool` -- guard against repeated kills
 
 **Lifecycle:**
-1. Создание: ProcessGroupCleanup(process)
+1. Construction: ProcessGroupCleanup(process)
 2. `kill_process_group()`:
-   - `os.killpg(process.pid, signal.SIGTERM)` -- отправка всей process group
-   - Если ProcessLookupError (group уже не существует) -- early return
+   - `os.killpg(process.pid, signal.SIGTERM)` -- sends to the entire process group
+   - If ProcessLookupError (group no longer exists) -- early return
    - `time.sleep(0.1)` -- graceful shutdown delay
    - `os.killpg(process.pid, signal.SIGKILL)` -- force kill
 3. `wait() -> int`:
    - `process.wait()`
-   - `kill_process_group()` -- убивает orphaned descendants (node subagents, MCP servers)
+   - `kill_process_group()` -- kills orphaned descendants (node subagents, MCP servers)
    - return process.returncode
 
 ### Windows
 
-Упрощённая версия:
+A simplified version:
 
-- `start_new_session` не поддерживается так же как на Unix
-- `process.terminate()` -- только прямой процесс (не child processes)
-- Нет post-exit orphan cleanup (потребовались бы Job Objects)
-- Нет graceful shutdown (SIGTERM не поддерживается)
+- `start_new_session` is not supported in the same way as on Unix
+- `process.terminate()` -- targets only the direct process (not child processes)
+- No post-exit orphan cleanup (would require Job Objects)
+- No graceful shutdown (SIGTERM is not supported)
 
-Примечание: SIGQUIT (Ctrl+\) break-механизм не поддерживается на Windows.
+Note: the SIGQUIT (Ctrl+\) break mechanism is not supported on Windows.
 
-## Соображения для Python-порта
+## Python port considerations
 
-### Парсинг JSON stream
-`for line in process.stdout:` + `json.loads(line)`. Построчное чтение блокируется до получения строки. Cancellation через kill процесса (pipe закрывается, итерация завершается).
+### JSON stream parsing
+`for line in process.stdout:` + `json.loads(line)`. Line-by-line reading blocks until a line is received. Cancellation via process kill (pipe closes, iteration ends).
 
 ### Process group management
-`subprocess.Popen(start_new_session=True)` + `os.killpg(process.pid, signal.SIGTERM)` -- прямой эквивалент Go Setsid + syscall.Kill(-pid). На Windows -- `CREATE_NEW_PROCESS_GROUP` или Job Objects.
+`subprocess.Popen(start_new_session=True)` + `os.killpg(process.pid, signal.SIGTERM)` -- a direct equivalent of Go Setsid + syscall.Kill(-pid). On Windows -- `CREATE_NEW_PROCESS_GROUP` or Job Objects.
 
 ### Idle timeout
-`threading.Timer` с cancel/restart на каждой строке. При срабатывании -- process.terminate() + os.killpg(). Timer создаётся заново после каждого cancel (threading.Timer не поддерживает reset).
+`threading.Timer` with cancel/restart on each line. When it fires -- process.terminate() + os.killpg(). The timer is recreated after each cancel (threading.Timer does not support reset).
 
 ### Pattern matching
-`match_pattern()` -- тривиальная функция. Case-insensitive substring через `pattern.lower() in text.lower()`.
+`match_pattern()` is a trivial function. Case-insensitive substring via `pattern.lower() in text.lower()`.
