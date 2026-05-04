@@ -94,8 +94,9 @@ Author as the user — no `Co-Authored-By` trailer.
 
 The package is published as `cadence-runner` on PyPI; the Homebrew formula lives in [Drozdetskiy/homebrew-cadence](https://github.com/Drozdetskiy/homebrew-cadence) and exposes the CLI as `cadence`.
 
-1. **Bump version** in `src/cadence/__init__.py` on a `<NNNN>-<slug>` branch; merge to `main` via PR.
-2. **Build and publish to PyPI**:
+1. **Add a CHANGELOG.md entry** for the new version using the existing format (`## vX.Y.Z - YYYY-MM-DD`, then sections like New Features / Fixes / Other). Focus on user-visible changes since the previous tag — new flags, behavior changes, fixes — not internal refactors.
+2. **Bump version** in `src/cadence/__init__.py` on a `<NNNN>-<slug>` branch (same branch as the changelog entry); merge to `main` via PR.
+3. **Build and publish to PyPI**:
    ```bash
    rm -rf dist/ && pdm build
    python3 - <<'PY'
@@ -106,12 +107,12 @@ The package is published as `cadence-runner` on PyPI; the Homebrew formula lives
    PY
    ```
    `--no-build` ensures the artifact whose `sha256` you'll paste into the formula is byte-identical to what PyPI serves.
-3. **Tag and create a GitHub Release**:
+4. **Tag and create a GitHub Release**:
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   Then write release notes at https://github.com/Drozdetskiy/cadence/releases/new (focus on user-visible changes — new flags, behavior changes, fixes — not the release mechanics).
-4. **Update the Homebrew formula** in `homebrew-cadence/Formula/cadence.rb`:
+   Then write release notes at https://github.com/Drozdetskiy/cadence/releases/new (the CHANGELOG.md entry is a good starting point; focus on user-visible changes).
+5. **Update the Homebrew formula** in `homebrew-cadence/Formula/cadence.rb`:
    - Replace `url` and `sha256` with the new sdist values from `https://pypi.org/pypi/cadence-runner/X.Y.Z/json` (look for the entry where `packagetype == "sdist"`).
    - **Only if `pyproject.toml` dependencies changed**, regenerate the `resource` blocks. `brew update-python-resources` cannot see packages newer than its internal PyPI snapshot, so resolve manually:
      ```bash
@@ -120,6 +121,6 @@ The package is published as `cadence-runner` on PyPI; the Homebrew formula lives
      Then for each resolved dependency fetch the sdist URL/sha256 from `https://pypi.org/pypi/<name>/<version>/json` and write the `resource "<name>" do … end` block.
    - Verify locally: `brew audit --strict drozdetskiy/cadence/cadence && brew install --build-from-source drozdetskiy/cadence/cadence && brew test drozdetskiy/cadence/cadence`.
    - Commit, push.
-5. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install cadence && cadence --version`.
+6. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install cadence && cadence --version`.
 
 PyPI versions are immutable (no re-uploads under the same `X.Y.Z`); if anything goes wrong after step 2, bump the patch version and start again.
