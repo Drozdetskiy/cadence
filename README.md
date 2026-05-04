@@ -15,6 +15,7 @@ Inspired by the [ralphex](https://ralphex.com/) project.
 | **plan** | `cadence --plan <file>` | Interactive Q&A with Claude, draft review (accept / revise / reject), final plan written to `<file>-plan.md` |
 | **task** | `cadence --task <plan>` | Branch created from plan filename, one `### Task N:` section per iteration, each completed and committed |
 | **review** | implicit after `--task`, or `cadence --review` | First pass launches 4 parallel agents (quality, implementation, testing, simplification); subsequent passes loop on critical/major findings until no commits are produced |
+| **run** | `cadence --run` | Infers the task directory from the current branch and dispatches to plan creation, plan execution (with `--impl`), or a "already completed" notice — no path argument needed |
 
 Phases communicate with the runner via signal markers (e.g. `<<<CADENCE:PLAN_READY>>>`, `<<<CADENCE:ALL_TASKS_DONE>>>`, `<<<CADENCE:REVIEW_DONE>>>`, `<<<CADENCE:QUESTION>>>`, `<<<CADENCE:TASK_FAILED>>>`).
 
@@ -65,7 +66,11 @@ cadence --plan cdc-tasks/0001-my-feature/init --impl
 # 4. Execute an existing plan: branch + tasks + review
 cadence --task cdc-tasks/0001-my-feature/plan
 
-# 5. Review the current branch only (no plan, no branch creation)
+# 5. Run the next step for the current branch (auto-detects init/plan/plan-completed)
+cadence --run             # creates a plan if only init exists, prints next step otherwise
+cadence --run --impl      # chains init → plan → task end-to-end on the current branch
+
+# 6. Review the current branch only (no plan, no branch creation)
 cadence --review
 cadence --review --base develop                                 # override base branch
 cadence --review --config cdc-tasks/0001-my-feature/config.yaml # per-run overrides
@@ -75,8 +80,9 @@ cadence --version
 ```
 
 Flag rules:
-- `--plan`, `--task`, `--review`, `--task-init` are mutually exclusive.
-- `--impl` requires `--plan` (and is incompatible with `--review` and `--task-init`).
+- `--plan`, `--task`, `--review`, `--task-init`, `--run` are mutually exclusive.
+- `--impl` requires `--plan` or `--run` (and is incompatible with `--review` and `--task-init`).
+- `--run` accepts `--impl` and `--config` but not `--base`.
 - `--base` is only valid with `--review`. Resolution priority: `--base` > `default_branch` in config (defaults to `main`).
 
 ### Plan file format

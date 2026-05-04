@@ -89,11 +89,12 @@ def _validate_flags(
     impl: bool,
     base: str | None,
     task_init: str | None = None,
+    run: bool = False,
 ) -> None:
     if task_init is not None:
-        if plan is not None or task is not None or review:
+        if plan is not None or task is not None or review or run:
             typer.echo(
-                "error: --task-init is mutually exclusive with --plan, --task, and --review",
+                "error: --task-init is mutually exclusive with --plan, --task, --review, and --run",
                 err=True,
             )
             raise SystemExit(1)
@@ -102,6 +103,17 @@ def _validate_flags(
             raise SystemExit(1)
         if base is not None:
             typer.echo("error: --task-init is incompatible with --base", err=True)
+            raise SystemExit(1)
+        return
+    if run:
+        if plan is not None or task is not None or review:
+            typer.echo(
+                "error: --run is mutually exclusive with --plan, --task, and --review",
+                err=True,
+            )
+            raise SystemExit(1)
+        if base is not None:
+            typer.echo("error: --run is incompatible with --base", err=True)
             raise SystemExit(1)
         return
     if review and impl:
@@ -122,7 +134,7 @@ def _validate_flags(
         raise SystemExit(1)
     if active == 0:
         typer.echo(
-            "error: one of --plan, --task, --review, or --task-init is required",
+            "error: one of --plan, --task, --review, --run, or --task-init is required",
             err=True,
         )
         raise SystemExit(1)
@@ -661,6 +673,53 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     typer.echo(f"next: cadence --plan {init_file}")
 
 
+def run_run_mode(*, impl: bool = False, config: Path | None = None) -> None:
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, anchor=None)
+
+    try:
+        git_svc = Service(path=".", log=_StderrLogger())
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    branch = git_svc.current_branch()
+    if not branch:
+        typer.echo("error: cannot --run from a detached HEAD", err=True)
+        raise SystemExit(1)
+
+    task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
+    if not task_dir.is_dir():
+        typer.echo(f"error: task directory not found: {task_dir}", err=True)
+        raise SystemExit(1)
+
+    completed = task_dir / "plan-completed"
+    if completed.is_file():
+        typer.echo(f"plan already completed: {to_rel_path(completed)}")
+        return
+
+    plan_file = task_dir / "plan"
+    if plan_file.is_file():
+        if impl:
+            run_task_mode(plan_file, config=config)
+            return
+        typer.echo(f"plan ready: {to_rel_path(plan_file)}")
+        typer.echo(f"run: cadence --task {to_rel_path(plan_file)}")
+        return
+
+    init_file = task_dir / cfg.init_prompt_name
+    if not init_file.is_file():
+        typer.echo(f"error: init file not found: {init_file}", err=True)
+        raise SystemExit(1)
+
+    if not init_file.read_text(encoding="utf-8").strip():
+        typer.echo(f"error: init file is empty: {init_file}", err=True)
+        raise SystemExit(1)
+
+    run_plan_mode(init_file, impl=impl, config=config)
+
+
 class _StderrLogger:
     def print(self, fmt: str, *args: object) -> None:
         msg = fmt % args if args else fmt
@@ -694,6 +753,11 @@ _TASK_INIT_OPT: str | None = typer.Option(
     "--task-init",
     help="Scaffold a new task: branch + tasks_root/<name>/init [+ config.yaml]",
 )
+_RUN_OPT: bool = typer.Option(
+    False,
+    "--run",
+    help="Run the task for the current branch (auto-detect init/plan)",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -706,13 +770,14 @@ def main(
     base: str | None = _BASE_OPT,
     config: Path | None = _CONFIG_OPT,
     task_init: str | None = _TASK_INIT_OPT,
+    run: bool = _RUN_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
         typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
-    _validate_flags(plan, task, review, impl, base, task_init)
+    _validate_flags(plan, task, review, impl, base, task_init, run=run)
 
     if task_init is not None:
         run_task_init_mode(task_init, config=config)
@@ -720,6 +785,10 @@ def main(
 
     _sigint.reset()
     _sigint.install()
+
+    if run:
+        run_run_mode(impl=impl, config=config)
+        return
 
     mode = determine_mode(plan, task, review)
 
