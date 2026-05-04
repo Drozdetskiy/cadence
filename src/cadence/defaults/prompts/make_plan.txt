@@ -64,6 +64,12 @@ When you have enough information to create a plan, write it directly to disk:
 - Related patterns: <existing patterns to follow>
 - Dependencies: <external dependencies if any>
 
+## Accepted Trade-offs
+- <decision> — <one-line rationale>
+
+## Out of Scope
+- <item not addressed by this branch> — <one-line reason>
+
 ## Development Approach
 - **Testing approach**: Regular (code first, then tests) or TDD (test first)
 - Complete each task fully before moving to the next
@@ -96,6 +102,22 @@ When you have enough information to create a plan, write it directly to disk:
 - [ ] verify test coverage meets 80%+
 ---
 
+3. Filling in `## Accepted Trade-offs` and `## Out of Scope`:
+   - Accepted Trade-offs lists design choices you have consciously locked in
+     for this branch — architecture decisions, naming, dependency choices,
+     deferred sub-features. One bullet per item, each with a short rationale
+     (the "why"). The reviewing agents read this section and will NOT report
+     findings whose substance just restates one of these decisions (with the
+     protected-category exceptions listed in Step 4.5).
+   - Out of Scope lists work you are NOT doing in this branch — adjacent
+     improvements, related refactors, follow-up tasks. One bullet per item
+     with a one-line reason. The reviewing agents will NOT raise findings
+     that ask for work listed here (with the same protected-category
+     exceptions).
+   - If a section has nothing to record, it MUST still contain a single
+     bullet `- None — <one-line reason>`. Do NOT omit the section. Do NOT
+     leave it empty.
+
 ## Step 4.5: Validate Plan Before Writing
 
 Before writing the plan file in Step 4, verify the plan against these criteria:
@@ -118,6 +140,21 @@ Before writing the plan file in Step 4, verify the plan against these criteria:
 - [ ] No backwards compatibility or fallbacks unless explicitly requested
 - [ ] New files only for genuinely new components, not minor additions
 - [ ] No over-engineered patterns when simpler solutions work
+
+**Decision Surface:**
+- [ ] `## Accepted Trade-offs` section is present and non-empty (a single
+      `- None — <reason>` bullet counts as non-empty)
+- [ ] `## Out of Scope` section is present and non-empty (a single
+      `- None — <reason>` bullet counts as non-empty)
+- [ ] No accepted-trade-off entry attempts to pre-emptively waive a
+      protected category. Protected categories — which can NEVER be
+      accepted away in the plan — are: logic bugs producing wrong
+      behavior or wrong outputs, security vulnerabilities
+      (authentication/authorization gaps, injection, hardcoded secrets,
+      info disclosure), data loss or corruption paths, missing tests for
+      newly introduced error-handling paths or new failure modes,
+      failing tests, failing linter, behavior regressions vs the default
+      branch.
 
 If validation fails, fix the plan before writing.
 

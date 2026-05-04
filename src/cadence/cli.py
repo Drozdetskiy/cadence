@@ -194,6 +194,23 @@ def _apply_yaml_overrides(
     apply_yaml_overrides(cfg, overrides)
 
 
+def _is_feature_branch(branch: str, default_branch: str) -> bool:
+    return bool(branch) and branch != default_branch.removeprefix("origin/")
+
+
+def find_existing_plan(tasks_root: str, branch: str, default_branch: str) -> str:
+    if not _is_feature_branch(branch, default_branch):
+        return ""
+    base_dir = Path(tasks_root) / sanitize_plan_name(branch)
+    plan_path = base_dir / "plan"
+    if plan_path.is_file():
+        return to_rel_path(plan_path)
+    completed = base_dir / "plan-completed"
+    if completed.is_file():
+        return to_rel_path(completed)
+    return ""
+
+
 def compute_progress_path(
     mode: Mode,
     *,
@@ -216,10 +233,7 @@ def compute_progress_path(
         return os.path.join(directory, "progress-task.txt")
 
     if mode == Mode.REVIEW:
-        default = default_branch
-        if default.startswith("origin/"):
-            default = default[len("origin/") :]
-        if branch and branch != default:
+        if _is_feature_branch(branch, default_branch):
             segment = sanitize_plan_name(branch)
         elif head_hash:
             segment = head_hash[:12]
@@ -511,6 +525,7 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         default_branch = base
 
     branch = git_svc.current_branch()
+    plan_file = find_existing_plan(cfg.tasks_root, branch, default_branch)
     try:
         head_hash = git_svc.head_hash()
     except RuntimeError as exc:
@@ -528,12 +543,13 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
-    log = _build_logger(progress_path, "", "", Mode.REVIEW, branch, colors, holder)
+    log = _build_logger(progress_path, plan_file, "", Mode.REVIEW, branch, colors, holder)
 
     log.print("cadence %s", resolve_version())
     log.print("mode: review")
     log.print("branch: %s", branch)
     log.print("base: %s", default_branch)
+    log.print("plan: %s", plan_file if plan_file else "(none)")
     log.print("progress: %s", log.path)
 
     git_svc.set_log(log)
@@ -547,7 +563,7 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
 
     ctx = RunContext(
         mode=Mode.REVIEW,
-        plan_file="",
+        plan_file=plan_file,
         plan_description="",
         progress_path=log.path,
         default_branch=default_branch,
