@@ -121,6 +121,6 @@ The package is published as `cadence-runner` on PyPI; the Homebrew formula lives
      Then for each resolved dependency fetch the sdist URL/sha256 from `https://pypi.org/pypi/<name>/<version>/json` and write the `resource "<name>" do … end` block.
    - Verify locally: `brew audit --strict drozdetskiy/cadence/cadence && brew install --build-from-source drozdetskiy/cadence/cadence && brew test drozdetskiy/cadence/cadence`.
    - Commit, push.
-6. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install cadence && cadence --version`.
+6. **End-to-end check**: from a clean state — `brew untap drozdetskiy/cadence && brew tap drozdetskiy/cadence && brew install drozdetskiy/cadence/cadence && cadence --version`. Use the fully tap-qualified name (`drozdetskiy/cadence/cadence`) — `brew install cadence` would resolve to the homebrew-core formula of the same name (Flow smart-contract language).
 
 PyPI versions are immutable (no re-uploads under the same `X.Y.Z`); if anything goes wrong after step 2, bump the patch version and start again.

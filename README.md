@@ -23,8 +23,8 @@ Phases communicate with the runner via signal markers (e.g. `<<<CADENCE:PLAN_REA
 
 ```bash
 # via Homebrew (macOS)
-brew tap Drozdetskiy/cadence
-brew install cadence
+brew tap drozdetskiy/cadence
+brew install drozdetskiy/cadence/cadence  # tap-qualified name avoids the homebrew-core `cadence` (Flow smart-contract language) clash
 
 # via PyPI
 pip install cadence-runner
