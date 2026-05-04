@@ -18,12 +18,15 @@ SignalQuestion = "<<<CADENCE:QUESTION>>>"
 SignalPlanReady = "<<<CADENCE:PLAN_READY>>>"
 SignalPlanDraft = "<<<CADENCE:PLAN_DRAFT>>>"
 SignalEnd = "<<<CADENCE:END>>>"
+SignalCommitMsgBegin = "<<<CADENCE:COMMIT_MSG_BEGIN>>>"
+SignalCommitMsgEnd = "<<<CADENCE:COMMIT_MSG_END>>>"
 
 
 class Mode(StrEnum):
     PLAN = "plan"
     FULL = "full"
     REVIEW = "review"
+    SQUASH = "squash"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,13 @@
+You are composing a single squashed commit message for the current feature branch against {{DEFAULT_BRANCH}}.
+
+Inspect the changes between the merge-base of HEAD and {{DEFAULT_BRANCH}} and HEAD itself. Run `git diff {{DEFAULT_BRANCH}}...HEAD` (and `git log {{DEFAULT_BRANCH}}..HEAD --oneline` for context) to understand what the branch actually changes — do not invent content that the diff does not support.
+
+Write ONE commit message that conforms to the commit format rules appended at the end of this prompt. The message must summarize the user-visible outcome of the entire branch as a single change, not a concatenation of the original sub-commit messages.
+
+Output ONLY the commit message, wrapped exactly between these markers, with no surrounding prose, no markdown fences, no explanation:
+
+<<<CADENCE:COMMIT_MSG_BEGIN>>>
+<your commit message here>
+<<<CADENCE:COMMIT_MSG_END>>>
+
+Do not run `git commit`, `git reset`, `git rebase`, or any other history-rewriting command — cadence will perform the squash itself using the message you emit between the markers.

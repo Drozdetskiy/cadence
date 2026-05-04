@@ -10,6 +10,7 @@ from cadence.processor.prompts import (
     build_plan_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
+    build_squash_commit_prompt,
     build_task_prompt,
     expand_agent_references,
     format_agent_expansion,
@@ -46,6 +47,7 @@ class TestLoadTaskPrompt:
             "task",
             "review_first",
             "review_second",
+            "squash_commit",
         ],
     )
     def test_all_shipped_prompts_load(self, name: str) -> None:
@@ -680,6 +682,52 @@ class TestNoHardcodedCommitExamplesInDefaults:
                 commit_format=commit_format,
             )
             assert "fix: address code review findings" not in result
+
+
+class TestBuildSquashCommitPrompt:
+    def test_substitutes_default_branch(self) -> None:
+        result = build_squash_commit_prompt(default_branch="develop")
+        assert "develop" in result
+        assert "{{DEFAULT_BRANCH}}" not in result
+
+    def test_default_branch_falls_back_to_main(self) -> None:
+        result = build_squash_commit_prompt()
+        assert "main" in result
+        assert "{{DEFAULT_BRANCH}}" not in result
+
+    def test_includes_begin_end_markers(self) -> None:
+        result = build_squash_commit_prompt(default_branch="main")
+        assert "<<<CADENCE:COMMIT_MSG_BEGIN>>>" in result
+        assert "<<<CADENCE:COMMIT_MSG_END>>>" in result
+
+    def test_does_not_inject_trailer_instruction(self) -> None:
+        # The squash trailer is appended by Service.squash_commits, not the
+        # prompt — including it here would yield a duplicated trailer.
+        result = build_squash_commit_prompt(default_branch="main")
+        assert "When making git commits, add the following trailer" not in result
+
+    def test_appends_commit_format_block(self) -> None:
+        result = build_squash_commit_prompt(
+            default_branch="main",
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.count("CUSTOM_FMT_BODY") == 1
+        assert result.rstrip().endswith("CUSTOM_FMT_BODY")
+
+    def test_no_format_when_empty(self) -> None:
+        result = build_squash_commit_prompt(default_branch="main")
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_local_override(self, tmp_path: Path) -> None:
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "squash_commit.txt").write_text("Custom squash for {{DEFAULT_BRANCH}}")
+        result = build_squash_commit_prompt(
+            default_branch="develop",
+            local_dir=tmp_path,
+        )
+        assert result == "Custom squash for develop"
 
 
 class TestPlanPromptHasNoCommitFormat:

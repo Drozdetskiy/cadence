@@ -7,6 +7,7 @@ from cadence.processor.signals import (
     is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
+    parse_squash_commit_message,
 )
 from cadence.status import (
     SignalCompleted,
@@ -157,3 +158,65 @@ class TestIsAllTasksDone:
 
     def test_empty(self) -> None:
         assert is_all_tasks_done("") is False
+
+
+class TestParseSquashCommitMessage:
+    def test_valid_message(self) -> None:
+        output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "0029-foo.\n"
+            "\n"
+            "Added: thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        result = parse_squash_commit_message(output)
+        assert result is not None
+        assert result.startswith("0029-foo.")
+        assert "Added: thing." in result
+
+    def test_message_surrounded_by_prose(self) -> None:
+        output = (
+            "Sure, here is the message:\n"
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "branch-x.\n\nAdded: y.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>\n"
+            "Hope that helps."
+        )
+        result = parse_squash_commit_message(output)
+        assert result is not None
+        assert result == "branch-x.\n\nAdded: y."
+
+    def test_missing_begin_marker(self) -> None:
+        output = "branch.\n\nAdded: y.\n<<<CADENCE:COMMIT_MSG_END>>>"
+        assert parse_squash_commit_message(output) is None
+
+    def test_missing_end_marker(self) -> None:
+        output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nbranch.\n\nAdded: y."
+        assert parse_squash_commit_message(output) is None
+
+    def test_no_markers(self) -> None:
+        assert parse_squash_commit_message("just some text") is None
+
+    def test_empty_body(self) -> None:
+        output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n   \n<<<CADENCE:COMMIT_MSG_END>>>"
+        assert parse_squash_commit_message(output) is None
+
+    def test_multiline_body_preserved(self) -> None:
+        body = "subj.\n\nAdded: a.\nChanged: b.\nDeleted: c."
+        output = f"<<<CADENCE:COMMIT_MSG_BEGIN>>>\n{body}\n<<<CADENCE:COMMIT_MSG_END>>>"
+        result = parse_squash_commit_message(output)
+        assert result == body
+
+    def test_takes_last_marker_pair_when_prompt_echoed(self) -> None:
+        output = (
+            "Output ONLY between markers:\n"
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "<your commit message here>\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>\n"
+            "Real message:\n"
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "branch.\n\nAdded: a.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        result = parse_squash_commit_message(output)
+        assert result == "branch.\n\nAdded: a."

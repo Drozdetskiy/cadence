@@ -103,6 +103,137 @@ class TestExternalBackendRunErrors:
         assert "): " in msg
 
 
+def _git(path: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", path, *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=_git_env(),
+    )
+
+
+class TestExternalBackendMergeBase:
+    def test_returns_base_sha(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        be = ExternalBackend(path)
+        base_hash = be.head_hash()
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        assert be.merge_base("main") == base_hash
+
+    def test_missing_ref_returns_empty(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _commit(path)
+        be = ExternalBackend(path)
+        assert be.merge_base("nope-missing") == ""
+
+
+class TestExternalBackendCommitsAhead:
+    def test_zero_when_same(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path)
+        be = ExternalBackend(path)
+        assert be.commits_ahead("main") == 0
+
+    def test_one_when_one_ahead(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        be = ExternalBackend(path)
+        assert be.commits_ahead("main") == 1
+
+    def test_n_when_n_ahead(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        for i, name in enumerate(("b.txt", "c.txt", "d.txt")):
+            (tmp_path / name).write_text(str(i))
+            _git(path, "add", name)
+            _git(path, "commit", "-m", name)
+        be = ExternalBackend(path)
+        assert be.commits_ahead("main") == 3
+
+    def test_unknown_ref_returns_zero(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _commit(path)
+        be = ExternalBackend(path)
+        assert be.commits_ahead("nope-missing") == 0
+
+
+class TestExternalBackendDiffAgainst:
+    def test_returns_diff(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a\n")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "a.txt").write_text("a\nb\n")
+        _git(path, "add", "a.txt")
+        _git(path, "commit", "-m", "more")
+        be = ExternalBackend(path)
+        diff = be.diff_against("main")
+        assert "+b" in diff
+        assert "a.txt" in diff
+
+    def test_unknown_ref_returns_empty(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _commit(path)
+        be = ExternalBackend(path)
+        assert be.diff_against("nope-missing") == ""
+
+
+class TestExternalBackendResetSoftAndCommit:
+    def test_reset_soft_keeps_changes_staged(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        (tmp_path / "c.txt").write_text("c")
+        _git(path, "add", "c.txt")
+        _git(path, "commit", "-m", "c")
+        be = ExternalBackend(path)
+        base = be.merge_base("main")
+        be.reset_soft(base)
+        assert be.head_hash() == base
+        staged = _git(path, "diff", "--cached", "--name-only").stdout.strip().splitlines()
+        assert "b.txt" in staged
+        assert "c.txt" in staged
+
+    def test_commit_with_message_writes_one_commit(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        (tmp_path / "c.txt").write_text("c")
+        _git(path, "add", "c.txt")
+        _git(path, "commit", "-m", "c")
+        be = ExternalBackend(path)
+        base = be.merge_base("main")
+        be.reset_soft(base)
+        be.commit_with_message("squashed body")
+        log = _git(path, "log", "--format=%s", f"{base}..HEAD").stdout.strip().splitlines()
+        assert log == ["squashed body"]
+
+
 class TestExternalBackendDiffFingerprint:
     def test_clean(self, tmp_path: Path) -> None:
         path = str(tmp_path)

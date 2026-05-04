@@ -20,6 +20,7 @@ from cadence.cli import (
     run_plan_mode,
     run_review_mode,
     run_run_mode,
+    run_squash_mode,
     run_task_init_mode,
     run_task_mode,
     to_rel_path,
@@ -181,6 +182,44 @@ class TestValidateFlags:
             _validate_flags(None, None, False, False, "main", run=True)
         assert excinfo.value.code == 1
         assert "--run is incompatible with --base" in capsys.readouterr().err
+
+    def test_squash_alone_passes(self) -> None:
+        _validate_flags(None, None, False, False, None, squash=True)
+
+    def test_squash_with_task_passes(self, tmp_path: Path) -> None:
+        _validate_flags(None, tmp_path / "p", False, False, None, squash=True)
+
+    def test_squash_with_plan_impl_passes(self, tmp_path: Path) -> None:
+        _validate_flags(tmp_path / "p", None, False, True, None, squash=True)
+
+    def test_squash_with_run_impl_passes(self) -> None:
+        _validate_flags(None, None, False, True, None, run=True, squash=True)
+
+    def test_squash_with_task_init_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, "feat-x", squash=True)
+        assert excinfo.value.code == 1
+        assert "--squash is incompatible with --task-init" in capsys.readouterr().err
+
+    def test_squash_with_review_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, True, False, None, squash=True)
+        assert excinfo.value.code == 1
+        assert "--squash is incompatible with --review" in capsys.readouterr().err
+
+    def test_squash_with_plan_no_impl_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(tmp_path / "p", None, False, False, None, squash=True)
+        assert excinfo.value.code == 1
+        assert "--squash with --plan/--run requires --impl" in capsys.readouterr().err
+
+    def test_squash_with_run_no_impl_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, run=True, squash=True)
+        assert excinfo.value.code == 1
+        assert "--squash with --plan/--run requires --impl" in capsys.readouterr().err
 
 
 class TestCheckClaudeDep:
@@ -556,6 +595,101 @@ class TestMainCommand:
         assert result.exit_code != 0
         assert "--base is only valid with --review" in result.output
 
+    @patch("cadence.cli.run_squash_mode")
+    def test_squash_alone_calls_run_squash_mode(self, mock_squash: MagicMock) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--squash"])
+        assert result.exit_code == 0
+        mock_squash.assert_called_once_with(config=None)
+
+    @patch("cadence.cli.run_task_mode")
+    def test_squash_with_task_propagates(self, mock_task: MagicMock, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "plan.md"
+        f.write_text("task file")
+        result = runner.invoke(app, ["--task", str(f), "--squash"])
+        assert result.exit_code == 0
+        mock_task.assert_called_once()
+        _, kwargs = mock_task.call_args
+        assert kwargs["squash"] is True
+
+    @patch("cadence.cli.run_plan_mode")
+    def test_squash_with_plan_impl_propagates(self, mock_plan: MagicMock, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "prompt.md"
+        f.write_text("implement X")
+        result = runner.invoke(app, ["--plan", str(f), "--impl", "--squash"])
+        assert result.exit_code == 0
+        mock_plan.assert_called_once()
+        _, kwargs = mock_plan.call_args
+        assert kwargs["squash"] is True
+        assert kwargs["impl"] is True
+
+    @patch("cadence.cli.run_run_mode")
+    def test_squash_with_run_impl_propagates(self, mock_run: MagicMock) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--run", "--impl", "--squash"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(impl=True, squash=True, config=None)
+
+    def test_squash_with_run_no_impl_errors(self) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--run", "--squash"])
+        assert result.exit_code != 0
+        assert "--squash with --plan/--run requires --impl" in result.output
+
+    def test_squash_with_plan_no_impl_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "prompt.md"
+        f.write_text("implement X")
+        result = runner.invoke(app, ["--plan", str(f), "--squash"])
+        assert result.exit_code != 0
+        assert "--squash with --plan/--run requires --impl" in result.output
+
+    def test_squash_with_review_errors(self) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--review", "--squash"])
+        assert result.exit_code != 0
+        assert "--squash is incompatible with --review" in result.output
+
+    def test_squash_with_task_init_errors(self) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--task-init", "feat-x", "--squash"])
+        assert result.exit_code != 0
+        assert "--squash is incompatible with --task-init" in result.output
+
 
 class TestDerivePlanPath:
     def test_replaces_prompt_with_plan(self, tmp_path: Path) -> None:
@@ -646,7 +780,9 @@ class TestRunPlanModeImplFlag:
         echo_calls = [str(c) for c in mock_echo.call_args_list]
         assert any("cadence --task" in c for c in echo_calls)
         assert not any("not available in v0.1" in c for c in echo_calls)
-        mock_run_task_mode.assert_called_once_with(Path(derive_plan_path(f)), config=None)
+        mock_run_task_mode.assert_called_once_with(
+            Path(derive_plan_path(f)), squash=False, config=None
+        )
         ordered_names = [c[0] for c in parent.mock_calls]
         assert ordered_names.index("close") < ordered_names.index("task")
 
@@ -3071,7 +3207,7 @@ class TestRunRunMode:
         mock_run_task.assert_called_once()
         args, kwargs = mock_run_task.call_args
         assert args[0] == Path("cdc-tasks/feat-x/plan")
-        assert kwargs == {"config": None}
+        assert kwargs == {"squash": False, "config": None}
         mock_run_plan.assert_not_called()
 
     @patch("cadence.cli.Service")
@@ -3182,7 +3318,7 @@ class TestRunRunMode:
         mock_run_plan.assert_called_once()
         args, kwargs = mock_run_plan.call_args
         assert args[0] == Path("cdc-tasks/feat-x/init")
-        assert kwargs == {"impl": False, "config": None}
+        assert kwargs == {"impl": False, "squash": False, "config": None}
         mock_run_task.assert_not_called()
 
     @patch("cadence.cli.run_task_mode")
@@ -3222,7 +3358,7 @@ class TestRunRunMode:
 
         mock_run_plan.assert_called_once()
         _args, kwargs = mock_run_plan.call_args
-        assert kwargs == {"impl": True, "config": None}
+        assert kwargs == {"impl": True, "squash": False, "config": None}
         mock_run_task.assert_not_called()
 
     @patch("cadence.cli.run_task_mode")
@@ -3347,3 +3483,996 @@ class TestRunRunMode:
         assert "plan already completed" in capsys.readouterr().out
         mock_run_plan.assert_not_called()
         mock_run_task.assert_not_called()
+
+
+class TestRunSquashMode:
+    @staticmethod
+    def _setup_mock_service(
+        *,
+        branch: str = "feat-x",
+        is_default: bool = False,
+        is_dirty: bool = False,
+        commits_ahead: int = 3,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.current_branch.return_value = branch
+        svc.is_default_branch.return_value = is_default
+        svc.is_dirty.return_value = is_dirty
+        svc.commits_ahead.return_value = commits_ahead
+        svc.diff_stats.return_value = DiffStats(files=2, additions=5, deletions=1)
+        svc.head_hash.return_value = "deadbeefcafe"
+        return svc
+
+    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_not_a_git_repo(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _svc: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 1
+        assert "not a repo" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_detached_head_exits(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+        mock_service_cls.return_value = self._setup_mock_service(branch="")
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 1
+        assert "detached HEAD" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_default_branch_exits(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service(branch="main", is_default=True)
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "default branch main" in err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_task_directory_missing(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "task directory not found" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_plan_not_completed(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan").write_text("# plan", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "plan not completed" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_uncommitted_changes_exits(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_service_cls.return_value = self._setup_mock_service(is_dirty=True)
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "uncommitted changes" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_zero_commits_ahead_exits(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service(commits_ahead=0)
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "no commits ahead" in capsys.readouterr().err
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_one_commit_ahead_is_noop(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service(commits_ahead=1)
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "single commit already" in out
+        mock_executor_cls.assert_not_called()
+        mock_svc.squash_commits.assert_not_called()
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_happy_path_squashes_with_claude_message(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "feat-x.\n\nAdded: a thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats") as mock_display:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.squash_commits.assert_called_once_with("main", "feat-x.\n\nAdded: a thing.")
+        mock_svc.diff_stats.assert_called_with("main")
+        mock_display.assert_called_once()
+        mock_log.close.assert_called_once_with(success=True)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_claude_returns_no_markers_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="just some prose, no markers")
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.error.assert_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_claude_executor_error_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(error=Exception("claude crashed"))
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_squash_runtime_error_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_svc.squash_commits.side_effect = RuntimeError("merge-base not found")
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nmsg body\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_idle_timeout_aborts_before_squash(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        # Even if Claude's partial output happens to contain valid markers,
+        # an idle timeout must abort before any history rewrite.
+        partial = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\ntruncated message\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=partial, idle_timed_out=True)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_keyboard_interrupt_returns_cleanly(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.side_effect = KeyboardInterrupt
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_unexpected_exception_logged_and_exits_cleanly(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.side_effect = OSError("disk full")
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.error.assert_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_per_task_config_yaml_overrides_default_branch(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        # Global config says "main"; per-task config says "parent-branch".
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nmsg body\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+        (task_dir / "config.yaml").write_text("default_branch: parent-branch\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.squash_commits.assert_called_once_with("parent-branch", "msg body")
+        mock_svc.commits_ahead.assert_called_with("parent-branch")
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_aborts_when_working_tree_dirty_after_claude(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        # Clean before claude.run, dirty after — simulating Claude staging or
+        # modifying tracked files during its run.
+        mock_svc.is_dirty.side_effect = [False, True]
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nmsg body\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_svc.squash_commits.assert_not_called()
+        mock_log.error.assert_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+
+class TestSquashPipelineIntegration:
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_run_task_mode_squash_chains_after_success(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        mock_run_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats(files=2, additions=10, deletions=3)
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: done\n\n- [x] done item\n")
+
+        parent = MagicMock()
+        parent.attach_mock(mock_log.close, "close")
+        parent.attach_mock(mock_run_squash, "squash")
+
+        run_task_mode(f, squash=True)
+
+        mock_run_squash.assert_called_once_with(config=None)
+        ordered_names = [c[0] for c in parent.mock_calls]
+        assert ordered_names.index("close") < ordered_names.index("squash")
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Runner")
+    def test_run_task_mode_squash_skipped_on_failure(
+        self,
+        mock_runner_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        mock_run_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_service_cls.return_value = mock_svc
+
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = False
+        mock_runner_cls.return_value = mock_runner
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n")
+
+        run_task_mode(f, squash=True)
+
+        mock_run_squash.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_run_mode_plan_completed_with_impl_squash_calls_squash(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        mock_run_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True, squash=True)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_squash.assert_called_once_with(config=None)
+        mock_run_task.assert_not_called()
+        mock_run_plan.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_run_mode_plan_exists_with_impl_squash_propagates(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        mock_run_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan").write_text("# plan", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True, squash=True)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_task.assert_called_once()
+        _, kwargs = mock_run_task.call_args
+        assert kwargs["squash"] is True
+        mock_run_plan.assert_not_called()
+        mock_run_squash.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_run_mode_init_with_impl_squash_propagates(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        mock_run_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("do it", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True, squash=True)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_plan.assert_called_once()
+        _, kwargs = mock_run_plan.call_args
+        assert kwargs["squash"] is True
+        assert kwargs["impl"] is True
+        mock_run_task.assert_not_called()
+        mock_run_squash.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_run_plan_mode_propagates_squash_to_task(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _echo: MagicMock,
+        mock_run_task_mode: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        f = tmp_path / "prompt.md"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f, impl=True, squash=True)
+
+        mock_run_task_mode.assert_called_once()
+        _, kwargs = mock_run_task_mode.call_args
+        assert kwargs["squash"] is True

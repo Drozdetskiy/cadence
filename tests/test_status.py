@@ -3,11 +3,14 @@ from __future__ import annotations
 import threading
 
 from cadence.status import (
+    Mode,
     PhaseHolder,
     PhasePlan,
     PhaseReview,
     PhaseTask,
     Section,
+    SignalCommitMsgBegin,
+    SignalCommitMsgEnd,
     SignalCompleted,
     SignalEnd,
     SignalFailed,
@@ -28,6 +31,14 @@ class TestPhaseConstants:
         assert PhasePlan == "plan"
 
 
+class TestModeEnum:
+    def test_mode_values(self) -> None:
+        assert Mode.PLAN == "plan"
+        assert Mode.FULL == "full"
+        assert Mode.REVIEW == "review"
+        assert Mode.SQUASH == "squash"
+
+
 class TestSignalConstants:
     def test_signal_format(self) -> None:
         assert SignalCompleted == "<<<CADENCE:ALL_TASKS_DONE>>>"
@@ -37,6 +48,8 @@ class TestSignalConstants:
         assert SignalPlanReady == "<<<CADENCE:PLAN_READY>>>"
         assert SignalPlanDraft == "<<<CADENCE:PLAN_DRAFT>>>"
         assert SignalEnd == "<<<CADENCE:END>>>"
+        assert SignalCommitMsgBegin == "<<<CADENCE:COMMIT_MSG_BEGIN>>>"
+        assert SignalCommitMsgEnd == "<<<CADENCE:COMMIT_MSG_END>>>"
 
     def test_all_signals_have_cadence_prefix(self) -> None:
         for sig in [
@@ -47,6 +60,8 @@ class TestSignalConstants:
             SignalPlanReady,
             SignalPlanDraft,
             SignalEnd,
+            SignalCommitMsgBegin,
+            SignalCommitMsgEnd,
         ]:
             assert sig.startswith("<<<CADENCE:")
             assert sig.endswith(">>>")

@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 
 from cadence.status import (
+    SignalCommitMsgBegin,
+    SignalCommitMsgEnd,
     SignalCompleted,
     SignalEnd,
     SignalFailed,
@@ -24,6 +26,10 @@ def _payload_regex(opener: str) -> re.Pattern[str]:
 
 _QUESTION_RE = _payload_regex(SignalQuestion)
 _PLAN_DRAFT_RE = _payload_regex(SignalPlanDraft)
+_COMMIT_MSG_RE = re.compile(
+    rf"{re.escape(SignalCommitMsgBegin)}\s*(.*?)\s*{re.escape(SignalCommitMsgEnd)}",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -65,6 +71,17 @@ def parse_question_payload(output: str) -> QuestionPayload | None:
 
 def parse_plan_draft_payload(output: str) -> str | None:
     return _extract_payload(output, SignalPlanDraft, _PLAN_DRAFT_RE)
+
+
+def parse_squash_commit_message(text: str) -> str | None:
+    if SignalCommitMsgBegin not in text or SignalCommitMsgEnd not in text:
+        return None
+    matches = list(_COMMIT_MSG_RE.finditer(text))
+    for m in reversed(matches):
+        body = m.group(1).strip()
+        if body:
+            return body
+    return None
 
 
 def is_plan_ready(signal: str) -> bool:

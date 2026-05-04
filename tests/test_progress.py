@@ -158,6 +158,45 @@ class TestComputeProgressPath:
         with pytest.raises(RuntimeError):
             compute_progress_path(Mode.REVIEW, branch="", default_branch="main", head_hash="")
 
+    def test_squash_mode_feature_branch(self) -> None:
+        path = compute_progress_path(
+            Mode.SQUASH,
+            branch="feat/foo",
+            default_branch="main",
+            tasks_root="cdc-tasks",
+        )
+        assert path == os.path.join("cdc-tasks", "feat-foo", "progress-squash.txt")
+
+    def test_squash_mode_custom_tasks_root(self) -> None:
+        path = compute_progress_path(
+            Mode.SQUASH,
+            branch="0029-x",
+            default_branch="main",
+            tasks_root="my-tasks",
+        )
+        assert path == os.path.join("my-tasks", "0029-x", "progress-squash.txt")
+
+    def test_squash_mode_origin_default_branch(self) -> None:
+        path = compute_progress_path(
+            Mode.SQUASH,
+            branch="feat-y",
+            default_branch="origin/main",
+            tasks_root="cdc-tasks",
+        )
+        assert path == os.path.join("cdc-tasks", "feat-y", "progress-squash.txt")
+
+    def test_squash_mode_empty_branch_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_progress_path(Mode.SQUASH, branch="", default_branch="main")
+
+    def test_squash_mode_default_branch_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_progress_path(Mode.SQUASH, branch="main", default_branch="main")
+
+    def test_squash_mode_default_branch_with_origin_prefix_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_progress_path(Mode.SQUASH, branch="main", default_branch="origin/main")
+
 
 class TestSanitizePlanName:
     def test_basic(self) -> None:
