@@ -177,6 +177,45 @@ class ExternalBackend:
             raise RuntimeError("nothing to commit for initial commit")
         self._run("commit", "-m", msg)
 
+    def merge_base(self, ref: str) -> str:
+        resolved = self._resolve_ref(ref)
+        if not resolved:
+            return ""
+        code, stdout, _ = self._run_with_status("merge-base", resolved, "HEAD")
+        if code != 0:
+            return ""
+        return stdout.strip()
+
+    def commits_ahead(self, ref: str) -> int:
+        base = self.merge_base(ref)
+        if not base:
+            return 0
+        code, stdout, _ = self._run_with_status("rev-list", "--count", f"{base}..HEAD")
+        if code != 0:
+            return 0
+        try:
+            return int(stdout.strip())
+        except ValueError:
+            return 0
+
+    def diff_against(self, ref: str) -> str:
+        resolved = self._resolve_ref(ref)
+        if not resolved:
+            return ""
+        code, stdout, _ = self._run_with_status("diff", f"{resolved}...HEAD")
+        if code != 0:
+            return ""
+        return stdout
+
+    def reset_soft(self, ref: str) -> None:
+        self._run("reset", "--soft", ref)
+
+    def reset_hard(self, ref: str) -> None:
+        self._run("reset", "--hard", ref)
+
+    def commit_with_message(self, msg: str) -> None:
+        self._run("commit", "-m", msg)
+
     def diff_stats(self, base_branch: str) -> DiffStats:
         ref = self._resolve_ref(base_branch)
         if not ref:

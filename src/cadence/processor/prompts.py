@@ -212,6 +212,18 @@ def _review_goal(plan_file: str, default_branch: str) -> str:
     return f"review of branch vs {default_branch or 'main'}"
 
 
+def build_squash_commit_prompt(
+    *,
+    local_dir: Path | None = None,
+    default_branch: str = "",
+    commit_format: str = "",
+) -> str:
+    prompt = load_prompt("squash_commit", local_dir=local_dir)
+    prompt = replace_base_variables(prompt, default_branch=default_branch)
+    prompt = append_commit_format_instruction(prompt, commit_format)
+    return prompt
+
+
 def build_review_first_prompt(
     *,
     local_dir: Path | None = None,
@@ -267,6 +279,7 @@ __all__ = [
     "build_plan_prompt",
     "build_review_first_prompt",
     "build_review_second_prompt",
+    "build_squash_commit_prompt",
     "build_task_prompt",
     "expand_agent_references",
     "format_agent_expansion",

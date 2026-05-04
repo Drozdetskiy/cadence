@@ -24,12 +24,14 @@ from cadence.config import (
 from cadence.executor.claude_executor import ClaudeExecutor
 from cadence.git import DiffStats, Service
 from cadence.input import TerminalCollector, ask_yes_no
+from cadence.processor.prompts import build_squash_commit_prompt
 from cadence.processor.runner import (
     Dependencies,
     RunContext,
     Runner,
     UserAbortedError,
 )
+from cadence.processor.signals import parse_squash_commit_message
 from cadence.progress.colors import Colors
 from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
 from cadence.status import Mode, PhaseHolder
@@ -90,8 +92,12 @@ def _validate_flags(
     base: str | None,
     task_init: str | None = None,
     run: bool = False,
+    squash: bool = False,
 ) -> None:
     if task_init is not None:
+        if squash:
+            typer.echo("error: --squash is incompatible with --task-init", err=True)
+            raise SystemExit(1)
         if plan is not None or task is not None or review or run:
             typer.echo(
                 "error: --task-init is mutually exclusive with --plan, --task, --review, and --run",
@@ -115,7 +121,13 @@ def _validate_flags(
         if base is not None:
             typer.echo("error: --run is incompatible with --base", err=True)
             raise SystemExit(1)
+        if squash and not impl:
+            typer.echo("error: --squash with --plan/--run requires --impl", err=True)
+            raise SystemExit(1)
         return
+    if review and squash:
+        typer.echo("error: --squash is incompatible with --review", err=True)
+        raise SystemExit(1)
     if review and impl:
         typer.echo("error: --review is incompatible with --impl", err=True)
         raise SystemExit(1)
@@ -125,6 +137,9 @@ def _validate_flags(
     if base is not None and not review:
         typer.echo("error: --base is only valid with --review", err=True)
         raise SystemExit(1)
+    if squash and plan is not None and not impl:
+        typer.echo("error: --squash with --plan/--run requires --impl", err=True)
+        raise SystemExit(1)
     active = sum([plan is not None, task is not None, review])
     if active > 1:
         typer.echo(
@@ -133,8 +148,10 @@ def _validate_flags(
         )
         raise SystemExit(1)
     if active == 0:
+        if squash:
+            return
         typer.echo(
-            "error: one of --plan, --task, --review, --run, or --task-init is required",
+            "error: one of --plan, --task, --review, --run, --task-init, or --squash is required",
             err=True,
         )
         raise SystemExit(1)
@@ -253,6 +270,12 @@ def compute_progress_path(
             raise RuntimeError("cannot derive progress path: no branch and no head hash")
         return os.path.join(tasks_root, segment, "progress-review.txt")
 
+    if mode == Mode.SQUASH:
+        if not _is_feature_branch(branch, default_branch):
+            raise RuntimeError("cannot derive progress path: squash mode requires a feature branch")
+        segment = sanitize_plan_name(branch)
+        return os.path.join(tasks_root, segment, "progress-squash.txt")
+
     raise RuntimeError(f"cannot derive progress path: unsupported mode {mode}")
 
 
@@ -338,7 +361,13 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(plan_file: Path, *, impl: bool = False, config: Path | None = None) -> None:
+def run_plan_mode(
+    plan_file: Path,
+    *,
+    impl: bool = False,
+    squash: bool = False,
+    config: Path | None = None,
+) -> None:
     content = _read_plan_file(plan_file)
 
     cfg, holder, colors, _git_svc, factory, default_branch, local_dir = _setup_runtime(
@@ -400,7 +429,7 @@ def run_plan_mode(plan_file: Path, *, impl: bool = False, config: Path | None = 
         log.close(success=run_success)
 
     if impl and run_success:
-        run_task_mode(Path(plan_path), config=config)
+        run_task_mode(Path(plan_path), squash=squash, config=config)
 
 
 def _install_sigquit(break_event: threading.Event) -> None:
@@ -428,7 +457,12 @@ def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     return pause
 
 
-def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
+def run_task_mode(
+    task_file: Path,
+    *,
+    squash: bool = False,
+    config: Path | None = None,
+) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
         raise SystemExit(1)
@@ -527,6 +561,9 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     finally:
         log.close(success=run_success)
 
+    if squash and run_success:
+        run_squash_mode(config=config)
+
 
 def run_review_mode(base: str | None = None, *, config: Path | None = None) -> None:
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(config, None)
@@ -609,6 +646,118 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         log.close(success=run_success)
 
 
+def run_squash_mode(*, config: Path | None = None) -> None:
+    cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
+        config, anchor=None
+    )
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    branch = git_svc.current_branch()
+    if not branch:
+        typer.echo("error: cannot --squash from a detached HEAD", err=True)
+        raise SystemExit(1)
+
+    task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
+
+    if config is None:
+        per_task_yaml = find_yaml_config(task_dir)
+        if per_task_yaml is not None:
+            try:
+                apply_yaml_overrides(cfg, load_yaml_config(per_task_yaml))
+            except ValueError as exc:
+                typer.echo(f"error: {exc}", err=True)
+                raise SystemExit(1) from None
+            default_branch = cfg.default_branch
+
+    if git_svc.is_default_branch(default_branch):
+        typer.echo(f"error: cannot --squash on default branch {default_branch}", err=True)
+        raise SystemExit(1)
+
+    if not task_dir.is_dir():
+        typer.echo(f"error: task directory not found: {task_dir}", err=True)
+        raise SystemExit(1)
+
+    completed = task_dir / "plan-completed"
+    if not completed.is_file():
+        typer.echo("error: plan not completed; squash refused", err=True)
+        raise SystemExit(1)
+
+    if git_svc.is_dirty():
+        typer.echo("error: uncommitted changes present", err=True)
+        raise SystemExit(1)
+
+    ahead = git_svc.commits_ahead(default_branch)
+    if ahead == 0:
+        typer.echo(f"error: no commits ahead of {default_branch}", err=True)
+        raise SystemExit(1)
+    if ahead == 1:
+        typer.echo("single commit already; nothing to squash")
+        return
+
+    try:
+        progress_path = compute_progress_path(
+            Mode.SQUASH,
+            branch=branch,
+            tasks_root=cfg.tasks_root,
+            default_branch=default_branch,
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    log = _build_logger(progress_path, "", "", Mode.SQUASH, branch, colors, holder)
+
+    log.print("cadence %s", resolve_version())
+    log.print("mode: squash")
+    log.print("branch: %s", branch)
+    log.print("base: %s", default_branch)
+    log.print("progress: %s", log.path)
+
+    git_svc.set_log(log)
+
+    prompt = build_squash_commit_prompt(
+        local_dir=local_dir,
+        default_branch=default_branch,
+        commit_format=cfg.commit_format,
+    )
+
+    claude = factory(log, cfg.task_model)
+
+    run_success = False
+    try:
+        result = claude.run(prompt)
+        if result.idle_timed_out:
+            log.error("claude idle-timed out before producing a commit message")
+            raise SystemExit(1)
+        if result.error is not None:
+            log.error("claude error: %s", result.error)
+            raise SystemExit(1)
+        message = parse_squash_commit_message(result.output or "")
+        if not message:
+            log.error("claude did not return a commit message")
+            raise SystemExit(1)
+        if git_svc.is_dirty():
+            log.error("working tree was modified during squash; aborting")
+            raise SystemExit(1)
+        try:
+            git_svc.squash_commits(default_branch, message)
+        except RuntimeError as exc:
+            log.error("squash failed: %s", exc)
+            raise SystemExit(1) from None
+        stats = git_svc.diff_stats(default_branch)
+        display_stats(stats, log.elapsed(), branch)
+        run_success = True
+    except KeyboardInterrupt:
+        log.print("interrupted by user")
+        return
+    except Exception as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        log.close(success=run_success)
+
+
 def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     if not task_name or "/" in task_name or "\\" in task_name or task_name.startswith((".", "-")):
         typer.echo(f"error: invalid task name: {task_name!r}", err=True)
@@ -673,7 +822,12 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     typer.echo(f"next: cadence --plan {init_file}")
 
 
-def run_run_mode(*, impl: bool = False, config: Path | None = None) -> None:
+def run_run_mode(
+    *,
+    impl: bool = False,
+    squash: bool = False,
+    config: Path | None = None,
+) -> None:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
     _apply_yaml_overrides(cfg, config, anchor=None)
@@ -696,13 +850,16 @@ def run_run_mode(*, impl: bool = False, config: Path | None = None) -> None:
 
     completed = task_dir / "plan-completed"
     if completed.is_file():
+        if squash and impl:
+            run_squash_mode(config=config)
+            return
         typer.echo(f"plan already completed: {to_rel_path(completed)}")
         return
 
     plan_file = task_dir / "plan"
     if plan_file.is_file():
         if impl:
-            run_task_mode(plan_file, config=config)
+            run_task_mode(plan_file, squash=squash, config=config)
             return
         typer.echo(f"plan ready: {to_rel_path(plan_file)}")
         typer.echo(f"run: cadence --task {to_rel_path(plan_file)}")
@@ -717,7 +874,7 @@ def run_run_mode(*, impl: bool = False, config: Path | None = None) -> None:
         typer.echo(f"error: init file is empty: {init_file}", err=True)
         raise SystemExit(1)
 
-    run_plan_mode(init_file, impl=impl, config=config)
+    run_plan_mode(init_file, impl=impl, squash=squash, config=config)
 
 
 class _StderrLogger:
@@ -758,6 +915,14 @@ _RUN_OPT: bool = typer.Option(
     "--run",
     help="Run the task for the current branch (auto-detect init/plan)",
 )
+_SQUASH_OPT: bool = typer.Option(
+    False,
+    "--squash",
+    help=(
+        "Squash all commits on the branch into one"
+        " (also a flag for --task / --plan --impl / --run --impl)"
+    ),
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -771,13 +936,14 @@ def main(
     config: Path | None = _CONFIG_OPT,
     task_init: str | None = _TASK_INIT_OPT,
     run: bool = _RUN_OPT,
+    squash: bool = _SQUASH_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
         typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
-    _validate_flags(plan, task, review, impl, base, task_init, run=run)
+    _validate_flags(plan, task, review, impl, base, task_init, run=run, squash=squash)
 
     if task_init is not None:
         run_task_init_mode(task_init, config=config)
@@ -787,16 +953,20 @@ def main(
     _sigint.install()
 
     if run:
-        run_run_mode(impl=impl, config=config)
+        run_run_mode(impl=impl, squash=squash, config=config)
+        return
+
+    if squash and plan is None and task is None and not review:
+        run_squash_mode(config=config)
         return
 
     mode = determine_mode(plan, task, review)
 
     if mode == Mode.PLAN:
         assert plan is not None
-        run_plan_mode(plan, impl=impl, config=config)
+        run_plan_mode(plan, impl=impl, squash=squash, config=config)
     elif mode == Mode.FULL:
         assert task is not None
-        run_task_mode(task, config=config)
+        run_task_mode(task, squash=squash, config=config)
     elif mode == Mode.REVIEW:
         run_review_mode(base, config=config)

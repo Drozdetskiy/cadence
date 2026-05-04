@@ -529,6 +529,116 @@ class TestEnsureHasCommits:
             svc.ensure_has_commits(lambda: False)
 
 
+class TestServiceSquashCommits:
+    def test_squash_collapses_commits(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        for name in ("b.txt", "c.txt", "d.txt"):
+            (tmp_path / name).write_text(name)
+            _git(path, "add", name)
+            _git(path, "commit", "-m", name)
+
+        be = ExternalBackend(path)
+        base_before = be.merge_base("main")
+        diff_before = be.diff_against("main")
+
+        svc = Service(path, _Log())
+        svc.squash_commits("main", "squashed message")
+
+        assert be.commits_ahead("main") == 1
+        log_subjects = _git(path, "log", "--format=%s", f"{base_before}..HEAD").stdout.strip()
+        assert log_subjects == "squashed message"
+        assert be.diff_against("main") == diff_before
+
+    def test_squash_appends_trailer(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        for name in ("b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+            _git(path, "add", name)
+            _git(path, "commit", "-m", name)
+
+        svc = Service(path, _Log())
+        svc.set_commit_trailer("Co-Authored-By: Bot <bot@example.com>")
+        svc.squash_commits("main", "squashed body")
+
+        body = _git(path, "log", "-1", "--format=%B").stdout
+        assert "squashed body" in body
+        assert "Co-Authored-By: Bot <bot@example.com>" in body
+
+    def test_squash_refuses_when_no_commits_ahead(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.squash_commits("main", "msg")
+
+    def test_squash_refuses_with_one_commit_ahead(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.squash_commits("main", "msg")
+
+    def test_squash_refuses_when_merge_base_missing(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.squash_commits("nope-missing", "msg")
+
+    def test_squash_rolls_back_when_commit_fails(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        for name in ("b.txt", "c.txt", "d.txt"):
+            (tmp_path / name).write_text(name)
+            _git(path, "add", name)
+            _git(path, "commit", "-m", name)
+
+        be = ExternalBackend(path)
+        head_before = be.head_hash()
+
+        hooks_dir = Path(_git(path, "rev-parse", "--git-path", "hooks").stdout.strip())
+        if not hooks_dir.is_absolute():
+            hooks_dir = tmp_path / hooks_dir
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        pre_commit = hooks_dir / "pre-commit"
+        pre_commit.write_text("#!/bin/sh\nexit 1\n")
+        pre_commit.chmod(0o755)
+
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.squash_commits("main", "msg")
+
+        assert be.head_hash() == head_before
+        assert be.commits_ahead("main") == 3
+
+    def test_commits_ahead_wrapper(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "feature")
+        for name in ("b.txt", "c.txt"):
+            (tmp_path / name).write_text(name)
+            _git(path, "add", name)
+            _git(path, "commit", "-m", name)
+        svc = Service(path, _Log())
+        assert svc.commits_ahead("main") == 2
+
+
 class TestServiceDelegation:
     def test_is_default_branch_true(self, tmp_path: Path) -> None:
         path = str(tmp_path)

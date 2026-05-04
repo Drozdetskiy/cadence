@@ -55,6 +55,9 @@ class Service:
     def has_commits(self) -> bool:
         return self._repo.has_commits()
 
+    def is_dirty(self) -> bool:
+        return self._repo.is_dirty()
+
     def diff_stats(self, base_branch: str) -> DiffStats:
         return self._repo.diff_stats(base_branch)
 
@@ -120,6 +123,24 @@ class Service:
 
         os.rename(str(src), str(dst))
         self._log.print("marked plan completed: %s", str(dst))
+
+    def commits_ahead(self, default_branch: str) -> int:
+        return self._repo.commits_ahead(default_branch)
+
+    def squash_commits(self, default_branch: str, message: str) -> None:
+        base = self._repo.merge_base(default_branch)
+        if not base:
+            raise RuntimeError(f"merge-base not found for {default_branch}")
+        if self._repo.commits_ahead(default_branch) < 2:
+            raise RuntimeError("nothing to squash beyond base")
+        pre_head = self._repo.head_hash()
+        self._repo.reset_soft(base)
+        try:
+            self._repo.commit_with_message(self._append_trailer(message))
+        except RuntimeError:
+            if pre_head:
+                self._repo.reset_hard(pre_head)
+            raise
 
     def ensure_has_commits(self, prompt_fn: Callable[[], bool]) -> None:
         if self._repo.has_commits():
