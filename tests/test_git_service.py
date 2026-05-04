@@ -639,6 +639,57 @@ class TestServiceSquashCommits:
         assert svc.commits_ahead("main") == 2
 
 
+class TestServiceCheckoutBranch:
+    def test_switches_to_existing_branch(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        _git(path, "checkout", "-b", "side")
+        (tmp_path / "x.txt").write_text("x")
+        _git(path, "add", "x.txt")
+        _git(path, "commit", "-m", "x")
+        _git(path, "checkout", "main")
+
+        log = _Log()
+        svc = Service(path, log)
+        svc.checkout_branch("side")
+
+        be = ExternalBackend(path)
+        assert be.current_branch() == "side"
+        assert any("switched to branch side" in m for m in log.messages)
+
+    def test_unknown_branch_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.checkout_branch("no-such-branch")
+
+
+class TestServiceCreateBranchFrom:
+    def test_creates_branch_from_base(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a")
+
+        log = _Log()
+        svc = Service(path, log)
+        svc.create_branch_from("feature", "main")
+
+        be = ExternalBackend(path)
+        assert be.current_branch() == "feature"
+        assert any("created branch feature from main" in m for m in log.messages)
+
+    def test_unknown_base_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        svc = Service(path, _Log())
+        with pytest.raises(RuntimeError):
+            svc.create_branch_from("feature", "no-such-base")
+
+
 class TestServiceDelegation:
     def test_is_default_branch_true(self, tmp_path: Path) -> None:
         path = str(tmp_path)

@@ -108,6 +108,12 @@ class ExternalBackend:
     def create_branch(self, name: str) -> None:
         self._run("checkout", "-b", name)
 
+    def create_branch_from(self, name: str, base: str) -> None:
+        resolved = self._resolve_ref(base)
+        if not resolved:
+            raise RuntimeError(f"git base ref does not resolve: {base}")
+        self._run("checkout", "-b", name, resolved)
+
     def checkout_branch(self, name: str) -> None:
         self._run("checkout", name)
 
