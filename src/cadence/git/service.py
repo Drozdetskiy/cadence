@@ -72,6 +72,9 @@ class Service:
     def create_branch(self, name: str) -> None:
         self._repo.create_branch(name)
 
+    def branch_exists(self, name: str) -> bool:
+        return self._repo.branch_exists(name)
+
     def create_branch_for_plan(self, plan_file: str, default_branch: str) -> None:
         resolved_plan = self._resolve_filesystem_case(plan_file)
         branch = self._prepare_plan_branch(resolved_plan, default_branch)
