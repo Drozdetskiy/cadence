@@ -218,6 +218,8 @@ class TestExternalBackendResetSoftAndCommit:
     def test_commit_with_message_writes_one_commit(self, tmp_path: Path) -> None:
         path = str(tmp_path)
         _init_repo(path, branch="main")
+        _git(path, "config", "user.email", "t@t")
+        _git(path, "config", "user.name", "test")
         _commit(path, filename="a.txt", content="a")
         _git(path, "checkout", "-b", "feature")
         (tmp_path / "b.txt").write_text("b")
@@ -232,6 +234,53 @@ class TestExternalBackendResetSoftAndCommit:
         be.commit_with_message("squashed body")
         log = _git(path, "log", "--format=%s", f"{base}..HEAD").stdout.strip().splitlines()
         assert log == ["squashed body"]
+
+
+class TestExternalBackendCreateBranchFrom:
+    def test_creates_from_existing_local_base(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "checkout", "-b", "side")
+        (tmp_path / "b.txt").write_text("b")
+        _git(path, "add", "b.txt")
+        _git(path, "commit", "-m", "b")
+        _git(path, "checkout", "main")
+        be = ExternalBackend(path)
+        be.create_branch_from("feature", "main")
+        assert be.current_branch() == "feature"
+        assert be.branch_exists("feature")
+
+    def test_creates_from_origin_remote_base(self, tmp_path: Path) -> None:
+        upstream = tmp_path / "upstream"
+        upstream.mkdir()
+        upstream_path = str(upstream)
+        _init_repo(upstream_path, branch="main")
+        _commit(upstream_path, filename="a.txt", content="a")
+
+        clone = tmp_path / "clone"
+        subprocess.run(
+            ["git", "clone", upstream_path, str(clone)],
+            capture_output=True,
+            check=True,
+        )
+        clone_path = str(clone)
+        _git(clone_path, "config", "user.email", "t@t")
+        _git(clone_path, "config", "user.name", "test")
+
+        be = ExternalBackend(clone_path)
+        be.create_branch_from("feature", "origin/main")
+        assert be.current_branch() == "feature"
+        assert be.branch_exists("feature")
+
+    def test_missing_base_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _commit(path)
+        be = ExternalBackend(path)
+        with pytest.raises(RuntimeError) as excinfo:
+            be.create_branch_from("feature", "no-such-base")
+        assert "no-such-base" in str(excinfo.value)
 
 
 class TestExternalBackendDiffFingerprint:

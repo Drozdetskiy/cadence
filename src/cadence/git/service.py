@@ -75,6 +75,14 @@ class Service:
     def create_branch(self, name: str) -> None:
         self._repo.create_branch(name)
 
+    def checkout_branch(self, name: str) -> None:
+        self._repo.checkout_branch(name)
+        self._log.print("switched to branch %s", name)
+
+    def create_branch_from(self, name: str, base: str) -> None:
+        self._repo.create_branch_from(name, base)
+        self._log.print("created branch %s from %s", name, base)
+
     def branch_exists(self, name: str) -> bool:
         return self._repo.branch_exists(name)
 

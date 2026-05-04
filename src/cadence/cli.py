@@ -93,7 +93,26 @@ def _validate_flags(
     task_init: str | None = None,
     run: bool = False,
     squash: bool = False,
+    chain: Path | None = None,
 ) -> None:
+    if chain is not None:
+        if (
+            plan is not None
+            or task is not None
+            or review
+            or run
+            or task_init is not None
+            or impl
+            or squash
+            or base is not None
+        ):
+            typer.echo(
+                "error: --chain is mutually exclusive with --plan, --task, --review, "
+                "--run, --task-init, --impl, --squash, and --base",
+                err=True,
+            )
+            raise SystemExit(1)
+        return
     if task_init is not None:
         if squash:
             typer.echo("error: --squash is incompatible with --task-init", err=True)
@@ -151,7 +170,8 @@ def _validate_flags(
         if squash:
             return
         typer.echo(
-            "error: one of --plan, --task, --review, --run, --task-init, or --squash is required",
+            "error: one of --plan, --task, --review, --run, --task-init, "
+            "--chain, or --squash is required",
             err=True,
         )
         raise SystemExit(1)
@@ -183,6 +203,54 @@ def derive_plan_path(prompt_file: Path, init_prompt_name: str = "init") -> str:
             stem = prompt_file.stem
             plan_name = f"{stem}-plan{prompt_file.suffix}"
     return str(prompt_file.parent / plan_name)
+
+
+def _parse_chain_file(path: Path) -> list[str]:
+    if not path.is_file():
+        typer.echo(f"error: file not found: {path}", err=True)
+        raise SystemExit(1)
+    text = path.read_text(encoding="utf-8")
+    names: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "/" in line or "\\" in line or line.startswith((".", "-")):
+            typer.echo(f"error: invalid task name in chain file: {line}", err=True)
+            raise SystemExit(1)
+        names.append(line)
+    if not names:
+        typer.echo("error: chain file is empty", err=True)
+        raise SystemExit(1)
+    return names
+
+
+def _validate_chain_tasks(tasks_root: str, names: list[str]) -> list[str]:
+    warnings: list[str] = []
+    for name in names:
+        task_dir = Path(tasks_root) / name
+        if not task_dir.is_dir():
+            warnings.append(f"task directory not found: {task_dir}")
+            continue
+        init_file = task_dir / "init"
+        if not init_file.is_file():
+            warnings.append(f"init file not found: {init_file}")
+    return warnings
+
+
+def _resolve_chain_default_branch(tasks_root: str, name: str, global_default: str) -> str:
+    task_dir = Path(tasks_root) / name
+    yaml_path = find_yaml_config(task_dir)
+    if yaml_path is None:
+        return global_default
+    try:
+        overrides = load_yaml_config(yaml_path)
+    except ValueError as exc:
+        typer.echo(f"error: invalid config.yaml for task {name}: {exc}", err=True)
+        raise SystemExit(1) from None
+    if overrides.default_branch is not None:
+        return overrides.default_branch
+    return global_default
 
 
 def _read_plan_file(plan_file: Path) -> str:
@@ -877,6 +945,71 @@ def run_run_mode(
     run_plan_mode(init_file, impl=impl, squash=squash, config=config)
 
 
+def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
+    cfg, _holder, _colors, git_svc, _factory, default_branch, _local_dir = _setup_runtime(
+        config, anchor=None
+    )
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    try:
+        git_svc.ensure_has_commits(
+            lambda: ask_yes_no("repository has no commits. create an initial commit?")
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    if git_svc.is_dirty():
+        typer.echo("error: uncommitted changes present", err=True)
+        raise SystemExit(1)
+    if git_svc.current_branch() == "":
+        typer.echo("error: cannot --chain from a detached HEAD", err=True)
+        raise SystemExit(1)
+
+    names = _parse_chain_file(chain_file)
+
+    warnings = _validate_chain_tasks(cfg.tasks_root, names)
+    if warnings:
+        for w in warnings:
+            typer.echo(f"warn: {w}", err=True)
+        raise SystemExit(1)
+
+    total = len(names)
+    for i, name in enumerate(names, start=1):
+        typer.echo(f"[chain {i}/{total}] {name}")
+        try:
+            task_default = _resolve_chain_default_branch(cfg.tasks_root, name, default_branch)
+            if git_svc.branch_exists(name):
+                git_svc.checkout_branch(name)
+            else:
+                git_svc.create_branch_from(name, task_default)
+            run_run_mode(impl=True, squash=True, config=config)
+        except SystemExit as exc:
+            if exc.code != 0:
+                typer.echo(
+                    f"chain failed at task {i}/{total}: {name}",
+                    err=True,
+                )
+            raise
+        except RuntimeError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            typer.echo(
+                f"chain failed at task {i}/{total}: {name}",
+                err=True,
+            )
+            raise SystemExit(1) from None
+
+        if _sigint.shutdown_event.is_set():
+            typer.echo(
+                f"chain interrupted at task {i}/{total}: {name}",
+                err=True,
+            )
+            raise SystemExit(1)
+
+    typer.echo(f"chain complete: {total} task(s)")
+
+
 class _StderrLogger:
     def print(self, fmt: str, *args: object) -> None:
         msg = fmt % args if args else fmt
@@ -923,6 +1056,11 @@ _SQUASH_OPT: bool = typer.Option(
         " (also a flag for --task / --plan --impl / --run --impl)"
     ),
 )
+_CHAIN_OPT: Path | None = typer.Option(
+    None,
+    "--chain",
+    help="Run a sequence of tasks listed in a file (one task name per line)",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -937,13 +1075,14 @@ def main(
     task_init: str | None = _TASK_INIT_OPT,
     run: bool = _RUN_OPT,
     squash: bool = _SQUASH_OPT,
+    chain: Path | None = _CHAIN_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
         typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
-    _validate_flags(plan, task, review, impl, base, task_init, run=run, squash=squash)
+    _validate_flags(plan, task, review, impl, base, task_init, run=run, squash=squash, chain=chain)
 
     if task_init is not None:
         run_task_init_mode(task_init, config=config)
@@ -951,6 +1090,10 @@ def main(
 
     _sigint.reset()
     _sigint.install()
+
+    if chain is not None:
+        run_chain_mode(chain, config=config)
+        return
 
     if run:
         run_run_mode(impl=impl, squash=squash, config=config)

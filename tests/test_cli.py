@@ -8,8 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cadence.cli import (
+    _parse_chain_file,
+    _resolve_chain_default_branch,
     _setup_runtime,
     _sigint,
+    _validate_chain_tasks,
     _validate_flags,
     check_claude_dep,
     derive_plan_path,
@@ -17,6 +20,7 @@ from cadence.cli import (
     display_stats,
     find_existing_plan,
     resolve_version,
+    run_chain_mode,
     run_plan_mode,
     run_review_mode,
     run_run_mode,
@@ -220,6 +224,73 @@ class TestValidateFlags:
             _validate_flags(None, None, False, False, None, run=True, squash=True)
         assert excinfo.value.code == 1
         assert "--squash with --plan/--run requires --impl" in capsys.readouterr().err
+
+    def test_chain_alone_passes(self, tmp_path: Path) -> None:
+        _validate_flags(None, None, False, False, None, chain=tmp_path / "c.txt")
+
+    def test_chain_with_plan_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(tmp_path / "p", None, False, False, None, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_task_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, tmp_path / "p", False, False, None, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_review_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, True, False, None, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_run_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, run=True, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_task_init_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, "feat-x", chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_impl_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, True, None, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_squash_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, squash=True, chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
+
+    def test_chain_with_base_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, "main", chain=tmp_path / "c.txt")
+        assert excinfo.value.code == 1
+        assert "--chain is mutually exclusive" in capsys.readouterr().err
 
 
 class TestCheckClaudeDep:
@@ -444,6 +515,20 @@ class TestMainCommand:
         result = runner.invoke(app, ["--version"])
         assert "cadence" in result.output
         assert __version__ in result.output
+
+    def test_help_lists_chain_flag(self) -> None:
+        import re
+
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--chain" in plain
+        assert "sequence of tasks" in plain
 
     def test_mutual_exclusivity(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
@@ -689,6 +774,134 @@ class TestMainCommand:
         result = runner.invoke(app, ["--task-init", "feat-x", "--squash"])
         assert result.exit_code != 0
         assert "--squash is incompatible with --task-init" in result.output
+
+    @patch("cadence.cli.run_chain_mode")
+    def test_chain_flag_calls_run_chain_mode(self, mock_chain: MagicMock, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "chain.txt"
+        f.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(f)])
+        assert result.exit_code == 0
+        mock_chain.assert_called_once_with(f, config=None)
+
+    @patch("cadence.cli.run_chain_mode")
+    def test_chain_with_config_passes(self, mock_chain: MagicMock, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        f = tmp_path / "chain.txt"
+        f.write_text("alpha\n")
+        cfg = tmp_path / "override.yaml"
+        cfg.write_text("default_branch: main\n")
+        result = runner.invoke(app, ["--chain", str(f), "--config", str(cfg)])
+        assert result.exit_code == 0
+        mock_chain.assert_called_once_with(f, config=cfg)
+
+    def test_chain_with_plan_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        plan_file = tmp_path / "p.md"
+        plan_file.write_text("plan")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--plan", str(plan_file)])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_task_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        task_file = tmp_path / "t.md"
+        task_file.write_text("task")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--task", str(task_file)])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_review_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--review"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_run_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--run"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_task_init_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--task-init", "feat-x"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_impl_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--impl"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_squash_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--squash"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
+
+    def test_chain_with_base_errors(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from cadence.cli import app
+
+        runner = CliRunner()
+        chain_file = tmp_path / "chain.txt"
+        chain_file.write_text("alpha\n")
+        result = runner.invoke(app, ["--chain", str(chain_file), "--base", "develop"])
+        assert result.exit_code != 0
+        assert "--chain is mutually exclusive" in result.output
 
 
 class TestDerivePlanPath:
@@ -4476,3 +4689,657 @@ class TestSquashPipelineIntegration:
         mock_run_task_mode.assert_called_once()
         _, kwargs = mock_run_task_mode.call_args
         assert kwargs["squash"] is True
+
+
+class TestParseChainFile:
+    def test_missing_file_exits(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        missing = tmp_path / "absent.txt"
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(missing)
+        assert excinfo.value.code == 1
+        assert f"file not found: {missing}" in capsys.readouterr().err
+
+    def test_empty_file_exits(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        chain = tmp_path / "chain.txt"
+        chain.write_text("")
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(chain)
+        assert excinfo.value.code == 1
+        assert "chain file is empty" in capsys.readouterr().err
+
+    def test_only_blanks_and_comments_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        chain = tmp_path / "chain.txt"
+        chain.write_text("\n\n# comment\n   \n# another\n")
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(chain)
+        assert excinfo.value.code == 1
+        assert "chain file is empty" in capsys.readouterr().err
+
+    def test_happy_path_strips_and_skips(self, tmp_path: Path) -> None:
+        chain = tmp_path / "chain.txt"
+        chain.write_text("  task-1  \n# skip\n\ntask-2\n   task-3\n# trailing\n")
+        names = _parse_chain_file(chain)
+        assert names == ["task-1", "task-2", "task-3"]
+
+    @pytest.mark.parametrize("name", ["foo/bar", "back\\slash", ".hidden", "-leading-dash", "/abs"])
+    def test_invalid_names_exit(
+        self, name: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        chain = tmp_path / "chain.txt"
+        chain.write_text(f"valid-1\n{name}\n")
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(chain)
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "invalid task name in chain file" in err
+        assert name in err
+
+
+class TestValidateChainTasks:
+    def test_all_present_returns_empty(self, tmp_path: Path) -> None:
+        for name in ("a", "b"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+        import os
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            warnings = _validate_chain_tasks("cdc-tasks", ["a", "b"])
+        finally:
+            os.chdir(original_cwd)
+        assert warnings == []
+
+    def test_missing_directory_warning(self, tmp_path: Path) -> None:
+        import os
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            warnings = _validate_chain_tasks("cdc-tasks", ["nope"])
+        finally:
+            os.chdir(original_cwd)
+        assert len(warnings) == 1
+        assert "task directory not found" in warnings[0]
+        assert "nope" in warnings[0]
+
+    def test_missing_init_warning(self, tmp_path: Path) -> None:
+        import os
+
+        (tmp_path / "cdc-tasks" / "a").mkdir(parents=True)
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            warnings = _validate_chain_tasks("cdc-tasks", ["a"])
+        finally:
+            os.chdir(original_cwd)
+        assert len(warnings) == 1
+        assert "init file not found" in warnings[0]
+
+    def test_multiple_warnings_collected(self, tmp_path: Path) -> None:
+        import os
+
+        (tmp_path / "cdc-tasks" / "with-init").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "with-init" / "init").touch()
+        (tmp_path / "cdc-tasks" / "no-init").mkdir(parents=True)
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            warnings = _validate_chain_tasks("cdc-tasks", ["with-init", "no-init", "missing"])
+        finally:
+            os.chdir(original_cwd)
+        assert len(warnings) == 2
+        assert any("no-init" in w and "init file not found" in w for w in warnings)
+        assert any("missing" in w and "task directory not found" in w for w in warnings)
+
+
+class TestResolveChainDefaultBranch:
+    def test_no_per_task_config_returns_global(self, tmp_path: Path) -> None:
+        import os
+
+        (tmp_path / "cdc-tasks" / "task-1").mkdir(parents=True)
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result = _resolve_chain_default_branch("cdc-tasks", "task-1", "main")
+        finally:
+            os.chdir(original_cwd)
+        assert result == "main"
+
+    def test_per_task_config_overrides_global(self, tmp_path: Path) -> None:
+        import os
+
+        task_dir = tmp_path / "cdc-tasks" / "task-1"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("default_branch: feature-parent\n")
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result = _resolve_chain_default_branch("cdc-tasks", "task-1", "main")
+        finally:
+            os.chdir(original_cwd)
+        assert result == "feature-parent"
+
+    def test_per_task_config_without_default_branch_falls_back(self, tmp_path: Path) -> None:
+        import os
+
+        task_dir = tmp_path / "cdc-tasks" / "task-1"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("plan:\n  model: claude-opus-4-7\n")
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result = _resolve_chain_default_branch("cdc-tasks", "task-1", "main")
+        finally:
+            os.chdir(original_cwd)
+        assert result == "main"
+
+    def test_invalid_per_task_yaml_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import os
+
+        task_dir = tmp_path / "cdc-tasks" / "task-1"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("not-a-mapping\n")
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                _resolve_chain_default_branch("cdc-tasks", "task-1", "main")
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "invalid config.yaml for task task-1" in err
+
+
+class TestRunChainMode:
+    def _make_setup_patch(
+        self,
+        mock_setup: MagicMock,
+        mock_svc: MagicMock,
+        default_branch: str = "main",
+        tasks_root: str = "cdc-tasks",
+    ) -> None:
+        from cadence.config import Config
+
+        cfg = Config(tasks_root=tasks_root, default_branch=default_branch)
+        mock_setup.return_value = (
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            mock_svc,
+            MagicMock(),
+            default_branch,
+            None,
+        )
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_file_missing_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        missing = tmp_path / "no-such.txt"
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_mode(missing)
+        assert excinfo.value.code == 1
+        assert f"file not found: {missing}" in capsys.readouterr().err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_file_empty_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("\n# only comment\n   \n")
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_mode(chain)
+        assert excinfo.value.code == 1
+        assert "chain file is empty" in capsys.readouterr().err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_invalid_task_name_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("ok-name\n../evil\n")
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_mode(chain)
+        assert excinfo.value.code == 1
+        assert "invalid task name in chain file" in capsys.readouterr().err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_missing_task_dir_emits_warning_and_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("ghost-task\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "warn:" in err
+        assert "task directory not found" in err
+        assert "ghost-task" in err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_missing_init_file_emits_warning_and_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        (tmp_path / "cdc-tasks" / "no-init-task").mkdir(parents=True)
+        chain = tmp_path / "chain.txt"
+        chain.write_text("no-init-task\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "init file not found" in err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_dirty_working_tree_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = True
+        mock_svc.current_branch.return_value = "main"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("task-a\n")
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_mode(chain)
+        assert excinfo.value.code == 1
+        assert "uncommitted changes present" in capsys.readouterr().err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_detached_head_exits(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = ""
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("task-a\n")
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_mode(chain)
+        assert excinfo.value.code == 1
+        assert "cannot --chain from a detached HEAD" in capsys.readouterr().err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_happy_path_three_tasks(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc, default_branch="main")
+
+        for name in ("alpha", "beta", "gamma"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+        (tmp_path / "cdc-tasks" / "beta" / "config.yaml").write_text(
+            "default_branch: feature-parent\n"
+        )
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\ngamma\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert mock_run_run.call_count == 3
+        for call in mock_run_run.call_args_list:
+            _, kwargs = call
+            assert kwargs["impl"] is True
+            assert kwargs["squash"] is True
+
+        create_calls = mock_svc.create_branch_from.call_args_list
+        assert [c.args for c in create_calls] == [
+            ("alpha", "main"),
+            ("beta", "feature-parent"),
+            ("gamma", "main"),
+        ]
+        mock_svc.checkout_branch.assert_not_called()
+
+        out = capsys.readouterr().out
+        assert "[chain 1/3] alpha" in out
+        assert "[chain 2/3] beta" in out
+        assert "[chain 3/3] gamma" in out
+        assert "chain complete: 3 task(s)" in out
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_existing_branch_uses_checkout(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.side_effect = lambda name: name == "alpha"
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("alpha", "beta"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.checkout_branch.assert_called_once_with("alpha")
+        mock_svc.create_branch_from.assert_called_once_with("beta", "main")
+        assert mock_run_run.call_count == 2
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_fail_fast_stops_chain(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("a", "b", "c"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\nc\n")
+
+        def side_effect(*, impl: bool, squash: bool, config: Path | None) -> None:
+            if mock_run_run.call_count == 2:
+                raise SystemExit(1)
+
+        mock_run_run.side_effect = side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert mock_run_run.call_count == 2
+        err = capsys.readouterr().err
+        assert "chain failed at task 2/3: b" in err
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_config_propagated_to_run_run_mode(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        (tmp_path / "cdc-tasks" / "only").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "only" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("only\n")
+        cfg_path = tmp_path / "override.yaml"
+        cfg_path.write_text("default_branch: main\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_mode(chain, config=cfg_path)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_run.assert_called_once_with(impl=True, squash=True, config=cfg_path)
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_git_op_runtime_error_reports_chain_position(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_svc.create_branch_from.side_effect = RuntimeError("base ref does not resolve")
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("a", "b"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "error: base ref does not resolve" in err
+        assert "chain failed at task 1/2: a" in err
+        mock_run_run.assert_not_called()
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_invalid_per_task_yaml_reports_chain_position(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("first", "second"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+        (tmp_path / "cdc-tasks" / "second" / "config.yaml").write_text("not-a-mapping\n")
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("first\nsecond\n")
+
+        def side_effect(*, impl: bool, squash: bool, config: Path | None) -> None:
+            return None
+
+        mock_run_run.side_effect = side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "invalid config.yaml for task second" in err
+        assert "chain failed at task 2/2: second" in err
+
+    @patch("cadence.cli.run_run_mode")
+    @patch("cadence.cli._setup_runtime")
+    def test_keyboard_interrupt_swallowed_by_inner_mode_stops_chain(
+        self,
+        mock_setup: MagicMock,
+        mock_run_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.cli import _sigint
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("a", "b", "c"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\nc\n")
+
+        def side_effect(*, impl: bool, squash: bool, config: Path | None) -> None:
+            if mock_run_run.call_count == 2:
+                _sigint.shutdown_event.set()
+
+        mock_run_run.side_effect = side_effect
+
+        _sigint.reset()
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+            _sigint.reset()
+
+        assert excinfo.value.code == 1
+        assert mock_run_run.call_count == 2
+        err = capsys.readouterr().err
+        assert "chain interrupted at task 2/3: b" in err
