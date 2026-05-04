@@ -19,6 +19,7 @@ from cadence.cli import (
     resolve_version,
     run_plan_mode,
     run_review_mode,
+    run_run_mode,
     run_task_init_mode,
     run_task_mode,
     to_rel_path,
@@ -63,7 +64,9 @@ class TestValidateFlags:
         with pytest.raises(SystemExit) as excinfo:
             _validate_flags(None, None, False, False, None)
         assert excinfo.value.code == 1
-        assert "--task-init" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "--task-init" in err
+        assert "--run" in err
 
     def test_task_init_alone_passes(self) -> None:
         _validate_flags(None, None, False, False, None, "feat-x")
@@ -142,6 +145,42 @@ class TestValidateFlags:
 
     def test_valid_plan_with_impl_passes(self, tmp_path: Path) -> None:
         _validate_flags(tmp_path / "p", None, False, True, None)
+
+    def test_run_alone_passes(self) -> None:
+        _validate_flags(None, None, False, False, None, run=True)
+
+    def test_run_with_impl_passes(self) -> None:
+        _validate_flags(None, None, False, True, None, run=True)
+
+    def test_run_with_plan_errors(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(tmp_path / "p", None, False, False, None, run=True)
+        assert excinfo.value.code == 1
+        assert "--run is mutually exclusive" in capsys.readouterr().err
+
+    def test_run_with_task_errors(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, tmp_path / "p", False, False, None, run=True)
+        assert excinfo.value.code == 1
+        assert "--run is mutually exclusive" in capsys.readouterr().err
+
+    def test_run_with_review_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, True, False, None, run=True)
+        assert excinfo.value.code == 1
+        assert "--run is mutually exclusive" in capsys.readouterr().err
+
+    def test_run_with_task_init_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, None, "feat-x", run=True)
+        assert excinfo.value.code == 1
+        assert "--task-init is mutually exclusive" in capsys.readouterr().err
+
+    def test_run_with_base_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, "main", run=True)
+        assert excinfo.value.code == 1
+        assert "--run is incompatible with --base" in capsys.readouterr().err
 
 
 class TestCheckClaudeDep:
@@ -2788,3 +2827,523 @@ class TestRunTaskInitMode:
             os.chdir(original_cwd)
 
         assert not (tmp_path / "cdc-tasks" / "scaffold" / "config.yaml").exists()
+
+
+class TestRunRunMode:
+    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_not_a_git_repo(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _svc: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_run_mode()
+        assert excinfo.value.code == 1
+        assert "not a repo" in capsys.readouterr().err
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_detached_head_exits(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = ""
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_run_mode()
+        assert excinfo.value.code == 1
+        assert "detached HEAD" in capsys.readouterr().err
+        mock_run_plan.assert_not_called()
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_task_directory_missing(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_run_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "task directory not found" in capsys.readouterr().err
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_completed_message_no_impl(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=False)
+        finally:
+            os.chdir(original_cwd)
+
+        assert "plan already completed" in capsys.readouterr().out
+        mock_run_plan.assert_not_called()
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_completed_message_with_impl(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True)
+        finally:
+            os.chdir(original_cwd)
+
+        assert "plan already completed" in capsys.readouterr().out
+        mock_run_plan.assert_not_called()
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_exists_no_impl_prints_hint(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan").write_text("# plan", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=False)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "plan ready" in out
+        assert "cadence --task" in out
+        mock_run_task.assert_not_called()
+        mock_run_plan.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_exists_with_impl_calls_run_task_mode(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        plan_path = task_dir / "plan"
+        plan_path.write_text("# plan", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_task.assert_called_once()
+        args, kwargs = mock_run_task.call_args
+        assert args[0] == Path("cdc-tasks/feat-x/plan")
+        assert kwargs == {"config": None}
+        mock_run_plan.assert_not_called()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_init_missing_exits(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        (tmp_path / "cdc-tasks" / "feat-x").mkdir(parents=True)
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_run_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "init file not found" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_init_empty_exits(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("   \n\t\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_run_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "init file is empty" in capsys.readouterr().err
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_init_non_empty_no_impl_calls_run_plan_mode(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("do the thing", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=False)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_plan.assert_called_once()
+        args, kwargs = mock_run_plan.call_args
+        assert args[0] == Path("cdc-tasks/feat-x/init")
+        assert kwargs == {"impl": False, "config": None}
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_init_non_empty_with_impl_calls_run_plan_mode_with_impl_true(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("do the thing", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_plan.assert_called_once()
+        _args, kwargs = mock_run_plan.call_args
+        assert kwargs == {"impl": True, "config": None}
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_uses_init_prompt_name_override(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", init_prompt_name="prompt")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "prompt").write_text("do it", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=False)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_run_plan.assert_called_once()
+        args, _kwargs = mock_run_plan.call_args
+        assert args[0] == Path("cdc-tasks/feat-x/prompt")
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_takes_precedence_over_init(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("do it", encoding="utf-8")
+        (task_dir / "plan").write_text("# plan", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=False)
+        finally:
+            os.chdir(original_cwd)
+
+        assert "plan ready" in capsys.readouterr().out
+        mock_run_plan.assert_not_called()
+        mock_run_task.assert_not_called()
+
+    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_plan_completed_takes_precedence_over_plan_and_init(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_plan: MagicMock,
+        mock_run_task: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("do it", encoding="utf-8")
+        (task_dir / "plan").write_text("# plan", encoding="utf-8")
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_run_mode(impl=True)
+        finally:
+            os.chdir(original_cwd)
+
+        assert "plan already completed" in capsys.readouterr().out
+        mock_run_plan.assert_not_called()
+        mock_run_task.assert_not_called()
