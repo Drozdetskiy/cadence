@@ -557,3 +557,11 @@ class TestServiceDelegation:
         _make_commit(path)
         svc = Service(path, _Log())
         assert svc.is_default_branch("") is True
+
+    def test_branch_exists(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path)
+        svc = Service(path, _Log())
+        assert svc.branch_exists("main") is True
+        assert svc.branch_exists("nope") is False

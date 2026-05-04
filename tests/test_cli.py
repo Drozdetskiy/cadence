@@ -18,6 +18,7 @@ from cadence.cli import (
     resolve_version,
     run_plan_mode,
     run_review_mode,
+    run_task_init_mode,
     run_task_mode,
     to_rel_path,
 )
@@ -61,7 +62,44 @@ class TestValidateFlags:
         with pytest.raises(SystemExit) as excinfo:
             _validate_flags(None, None, False, False, None)
         assert excinfo.value.code == 1
-        assert "one of --plan, --task, or --review is required" in capsys.readouterr().err
+        assert "--task-init" in capsys.readouterr().err
+
+    def test_task_init_alone_passes(self) -> None:
+        _validate_flags(None, None, False, False, None, "feat-x")
+
+    def test_task_init_with_plan_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(tmp_path / "p", None, False, False, None, "feat-x")
+        assert excinfo.value.code == 1
+        assert "--task-init is mutually exclusive" in capsys.readouterr().err
+
+    def test_task_init_with_task_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, tmp_path / "p", False, False, None, "feat-x")
+        assert excinfo.value.code == 1
+        assert "--task-init is mutually exclusive" in capsys.readouterr().err
+
+    def test_task_init_with_review_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, True, False, None, "feat-x")
+        assert excinfo.value.code == 1
+        assert "--task-init is mutually exclusive" in capsys.readouterr().err
+
+    def test_task_init_with_impl_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, True, None, "feat-x")
+        assert excinfo.value.code == 1
+        assert "--task-init is incompatible with --impl" in capsys.readouterr().err
+
+    def test_task_init_with_base_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            _validate_flags(None, None, False, False, "main", "feat-x")
+        assert excinfo.value.code == 1
+        assert "--task-init is incompatible with --base" in capsys.readouterr().err
 
     def test_plan_and_task_mutually_exclusive(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2212,3 +2250,286 @@ class TestProgressPathWiring:
         assert excinfo.value.code == 1
         captured = capsys.readouterr()
         assert "no branch and no head hash" in captured.err
+
+
+class TestRunTaskInitMode:
+    @pytest.mark.parametrize("name", ["", "/foo", "foo/bar", "back\\slash", "-foo", ".hidden"])
+    def test_invalid_name_exits(self, name: str, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            run_task_init_mode(name)
+        assert excinfo.value.code == 1
+        assert "invalid task name" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_not_a_git_repo(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _svc: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_task_init_mode("feat-x")
+        assert excinfo.value.code == 1
+        assert "not a repo" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_ensure_has_commits_failure(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        mock_svc = MagicMock()
+        mock_svc.ensure_has_commits.side_effect = RuntimeError("aborted by user")
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_task_init_mode("feat-x")
+        assert excinfo.value.code == 1
+        assert "aborted by user" in capsys.readouterr().err
+        mock_svc.create_branch.assert_not_called()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_detached_head_exits(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = ""
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_task_init_mode("feat-x")
+        assert excinfo.value.code == 1
+        assert "detached HEAD" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_directory_already_exists(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_service_cls.return_value = mock_svc
+
+        (tmp_path / "cdc-tasks" / "feat-x").mkdir(parents=True)
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode("feat-x")
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "task directory already exists" in capsys.readouterr().err
+        mock_svc.create_branch.assert_not_called()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_branch_already_exists(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = True
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode("feat-x")
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "branch already exists" in capsys.readouterr().err
+        mock_svc.create_branch.assert_not_called()
+        assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_create_branch_failure_leaves_no_dir(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_svc.create_branch.side_effect = RuntimeError("git checkout -b failed")
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode("feat-x")
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert "git checkout -b failed" in capsys.readouterr().err
+        assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_happy_path_on_default_branch_no_config(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x")
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.create_branch.assert_called_once_with("feat-x")
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        assert task_dir.is_dir()
+        assert (task_dir / "init").is_file()
+        assert (task_dir / "init").read_text() == ""
+        assert not (task_dir / "config.yaml").exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_happy_path_on_non_default_branch_writes_config(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        import yaml
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature-parent"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("child-task")
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.create_branch.assert_called_once_with("child-task")
+        task_dir = tmp_path / "cdc-tasks" / "child-task"
+        assert (task_dir / "init").is_file()
+        config_path = task_dir / "config.yaml"
+        assert config_path.is_file()
+        loaded = yaml.safe_load(config_path.read_text())
+        assert loaded == {"default_branch": "feature-parent"}
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_origin_prefix_on_default_branch_treated_as_default(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="origin/main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("scaffold")
+        finally:
+            os.chdir(original_cwd)
+
+        assert not (tmp_path / "cdc-tasks" / "scaffold" / "config.yaml").exists()

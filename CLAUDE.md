@@ -1,6 +1,6 @@
 # cadence
 
-Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop), and `cadence --review` (review-only of the current branch: review_first → review_loop, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`.
+Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop), and `cadence --review` (review-only of the current branch: review_first → review_loop, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`. `cadence --task-init <task-name>` scaffolds a new branch + `<tasks_root>/<task-name>/init` (plus `config.yaml` recording the parent branch when not on `default_branch`) without invoking Claude.
 
 ## Package structure
 

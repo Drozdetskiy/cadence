@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import typer
+import yaml
 
 from cadence.config import (
     Config,
@@ -87,7 +88,22 @@ def _validate_flags(
     review: bool,
     impl: bool,
     base: str | None,
+    task_init: str | None = None,
 ) -> None:
+    if task_init is not None:
+        if plan is not None or task is not None or review:
+            typer.echo(
+                "error: --task-init is mutually exclusive with --plan, --task, and --review",
+                err=True,
+            )
+            raise SystemExit(1)
+        if impl:
+            typer.echo("error: --task-init is incompatible with --impl", err=True)
+            raise SystemExit(1)
+        if base is not None:
+            typer.echo("error: --task-init is incompatible with --base", err=True)
+            raise SystemExit(1)
+        return
     if review and impl:
         typer.echo("error: --review is incompatible with --impl", err=True)
         raise SystemExit(1)
@@ -106,7 +122,7 @@ def _validate_flags(
         raise SystemExit(1)
     if active == 0:
         typer.echo(
-            "error: one of --plan, --task, or --review is required",
+            "error: one of --plan, --task, --review, or --task-init is required",
             err=True,
         )
         raise SystemExit(1)
@@ -565,6 +581,70 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         log.close(success=run_success)
 
 
+def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
+    if not task_name or "/" in task_name or "\\" in task_name or task_name.startswith((".", "-")):
+        typer.echo(f"error: invalid task name: {task_name!r}", err=True)
+        raise SystemExit(1)
+
+    local_dir = detect_local_dir()
+    cfg = load_config(local_dir)
+    _apply_yaml_overrides(cfg, config, anchor=None)
+
+    try:
+        git_svc = Service(path=".", log=_StderrLogger())
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    try:
+        git_svc.ensure_has_commits(
+            lambda: ask_yes_no("repository has no commits. create an initial commit?")
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    parent_branch = git_svc.current_branch()
+    if not parent_branch:
+        typer.echo("error: cannot --task-init from a detached HEAD", err=True)
+        raise SystemExit(1)
+
+    task_dir = Path(cfg.tasks_root) / task_name
+    if task_dir.exists():
+        typer.echo(f"error: task directory already exists: {task_dir}", err=True)
+        raise SystemExit(1)
+
+    if git_svc.branch_exists(task_name):
+        typer.echo(f"error: branch already exists: {task_name}", err=True)
+        raise SystemExit(1)
+
+    try:
+        git_svc.create_branch(task_name)
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    task_dir.mkdir(parents=True, exist_ok=False)
+    init_file = task_dir / "init"
+    init_file.touch()
+
+    typer.echo(f"created branch: {task_name}")
+    typer.echo(f"created directory: {task_dir}")
+
+    default = cfg.default_branch
+    if default.startswith("origin/"):
+        default = default[len("origin/") :]
+    if parent_branch != default:
+        config_path = task_dir / "config.yaml"
+        config_path.write_text(
+            yaml.safe_dump({"default_branch": parent_branch}, sort_keys=False),
+            encoding="utf-8",
+        )
+        typer.echo(f"wrote config: {config_path}")
+
+    typer.echo(f"next: cadence --plan {init_file}")
+
+
 class _StderrLogger:
     def print(self, fmt: str, *args: object) -> None:
         msg = fmt % args if args else fmt
@@ -593,6 +673,11 @@ _CONFIG_OPT: Path | None = typer.Option(
     "--config",
     help="Path to optional config.yaml overrides (models, default_branch)",
 )
+_TASK_INIT_OPT: str | None = typer.Option(
+    None,
+    "--task-init",
+    help="Scaffold a new task: branch + tasks_root/<name>/init [+ config.yaml]",
+)
 _VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
 
 
@@ -604,13 +689,18 @@ def main(
     impl: bool = _IMPL_OPT,
     base: str | None = _BASE_OPT,
     config: Path | None = _CONFIG_OPT,
+    task_init: str | None = _TASK_INIT_OPT,
     version: bool = _VERSION_OPT,
 ) -> None:
     if version:
         typer.echo(f"cadence {resolve_version()}")
         raise SystemExit(0)
 
-    _validate_flags(plan, task, review, impl, base)
+    _validate_flags(plan, task, review, impl, base, task_init)
+
+    if task_init is not None:
+        run_task_init_mode(task_init, config=config)
+        return
 
     _sigint.reset()
     _sigint.install()

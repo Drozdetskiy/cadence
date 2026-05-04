@@ -52,17 +52,20 @@ cdc-tasks/
 ```
 
 ```bash
-# 1. Create a plan from a free-form task description
+# 1. Scaffold a new task: branch + cdc-tasks/<name>/init (+ config.yaml if not on default_branch)
+cadence --task-init 0001-my-feature
+
+# 2. Create a plan from a free-form task description
 cadence --plan cdc-tasks/0001-my-feature/init
 #   → writes cdc-tasks/0001-my-feature/plan
 
-# 2. Create a plan and chain straight into implementation
+# 3. Create a plan and chain straight into implementation
 cadence --plan cdc-tasks/0001-my-feature/init --impl
 
-# 3. Execute an existing plan: branch + tasks + review
+# 4. Execute an existing plan: branch + tasks + review
 cadence --task cdc-tasks/0001-my-feature/plan
 
-# 4. Review the current branch only (no plan, no branch creation)
+# 5. Review the current branch only (no plan, no branch creation)
 cadence --review
 cadence --review --base develop                                 # override base branch
 cadence --review --config cdc-tasks/0001-my-feature/config.yaml # per-run overrides
@@ -72,8 +75,8 @@ cadence --version
 ```
 
 Flag rules:
-- `--plan`, `--task`, `--review` are mutually exclusive.
-- `--impl` requires `--plan` (and is incompatible with `--review`).
+- `--plan`, `--task`, `--review`, `--task-init` are mutually exclusive.
+- `--impl` requires `--plan` (and is incompatible with `--review` and `--task-init`).
 - `--base` is only valid with `--review`. Resolution priority: `--base` > `default_branch` in config (defaults to `main`).
 
 ### Plan file format
