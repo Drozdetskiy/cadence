@@ -15,6 +15,7 @@ from cadence.cli import (
     derive_plan_path,
     determine_mode,
     display_stats,
+    find_existing_plan,
     resolve_version,
     run_plan_mode,
     run_review_mode,
@@ -1006,6 +1007,99 @@ class TestSetupRuntime:
         assert "not a repo" in capsys.readouterr().err
 
 
+class TestFindExistingPlan:
+    def test_only_plan_exists_returns_plan_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "feat-x"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("body")
+
+        result = find_existing_plan("cdc-tasks", "feat-x", "main")
+
+        assert result == "cdc-tasks/feat-x/plan"
+
+    def test_only_completed_returns_completed_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "feat-x"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan-completed").write_text("body")
+
+        result = find_existing_plan("cdc-tasks", "feat-x", "main")
+
+        assert result == "cdc-tasks/feat-x/plan-completed"
+
+    def test_both_exist_returns_plan_not_completed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "feat-x"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("active")
+        (plan_dir / "plan-completed").write_text("old")
+
+        result = find_existing_plan("cdc-tasks", "feat-x", "main")
+
+        assert result == "cdc-tasks/feat-x/plan"
+
+    def test_neither_exists_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        result = find_existing_plan("cdc-tasks", "feat-x", "main")
+
+        assert result == ""
+
+    def test_branch_equals_default_returns_empty_even_with_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "main"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("body")
+
+        result = find_existing_plan("cdc-tasks", "main", "main")
+
+        assert result == ""
+
+    def test_origin_prefix_default_branch_trimmed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "main"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("body")
+
+        result = find_existing_plan("cdc-tasks", "main", "origin/main")
+
+        assert result == ""
+
+    def test_empty_branch_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+
+        result = find_existing_plan("cdc-tasks", "", "main")
+
+        assert result == ""
+
+    def test_branch_with_slash_uses_sanitized_segment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        plan_dir = tmp_path / "cdc-tasks" / "feat-foo"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("body")
+
+        result = find_existing_plan("cdc-tasks", "feat/foo", "main")
+
+        assert result == "cdc-tasks/feat-foo/plan"
+
+
 class TestRunReviewMode:
     @patch("cadence.cli._install_sigquit")
     @patch("cadence.cli.TerminalCollector")
@@ -1375,6 +1469,167 @@ class TestRunReviewMode:
         mock_log.print.assert_any_call("aborted by user")
         mock_log.close.assert_called_once()
         mock_svc.diff_stats.assert_not_called()
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_discovers_existing_plan(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_svc.head_hash.return_value = "abc123"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_dir = tmp_path / "cdc-tasks" / "feat-x"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan").write_text("plan body")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.Runner") as mock_runner_cls,
+            ):
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_review_mode()
+
+                ctx_arg = mock_runner_cls.call_args.args[0]
+                assert ctx_arg.plan_file == "cdc-tasks/feat-x/plan"
+        finally:
+            os.chdir(original_cwd)
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_no_plan_results_in_empty_plan_file(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_svc.head_hash.return_value = "abc123"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.Runner") as mock_runner_cls,
+            ):
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_review_mode()
+
+                ctx_arg = mock_runner_cls.call_args.args[0]
+                assert ctx_arg.plan_file == ""
+        finally:
+            os.chdir(original_cwd)
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_mode_falls_back_to_plan_completed(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feat-x"
+        mock_svc.head_hash.return_value = "abc123"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_terminal_cls.return_value = MagicMock()
+
+        plan_dir = tmp_path / "cdc-tasks" / "feat-x"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan-completed").write_text("done")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.Runner") as mock_runner_cls,
+            ):
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = True
+                mock_runner_cls.return_value = mock_runner
+
+                run_review_mode()
+
+                ctx_arg = mock_runner_cls.call_args.args[0]
+                assert ctx_arg.plan_file == "cdc-tasks/feat-x/plan-completed"
+        finally:
+            os.chdir(original_cwd)
 
 
 class TestRunTaskModeReviewExecutor:

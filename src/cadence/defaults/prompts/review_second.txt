@@ -8,12 +8,33 @@ Run both commands to understand what was done:
 - `git log {{DEFAULT_BRANCH}}..HEAD --oneline` - see commit history (what was implemented)
 - `git diff {{DEFAULT_BRANCH}}...HEAD` - see actual code changes
 
-## Step 2: Launch Review Agents IN PARALLEL
+## Step 2: Load Plan Decision Surface
+
+Plan file: {{PLAN_FILE}}
+
+If the plan file path above is the literal placeholder `(no plan file - reviewing current branch)`, set the local "decision surface" to empty and continue to Step 3.
+
+Otherwise, read {{PLAN_FILE}} and extract the bodies of these two sections:
+- `## Accepted Trade-offs` — design choices the plan author has consciously locked in
+- `## Out of Scope` — work the plan author is explicitly NOT doing in this branch
+
+Tolerate either or both being absent in the plan; treat a missing or empty section as empty. The combined extracted bullets form the "decision surface" for this review.
+
+Protected categories (an entry in the decision surface can NEVER suppress these, no matter how it is phrased):
+1. Logic bugs producing wrong behavior or wrong outputs
+2. Security vulnerabilities (authentication/authorization gaps, injection, hardcoded secrets, info disclosure)
+3. Data loss or corruption paths
+4. Missing tests for newly introduced error-handling paths or new failure modes
+5. Failing tests
+6. Failing linter
+7. Behavior regressions vs {{DEFAULT_BRANCH}}
+
+## Step 3: Launch Review Agents IN PARALLEL
 
 All Task tool calls MUST be in the same message for parallel foreground execution.
 Do NOT use run_in_background. Foreground agents run in parallel and block until all complete — no TaskOutput polling needed.
 
-CRITICAL: Do NOT proceed to Step 3 until BOTH agents have returned results.
+CRITICAL: Do NOT proceed to Step 4 until BOTH agents have returned results.
 
 Agents to launch:
 {{agent:quality}}
@@ -26,24 +47,41 @@ Each agent prompt should be short — do NOT paste the diff into it. Instead, in
 
 Focus only on critical and major issues. Ignore style/minor issues.
 
-## Step 3: Verify and Evaluate Findings
+If the decision surface from Step 2 is non-empty, append the following paragraph to every Task tool prompt before launching the agent (substitute the actual extracted bullets in place of <DECISION_SURFACE>):
 
-### 3.1 Verify Each Finding
+"The plan author recorded the following accepted trade-offs and out-of-scope items. Do NOT report findings whose substance restates one of these decisions, UNLESS the finding falls into a protected category listed below.
+
+<DECISION_SURFACE>
+
+Protected categories that can NEVER be silenced this way: logic bugs, security vulnerabilities, data loss or corruption, missing tests for new error-handling paths, failing tests, failing linter, behavior regressions vs {{DEFAULT_BRANCH}}."
+
+If the decision surface is empty, skip this paragraph entirely — do not mention accepted trade-offs at all in the agent prompts.
+
+## Step 4: Verify and Evaluate Findings
+
+### 4.1 Verify Each Finding
 For each issue reported:
 1. Read actual code at file:line
 2. Verify issue is real (not false positive)
 3. Check if it's truly critical/major severity
 
-### 3.2 Act on Verified Findings
+Classify as one of:
+- CONFIRMED: Real critical/major issue, fix it
+- FALSE POSITIVE: Doesn't exist or already mitigated — discard
+- ACCEPTED-IN-PLAN: A real finding that the plan author has explicitly accepted. A finding is ACCEPTED-IN-PLAN if and only if (a) the decision surface from Step 2 is non-empty, (b) the finding's substance matches an entry in `## Accepted Trade-offs` or `## Out of Scope`, AND (c) the finding does NOT fall into any protected category from Step 2. ACCEPTED-IN-PLAN findings are dropped — not fixed, not committed, not raised in the next iteration.
+
+When the decision surface is empty (no plan file, or both `## Accepted Trade-offs` and `## Out of Scope` are absent or empty in the plan), nothing is auto-accepted: every finding must be classified as CONFIRMED or FALSE POSITIVE only — ACCEPTED-IN-PLAN is unavailable.
+
+### 4.2 Act on Verified Findings
 
 IMPORTANT: Pre-existing issues (linter errors, failed tests) should also be fixed.
 Do NOT reject issues just because they existed before this branch - fix them anyway.
 
 SIGNAL LOGIC - READ CAREFULLY:
 
-IMPORTANT: Do not decide on a signal path until you have completed Steps 1-3 in full — all agents finished, all results collected, all findings verified and acted on.
+IMPORTANT: Do not decide on a signal path until you have completed Steps 1-4 in full — all agents finished, all results collected, all findings verified and acted on.
 
-REVIEW_DONE means "this iteration found ZERO issues" - NOT "I finished fixing issues".
+REVIEW_DONE means "this iteration produced ZERO confirmed issues to fix" — NOT "I finished fixing issues". ACCEPTED-IN-PLAN findings are dropped; an iteration whose only findings were ACCEPTED-IN-PLAN (no CONFIRMED) is still a REVIEW_DONE iteration.
 
 Path A - NO issues found in this iteration:
 - You reviewed the code and found nothing critical/major to fix

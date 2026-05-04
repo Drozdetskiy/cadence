@@ -126,6 +126,70 @@ class TestBuildPlanPrompt:
         assert "update README.md" not in result
         assert "update CLAUDE.md" not in result
 
+    def test_includes_accepted_tradeoffs_section(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "## Accepted Trade-offs" in result
+
+    def test_includes_out_of_scope_section(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "## Out of Scope" in result
+
+    def test_includes_none_guidance_bullet(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "- None — " in result
+
+    def test_validation_block_lists_protected_categories(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "Decision Surface" in result
+        for keyword in (
+            "logic bugs",
+            "security vulnerabilities",
+            "data loss",
+            "missing tests",
+            "failing tests",
+            "failing linter",
+            "regressions",
+        ):
+            assert keyword in result, f"protected category keyword missing: {keyword!r}"
+
+    def test_sections_appear_between_context_and_development_approach(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        ctx = result.index("## Context")
+        accepted = result.index("## Accepted Trade-offs")
+        out_of_scope = result.index("## Out of Scope")
+        approach = result.index("## Development Approach")
+        assert ctx < accepted < out_of_scope < approach
+
 
 class TestFormatAgentExpansion:
     def test_with_model(self) -> None:
@@ -357,6 +421,67 @@ class TestBuildReviewFirstPrompt:
         )
         assert ", docs," not in result
 
+    def test_includes_decision_surface_section_headings(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "## Accepted Trade-offs" in result
+        assert "## Out of Scope" in result
+
+    def test_includes_accepted_in_plan_classification(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "ACCEPTED-IN-PLAN" in result
+
+    def test_includes_protected_category_keywords(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        anchor = "Protected categories that can NEVER be silenced this way:"
+        assert anchor in result
+        paragraph = result[result.index(anchor) :].split('"', 1)[0]
+        for keyword in (
+            "security",
+            "data loss",
+            "regressions",
+            "failing tests",
+            "failing linter",
+            "missing tests",
+        ):
+            assert keyword in paragraph, (
+                f"protected category keyword missing from agent-injection paragraph: {keyword!r}"
+            )
+
+    def test_empty_plan_file_renders_no_plan_placeholder(self) -> None:
+        with_plan = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        without_plan = build_review_first_prompt(
+            plan_file="",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "Plan file: (no plan file - reviewing current branch)" in without_plan
+        assert "Plan file: /tmp/plan.md" in with_plan
+        assert "Plan file: /tmp/plan.md" not in without_plan
+
+    def test_load_plan_decision_surface_step_present(self) -> None:
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "Load Plan Decision Surface" in result
+
 
 class TestBuildReviewSecondPrompt:
     def test_expands_two_agents(self) -> None:
@@ -372,6 +497,67 @@ class TestBuildReviewSecondPrompt:
             assert f"{{{{agent:{name}}}}}" not in result
         assert result.count("Report findings only - no positive observations.") == 2
         assert "<<<CADENCE:REVIEW_DONE>>>" in result
+
+    def test_includes_decision_surface_section_headings(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "## Accepted Trade-offs" in result
+        assert "## Out of Scope" in result
+
+    def test_includes_accepted_in_plan_classification(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "ACCEPTED-IN-PLAN" in result
+
+    def test_includes_protected_category_keywords(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        anchor = "Protected categories that can NEVER be silenced this way:"
+        assert anchor in result
+        paragraph = result[result.index(anchor) :].split('"', 1)[0]
+        for keyword in (
+            "security",
+            "data loss",
+            "regressions",
+            "failing tests",
+            "failing linter",
+            "missing tests",
+        ):
+            assert keyword in paragraph, (
+                f"protected category keyword missing from agent-injection paragraph: {keyword!r}"
+            )
+
+    def test_empty_plan_file_renders_no_plan_placeholder(self) -> None:
+        with_plan = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        without_plan = build_review_second_prompt(
+            plan_file="",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "Plan file: (no plan file - reviewing current branch)" in without_plan
+        assert "Plan file: /tmp/plan.md" in with_plan
+        assert "Plan file: /tmp/plan.md" not in without_plan
+
+    def test_load_plan_decision_surface_step_present(self) -> None:
+        result = build_review_second_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert "Load Plan Decision Surface" in result
 
 
 class TestAppendCommitFormatInstruction:
