@@ -68,9 +68,9 @@ default_branch: main
 commit_trailer: ""
 init_prompt_name: init
 commit_format: |
-  Format: subject line `<branch-name>.`, then a blank line, then a body with
-  one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`.
-  Include only the lines that apply. English.
+  Format: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>` is
+  `Added`, `Changed`, or `Deleted`. Clauses joined by `. ` (period + space);
+  items inside one clause joined by `; ` (semicolon + space). English.
 
 # Error patterns
 claude_error_patterns:
@@ -129,7 +129,7 @@ YAML overrides via the global `--config` option (or auto-discovered `config.yaml
 | `default_branch` | string | `"main"` | Name of the default branch; can be overridden via local `.cadence/config.yaml` |
 | `init_prompt_name` | string | `"init"` | Name of the prompt file mapped to `plan` (used in `derive_plan_path`) |
 | `commit_trailer` | string | `""` (disabled) | Trailer appended to all commits (e.g. Co-authored-by) |
-| `commit_format` | string | built-in multi-line default (subject `<branch-name>.` + blank line + `Added:`/`Changed:`/`Deleted:` body lines) | Block of commit-message formatting rules; appended to task/review prompts |
+| `commit_format` | string | built-in single-line default (`<branch-name>. <Clause>: <what>.` with clauses joined by `. ` and items inside a clause by `; `) | Block of commit-message formatting rules; appended to task/review prompts |
 
 ### Error pattern detection
 

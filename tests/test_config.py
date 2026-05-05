@@ -49,13 +49,19 @@ class TestConfigDefaults:
         assert cfg.init_prompt_name == "init"
         assert cfg.commit_trailer == ""
         assert cfg.commit_format != ""
-        assert "subject line `<branch-name>.`" in cfg.commit_format
-        assert "\n\nChanged:" in cfg.commit_format
+        assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
+        assert "separated by `. ` (period + space)" in cfg.commit_format
         assert "no Co-Authored-By trailer" in cfg.commit_format
+        assert "\n\nChanged:" not in cfg.commit_format
         assert "You've hit your limit" in cfg.claude_error_patterns
         assert "API Error:" in cfg.claude_error_patterns
         assert "You've hit your limit" in cfg.claude_limit_patterns
         assert isinstance(cfg.colors, ColorConfig)
+
+    def test_commit_format_canonical_examples(self) -> None:
+        cfg = Config()
+        assert "0030-chain. Added:" in cfg.commit_format
+        assert "0014-no-plan-commit-on-start. Changed:" in cfg.commit_format
 
 
 class TestParseDuration:

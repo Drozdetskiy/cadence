@@ -165,9 +165,9 @@ tasks_root:     cdc-tasks # root for per-task subdirectories (init/plan/config.y
 default_branch: main      # override per-project in local config
 commit_trailer: ""        # appended to all cadence-made commits
 commit_format:  |         # appended to task/review prompts (default shown below)
-  Format: subject line `<branch-name>.`, then a blank line, then a body
-  with one clause per line — `Added: <what>`, `Changed: <what>`,
-  `Deleted: <what>`. Include only the lines that apply. ...
+  Format: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>`
+  is `Added`, `Changed`, or `Deleted`. Clauses joined by `. ` (period + space);
+  items inside one clause joined by `; ` (semicolon + space). ...
 
 # Output
 colors:
@@ -197,27 +197,24 @@ If `--config` is omitted, cadence auto-discovers `config.yaml` next to the plan/
 
 ### Commit message format
 
-`commit_format` is appended verbatim to every task and review prompt, telling Claude how to write the commit subject. Plan creation does not commit, so the format is not added there.
+`commit_format` is appended verbatim to every task and review prompt, telling Claude how to write the commit message. Plan creation does not commit, so the format is not added there.
 
 The built-in default produces messages like:
 
 ```
-0014-no-plan-commit-on-start.
-
-Changed: cadence no longer auto-commits the plan file when starting a task.
-Deleted: now-unused commit_plan_file / file_has_changes helpers.
+0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file; file_has_changes helpers.
 ```
 
-Shape: subject line `<branch-name>.`, a blank line, then one short clause per body line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. Include only the lines that apply. The subject + blank line + body shape lets GitHub auto-fill the PR title from the subject and the PR description from the body.
+Shape: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>` is `Added`, `Changed`, or `Deleted`. Multiple clauses are joined by `. ` (period + space); multiple items inside one clause are joined by `; ` (semicolon + space). Include only the clauses that apply.
 
 Override from `.cadence/config.yaml` with any free-form text. Example of a tighter restatement (the shipped default also includes Good/Bad examples and guidance about implementation details belonging in the diff — see `Config.commit_format` in `src/cadence/config.py` for the verbatim text):
 
 ```yaml
 commit_format: |
-  Format: subject line `<branch-name>.`, then a blank line, then a body with
-  one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`.
-  Include only the lines that apply. English.
-  Each body line is one short clause describing the user-visible outcome.
+  Format: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>` is
+  `Added`, `Changed`, or `Deleted`. Clauses joined by `. ` (period + space);
+  items inside one clause joined by `; ` (semicolon + space). English.
+  Each clause is one short item describing the user-visible outcome.
   Author as the user — no Co-Authored-By trailer (unless `commit_trailer` is configured).
 ```
 
