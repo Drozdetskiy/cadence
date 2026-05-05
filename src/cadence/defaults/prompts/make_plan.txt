@@ -6,7 +6,7 @@ IMPORTANT: Read the progress file first to see any questions you already asked a
 
 ## Step 0: Check for Existing Plan
 
-FIRST, check if a plan file already exists next to the prompt file (the file passed to --plan) matching this request.
+FIRST, check if a plan file already exists next to the prompt file (the file passed to `cadence plan`) matching this request.
 If a plan file for this feature already exists:
 - Output <<<CADENCE:PLAN_READY>>> immediately
 - Do NOT modify the existing plan
@@ -50,7 +50,7 @@ When you have enough information to create a plan, write it directly to disk:
 
 1. Write the plan file to exactly this path: {{DERIVED_PLAN_PATH}}
    - Use this exact path verbatim — do not invent a different filename, date stamp, or directory.
-   - The downstream `--impl` chain looks for the plan at this exact path; any deviation causes "file not found".
+   - The downstream `cadence task` step looks for the plan at this exact path; any deviation causes "file not found".
 2. Use this structure:
 
 ---

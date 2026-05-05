@@ -104,7 +104,7 @@ colors:
 | `task_model` | string | `"claude-opus-4-7"` | Model used for the task execution phase |
 | `review_model` | string | `"claude-opus-4-7"` | Model used for review phases |
 
-YAML overrides via `--config <path>` (or auto-discovered `config.yaml` next to the plan/task file) override `plan_model` / `task_model` / `review_model` and `default_branch` at load time.
+YAML overrides via the global `--config` option (or auto-discovered `config.yaml` next to the plan/task file) override `plan_model` / `task_model` / `review_model` and `default_branch` at load time.
 
 ### Timing and iteration control
 
@@ -178,7 +178,7 @@ YAML format: `#RRGGBB` hex string under the `colors:` section.
 
 | Variable | Used in | Description |
 |----------|---------|-------------|
-| `{{PLAN_DESCRIPTION}}` | make_plan.txt | Contents of the file passed to --plan |
+| `{{PLAN_DESCRIPTION}}` | make_plan.txt | Contents of the file passed to `cadence plan` (or the `init` file picked up by `cadence run plan`) |
 
 ### Agent references
 
