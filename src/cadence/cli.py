@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -36,7 +37,15 @@ from cadence.progress.colors import Colors
 from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
 from cadence.status import Mode, PhaseHolder
 
-app = typer.Typer(add_completion=False)
+
+@dataclass(frozen=True)
+class GlobalOpts:
+    config: Path | None = None
+
+
+app = typer.Typer(add_completion=True, no_args_is_help=True)
+run_app = typer.Typer(no_args_is_help=False)
+app.add_typer(run_app, name="run", help="Run plan/task on the current branch (auto-detect)")
 
 
 class SigintHandler:
@@ -72,111 +81,6 @@ def resolve_version() -> str:
         return "unknown"
 
 
-def determine_mode(
-    plan: Path | None,
-    task: Path | None,
-    review: bool,
-) -> Mode:
-    if plan is not None:
-        return Mode.PLAN
-    if task is not None:
-        return Mode.FULL
-    return Mode.REVIEW
-
-
-def _validate_flags(
-    plan: Path | None,
-    task: Path | None,
-    review: bool,
-    impl: bool,
-    base: str | None,
-    task_init: str | None = None,
-    run: bool = False,
-    squash: bool = False,
-    chain: Path | None = None,
-) -> None:
-    if chain is not None:
-        if (
-            plan is not None
-            or task is not None
-            or review
-            or run
-            or task_init is not None
-            or impl
-            or squash
-            or base is not None
-        ):
-            typer.echo(
-                "error: --chain is mutually exclusive with --plan, --task, --review, "
-                "--run, --task-init, --impl, --squash, and --base",
-                err=True,
-            )
-            raise SystemExit(1)
-        return
-    if task_init is not None:
-        if squash:
-            typer.echo("error: --squash is incompatible with --task-init", err=True)
-            raise SystemExit(1)
-        if plan is not None or task is not None or review or run:
-            typer.echo(
-                "error: --task-init is mutually exclusive with --plan, --task, --review, and --run",
-                err=True,
-            )
-            raise SystemExit(1)
-        if impl:
-            typer.echo("error: --task-init is incompatible with --impl", err=True)
-            raise SystemExit(1)
-        if base is not None:
-            typer.echo("error: --task-init is incompatible with --base", err=True)
-            raise SystemExit(1)
-        return
-    if run:
-        if plan is not None or task is not None or review:
-            typer.echo(
-                "error: --run is mutually exclusive with --plan, --task, and --review",
-                err=True,
-            )
-            raise SystemExit(1)
-        if base is not None:
-            typer.echo("error: --run is incompatible with --base", err=True)
-            raise SystemExit(1)
-        if squash and not impl:
-            typer.echo("error: --squash with --plan/--run requires --impl", err=True)
-            raise SystemExit(1)
-        return
-    if review and squash:
-        typer.echo("error: --squash is incompatible with --review", err=True)
-        raise SystemExit(1)
-    if review and impl:
-        typer.echo("error: --review is incompatible with --impl", err=True)
-        raise SystemExit(1)
-    if impl and plan is None:
-        typer.echo("error: --impl requires --plan", err=True)
-        raise SystemExit(1)
-    if base is not None and not review:
-        typer.echo("error: --base is only valid with --review", err=True)
-        raise SystemExit(1)
-    if squash and plan is not None and not impl:
-        typer.echo("error: --squash with --plan/--run requires --impl", err=True)
-        raise SystemExit(1)
-    active = sum([plan is not None, task is not None, review])
-    if active > 1:
-        typer.echo(
-            "error: --plan, --task, and --review are mutually exclusive",
-            err=True,
-        )
-        raise SystemExit(1)
-    if active == 0:
-        if squash:
-            return
-        typer.echo(
-            "error: one of --plan, --task, --review, --run, --task-init, "
-            "--chain, or --squash is required",
-            err=True,
-        )
-        raise SystemExit(1)
-
-
 def check_claude_dep(cfg: Config) -> None:
     cmd = cfg.claude_command or "claude"
     if shutil.which(cmd) is None:
@@ -208,7 +112,7 @@ def derive_plan_path(prompt_file: Path, init_prompt_name: str = "init") -> str:
 def _parse_chain_file(path: Path) -> list[str]:
     if not path.is_file():
         typer.echo(f"error: file not found: {path}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     text = path.read_text(encoding="utf-8")
     names: list[str] = []
     for raw_line in text.splitlines():
@@ -217,11 +121,11 @@ def _parse_chain_file(path: Path) -> list[str]:
             continue
         if "/" in line or "\\" in line or line.startswith((".", "-")):
             typer.echo(f"error: invalid task name in chain file: {line}", err=True)
-            raise SystemExit(1)
+            raise SystemExit(2)
         names.append(line)
     if not names:
         typer.echo("error: chain file is empty", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     return names
 
 
@@ -256,11 +160,11 @@ def _resolve_chain_default_branch(tasks_root: str, name: str, global_default: st
 def _read_plan_file(plan_file: Path) -> str:
     if not plan_file.is_file():
         typer.echo(f"error: file not found: {plan_file}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     content = plan_file.read_text(encoding="utf-8").strip()
     if not content:
         typer.echo("error: plan file is empty", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     return content
 
 
@@ -272,7 +176,7 @@ def _apply_yaml_overrides(
     if config_arg is not None:
         if not config_arg.is_file():
             typer.echo(f"error: config file not found: {config_arg}", err=True)
-            raise SystemExit(1)
+            raise SystemExit(2)
         yaml_path: Path | None = config_arg
     elif anchor is not None:
         yaml_path = find_yaml_config(anchor.parent)
@@ -429,13 +333,7 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(
-    plan_file: Path,
-    *,
-    impl: bool = False,
-    squash: bool = False,
-    config: Path | None = None,
-) -> None:
+def run_plan_mode(plan_file: Path, *, config: Path | None = None) -> None:
     content = _read_plan_file(plan_file)
 
     cfg, holder, colors, _git_svc, factory, default_branch, local_dir = _setup_runtime(
@@ -483,7 +381,7 @@ def run_plan_mode(
         runner = Runner(ctx, cfg, deps)
         run_success = runner.run()
         if run_success:
-            typer.echo(f"run: cadence --task {plan_path}")
+            typer.echo(f"run: cadence task {plan_path}")
     except KeyboardInterrupt:
         log.print("interrupted by user")
         return
@@ -495,9 +393,6 @@ def run_plan_mode(
         raise SystemExit(1) from exc
     finally:
         log.close(success=run_success)
-
-    if impl and run_success:
-        run_task_mode(Path(plan_path), squash=squash, config=config)
 
 
 def _install_sigquit(break_event: threading.Event) -> None:
@@ -525,15 +420,10 @@ def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     return pause
 
 
-def run_task_mode(
-    task_file: Path,
-    *,
-    squash: bool = False,
-    config: Path | None = None,
-) -> None:
+def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
         config, task_file
@@ -629,9 +519,6 @@ def run_task_mode(
     finally:
         log.close(success=run_success)
 
-    if squash and run_success:
-        run_squash_mode(config=config)
-
 
 def run_review_mode(base: str | None = None, *, config: Path | None = None) -> None:
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(config, None)
@@ -723,8 +610,8 @@ def run_squash_mode(*, config: Path | None = None) -> None:
 
     branch = git_svc.current_branch()
     if not branch:
-        typer.echo("error: cannot --squash from a detached HEAD", err=True)
-        raise SystemExit(1)
+        typer.echo("error: cannot squash from a detached HEAD", err=True)
+        raise SystemExit(2)
 
     task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
 
@@ -739,26 +626,26 @@ def run_squash_mode(*, config: Path | None = None) -> None:
             default_branch = cfg.default_branch
 
     if git_svc.is_default_branch(default_branch):
-        typer.echo(f"error: cannot --squash on default branch {default_branch}", err=True)
-        raise SystemExit(1)
+        typer.echo(f"error: cannot squash on default branch {default_branch}", err=True)
+        raise SystemExit(2)
 
     if not task_dir.is_dir():
         typer.echo(f"error: task directory not found: {task_dir}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     completed = task_dir / "plan-completed"
     if not completed.is_file():
         typer.echo("error: plan not completed; squash refused", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     if git_svc.is_dirty():
         typer.echo("error: uncommitted changes present", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     ahead = git_svc.commits_ahead(default_branch)
     if ahead == 0:
         typer.echo(f"error: no commits ahead of {default_branch}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     if ahead == 1:
         typer.echo("single commit already; nothing to squash")
         return
@@ -829,7 +716,7 @@ def run_squash_mode(*, config: Path | None = None) -> None:
 def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     if not task_name or "/" in task_name or "\\" in task_name or task_name.startswith((".", "-")):
         typer.echo(f"error: invalid task name: {task_name!r}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
@@ -851,17 +738,17 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
 
     parent_branch = git_svc.current_branch()
     if not parent_branch:
-        typer.echo("error: cannot --task-init from a detached HEAD", err=True)
-        raise SystemExit(1)
+        typer.echo("error: cannot init from a detached HEAD", err=True)
+        raise SystemExit(2)
 
     task_dir = Path(cfg.tasks_root) / task_name
     if task_dir.exists():
         typer.echo(f"error: task directory already exists: {task_dir}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     if git_svc.branch_exists(task_name):
         typer.echo(f"error: branch already exists: {task_name}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     try:
         git_svc.create_branch(task_name)
@@ -887,15 +774,10 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
         )
         typer.echo(f"wrote config: {config_path}")
 
-    typer.echo(f"next: cadence --plan {init_file}")
+    typer.echo("next: cadence run")
 
 
-def run_run_mode(
-    *,
-    impl: bool = False,
-    squash: bool = False,
-    config: Path | None = None,
-) -> None:
+def _resolve_current_task_dir(config: Path | None) -> tuple[Config, str, Path]:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
     _apply_yaml_overrides(cfg, config, anchor=None)
@@ -908,41 +790,71 @@ def run_run_mode(
 
     branch = git_svc.current_branch()
     if not branch:
-        typer.echo("error: cannot --run from a detached HEAD", err=True)
-        raise SystemExit(1)
+        typer.echo("error: cannot run from a detached HEAD", err=True)
+        raise SystemExit(2)
+
+    default_stripped = cfg.default_branch.removeprefix("origin/")
+    if branch == default_stripped:
+        typer.echo(f"error: cannot run on default branch {default_stripped}", err=True)
+        raise SystemExit(2)
 
     task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
     if not task_dir.is_dir():
         typer.echo(f"error: task directory not found: {task_dir}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
+
+    return cfg, branch, task_dir
+
+
+def _auto_detect_and_run(*, config: Path | None) -> None:
+    cfg, _branch, task_dir = _resolve_current_task_dir(config)
 
     completed = task_dir / "plan-completed"
     if completed.is_file():
-        if squash and impl:
-            run_squash_mode(config=config)
-            return
         typer.echo(f"plan already completed: {to_rel_path(completed)}")
         return
 
     plan_file = task_dir / "plan"
     if plan_file.is_file():
-        if impl:
-            run_task_mode(plan_file, squash=squash, config=config)
-            return
-        typer.echo(f"plan ready: {to_rel_path(plan_file)}")
-        typer.echo(f"run: cadence --task {to_rel_path(plan_file)}")
+        run_task_mode(plan_file, config=config)
         return
 
     init_file = task_dir / cfg.init_prompt_name
     if not init_file.is_file():
         typer.echo(f"error: init file not found: {init_file}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     if not init_file.read_text(encoding="utf-8").strip():
         typer.echo(f"error: init file is empty: {init_file}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
-    run_plan_mode(init_file, impl=impl, squash=squash, config=config)
+    run_plan_mode(init_file, config=config)
+
+
+def _run_plan_on_current_branch(*, config: Path | None) -> None:
+    cfg, _branch, task_dir = _resolve_current_task_dir(config)
+
+    init_file = task_dir / cfg.init_prompt_name
+    if not init_file.is_file():
+        typer.echo(f"error: init file not found: {init_file}", err=True)
+        raise SystemExit(2)
+
+    if not init_file.read_text(encoding="utf-8").strip():
+        typer.echo(f"error: init file is empty: {init_file}", err=True)
+        raise SystemExit(2)
+
+    run_plan_mode(init_file, config=config)
+
+
+def _run_task_on_current_branch(*, config: Path | None) -> None:
+    _cfg, _branch, task_dir = _resolve_current_task_dir(config)
+
+    plan_file = task_dir / "plan"
+    if not plan_file.is_file():
+        typer.echo(f"error: plan file not found: {plan_file}", err=True)
+        raise SystemExit(2)
+
+    run_task_mode(plan_file, config=config)
 
 
 def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
@@ -962,10 +874,10 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
 
     if git_svc.is_dirty():
         typer.echo("error: uncommitted changes present", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
     if git_svc.current_branch() == "":
-        typer.echo("error: cannot --chain from a detached HEAD", err=True)
-        raise SystemExit(1)
+        typer.echo("error: cannot chain from a detached HEAD", err=True)
+        raise SystemExit(2)
 
     names = _parse_chain_file(chain_file)
 
@@ -973,9 +885,15 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
     if warnings:
         for w in warnings:
             typer.echo(f"warn: {w}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(2)
 
     total = len(names)
+
+    def _bail_if_interrupted(i: int, name: str) -> None:
+        if _sigint.shutdown_event.is_set():
+            typer.echo(f"chain interrupted at task {i}/{total}: {name}", err=True)
+            raise SystemExit(1)
+
     for i, name in enumerate(names, start=1):
         typer.echo(f"[chain {i}/{total}] {name}")
         try:
@@ -984,9 +902,14 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                 git_svc.checkout_branch(name)
             else:
                 git_svc.create_branch_from(name, task_default)
-            run_run_mode(impl=True, squash=True, config=config)
+            _run_plan_on_current_branch(config=config)
+            _bail_if_interrupted(i, name)
+            _run_task_on_current_branch(config=config)
+            _bail_if_interrupted(i, name)
+            run_squash_mode(config=config)
+            _bail_if_interrupted(i, name)
         except SystemExit as exc:
-            if exc.code != 0:
+            if exc.code != 0 and not _sigint.shutdown_event.is_set():
                 typer.echo(
                     f"chain failed at task {i}/{total}: {name}",
                     err=True,
@@ -999,13 +922,6 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                 err=True,
             )
             raise SystemExit(1) from None
-
-        if _sigint.shutdown_event.is_set():
-            typer.echo(
-                f"chain interrupted at task {i}/{total}: {name}",
-                err=True,
-            )
-            raise SystemExit(1)
 
     typer.echo(f"chain complete: {total} task(s)")
 
@@ -1024,92 +940,114 @@ class _StderrLogger:
         typer.echo(f"error: {msg}", err=True)
 
 
-_PLAN_OPT: Path | None = typer.Option(None, "--plan", help="Path to plan description file")
-_TASK_OPT: Path | None = typer.Option(None, "--task", help="Path to plan file for task execution")
-_REVIEW_OPT: bool = typer.Option(False, "--review", help="Review current branch only")
-_IMPL_OPT: bool = typer.Option(False, "--impl", help="Auto-implement after plan creation")
-_BASE_OPT: str | None = typer.Option(
-    None,
-    "--base",
-    help="Base branch for review diff (overrides config default_branch)",
-)
-_CONFIG_OPT: Path | None = typer.Option(
+def _ctx_opts(ctx: typer.Context) -> GlobalOpts:
+    obj = ctx.obj
+    if isinstance(obj, GlobalOpts):
+        return obj
+    return GlobalOpts()
+
+
+def _arm_sigint() -> None:
+    _sigint.reset()
+    _sigint.install()
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"cadence {resolve_version()}")
+        raise typer.Exit(0)
+
+
+_CONFIG_OPTION: Path | None = typer.Option(
     None,
     "--config",
     help="Path to optional config.yaml overrides (models, default_branch)",
 )
-_TASK_INIT_OPT: str | None = typer.Option(
-    None,
-    "--task-init",
-    help="Scaffold a new task: branch + tasks_root/<name>/init [+ config.yaml]",
-)
-_RUN_OPT: bool = typer.Option(
+_VERSION_OPTION: bool = typer.Option(
     False,
-    "--run",
-    help="Run the task for the current branch (auto-detect init/plan)",
+    "--version",
+    callback=_version_callback,
+    is_eager=True,
+    help="Print version and exit",
 )
-_SQUASH_OPT: bool = typer.Option(
-    False,
-    "--squash",
-    help=(
-        "Squash all commits on the branch into one"
-        " (also a flag for --task / --plan --impl / --run --impl)"
-    ),
-)
-_CHAIN_OPT: Path | None = typer.Option(
+_BASE_OPTION: str | None = typer.Option(
     None,
-    "--chain",
-    help="Run a sequence of tasks listed in a file (one task name per line)",
+    "--base",
+    help="Base branch for review diff (overrides config default_branch)",
 )
-_VERSION_OPT: bool = typer.Option(False, "--version", help="Print version and exit")
+_TASK_NAME_ARG: str = typer.Argument(...)
+_PATH_ARG: Path = typer.Argument(...)
 
 
-@app.command()
-def main(
-    plan: Path | None = _PLAN_OPT,
-    task: Path | None = _TASK_OPT,
-    review: bool = _REVIEW_OPT,
-    impl: bool = _IMPL_OPT,
-    base: str | None = _BASE_OPT,
-    config: Path | None = _CONFIG_OPT,
-    task_init: str | None = _TASK_INIT_OPT,
-    run: bool = _RUN_OPT,
-    squash: bool = _SQUASH_OPT,
-    chain: Path | None = _CHAIN_OPT,
-    version: bool = _VERSION_OPT,
+@app.callback()
+def app_callback(
+    ctx: typer.Context,
+    config: Path | None = _CONFIG_OPTION,
+    version: bool = _VERSION_OPTION,
 ) -> None:
-    if version:
-        typer.echo(f"cadence {resolve_version()}")
-        raise SystemExit(0)
+    _ = version
+    ctx.obj = GlobalOpts(config=config)
 
-    _validate_flags(plan, task, review, impl, base, task_init, run=run, squash=squash, chain=chain)
 
-    if task_init is not None:
-        run_task_init_mode(task_init, config=config)
+@app.command("init", help="Scaffold a new task: branch + tasks_root/<name>/init [+ config.yaml]")
+def cmd_init(ctx: typer.Context, task_name: str = _TASK_NAME_ARG) -> None:
+    opts = _ctx_opts(ctx)
+    run_task_init_mode(task_name, config=opts.config)
+
+
+@run_app.callback(invoke_without_command=True)
+def cmd_run(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is not None:
         return
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    _auto_detect_and_run(config=opts.config)
 
-    _sigint.reset()
-    _sigint.install()
 
-    if chain is not None:
-        run_chain_mode(chain, config=config)
-        return
+@run_app.command("plan", help="Run plan creation on the current branch's init file")
+def cmd_run_plan(ctx: typer.Context) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    _run_plan_on_current_branch(config=opts.config)
 
-    if run:
-        run_run_mode(impl=impl, squash=squash, config=config)
-        return
 
-    if squash and plan is None and task is None and not review:
-        run_squash_mode(config=config)
-        return
+@run_app.command("task", help="Run task execution on the current branch's plan file")
+def cmd_run_task(ctx: typer.Context) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    _run_task_on_current_branch(config=opts.config)
 
-    mode = determine_mode(plan, task, review)
 
-    if mode == Mode.PLAN:
-        assert plan is not None
-        run_plan_mode(plan, impl=impl, squash=squash, config=config)
-    elif mode == Mode.FULL:
-        assert task is not None
-        run_task_mode(task, squash=squash, config=config)
-    elif mode == Mode.REVIEW:
-        run_review_mode(base, config=config)
+@app.command("plan", help="Create a plan from a prompt file at <path>")
+def cmd_plan(ctx: typer.Context, path: Path = _PATH_ARG) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_plan_mode(path, config=opts.config)
+
+
+@app.command("task", help="Execute tasks from a plan file at <path>")
+def cmd_task(ctx: typer.Context, path: Path = _PATH_ARG) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_task_mode(path, config=opts.config)
+
+
+@app.command("review", help="Review the current branch")
+def cmd_review(ctx: typer.Context, base: str | None = _BASE_OPTION) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_review_mode(base, config=opts.config)
+
+
+@app.command("squash", help="Squash all commits on the current branch into one")
+def cmd_squash(ctx: typer.Context) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_squash_mode(config=opts.config)
+
+
+@app.command("chain", help="Run a sequence of tasks listed in a file (one task name per line)")
+def cmd_chain(ctx: typer.Context, path: Path = _PATH_ARG) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_chain_mode(path, config=opts.config)

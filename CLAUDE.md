@@ -1,12 +1,12 @@
 # cadence
 
-Python CLI for autonomous task execution via Claude Code. Supports `cadence --plan <file>` (plan creation), `cadence --task <file>` (full pipeline: branch creation → iterative task execution → review_first → review_loop), and `cadence --review` (review-only of the current branch: review_first → review_loop, no plan, no branch creation). The `--impl` flag chains `run_task_mode` on the derived plan path immediately after a successful `cadence --plan`, so `cadence --plan <file> --impl` runs the full pipeline in one command. `--review` is incompatible with `--impl`. `cadence --task-init <task-name>` scaffolds a new branch + `<tasks_root>/<task-name>/init` (plus `config.yaml` recording the parent branch when not on `default_branch`) without invoking Claude. `cadence --run` infers the current branch's task directory under `tasks_root` and dispatches to plan creation (when only `init` exists), plan execution (when `plan` exists, with `--impl`), or reports "already completed" (when `plan-completed` exists); `cadence --run --impl` chains the whole init → plan → task pipeline end-to-end. `cadence --chain <path>` reads an ordered list of task names from a file and runs each task sequentially as `--run --impl --squash` on its own branch (branched off each task's resolved `default_branch`), after a pre-flight check that every listed task has a directory + `init` file under `tasks_root`; fails fast and leaves the repo on the failing task's branch.
+Python CLI for autonomous task execution via Claude Code. Subcommand-style surface (one action per command), with global `--config <path>` on the Typer callback. Subcommands: `cadence init <task-name>` (scaffolds a new branch + `<tasks_root>/<task-name>/init`, plus `config.yaml` recording the parent branch when not on `default_branch`; no Claude); `cadence run` (auto-detects the current branch's task phase under `tasks_root` — dispatches to plan creation when only `init` exists, plan execution when `plan` exists, or reports "already completed" when `plan-completed` exists); `cadence run plan` and `cadence run task` (explicit branch-bound forms of the same dispatch); `cadence plan <path>` (path-bound plan creation: interactive Q&A → review → final plan written next to the input); `cadence task <path>` (path-bound task execution: branch creation → iterative task execution → review_first → review_loop); `cadence review [--base <branch>]` (review-only of the current branch: review_first → review_loop, no plan, no branch creation); `cadence squash` (squashes branch commits into one with a Claude-authored message summarizing the diff against the default branch); `cadence chain <path>` (reads an ordered list of task names from a file and runs each end-to-end as plan → task → squash on its own branch branched off each task's resolved `default_branch`, after a pre-flight check that every listed task has a directory + `init` file under `tasks_root`; fails fast and leaves the repo on the failing task's branch). Pipeline composition between top-level subcommands uses shell `&&`. Exit codes follow git: `0` success, `1` runtime failure, `2` misuse.
 
 ## Package structure
 
 ```
 src/cadence/
-  cli.py            - Typer entrypoint, mode dispatch, --plan/--task/--impl/--base/--config flags, SIGINT/SIGQUIT handling
+  cli.py            - Typer entrypoint, subcommand dispatch (init/run/plan/task/review/squash/chain), global `--config` callback, SIGINT/SIGQUIT handling
   config.py         - Config/ColorConfig dataclasses, YAML loading via PyYAML, parse_duration(), YAML model overrides (load_yaml_config/apply_yaml_overrides/find_yaml_config); `tasks_root` (default `cdc-tasks`) is configurable in `.cadence/config.yaml`
   status.py         - Phase/Signal constants, Section dataclass, PhaseHolder
   input.py          - TerminalCollector: interactive Q&A with numbered picker, ask_yes_no()
@@ -74,16 +74,20 @@ Never commit directly on `main`. Every change — features, fixes, release prep,
 
 ## Commit messages
 
-Format: subject line `<branch-name>.`, then a blank line, then a body with one clause per line — `Added: <what>`, `Changed: <what>`, `Deleted: <what>`. Include only the lines that apply. English. The subject + blank line + body shape is required so GitHub auto-fills the PR title from the subject and the PR description from the body.
+Format: a single line `<branch-name>. <Clause>: <what>.` where `<Clause>` is `Added`, `Changed`, or `Deleted`. English. No blank line, no multi-line body — the whole commit message is one line. The PR title will carry that line verbatim; expand on details in the PR description if needed.
 
-Each body line is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. If a line needs more than one clause, the commit is probably too big. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+A single commit can carry any combination of `Added`, `Changed`, and `Deleted` clauses, separated by `. ` (period + space). Within one clause, list multiple items separated by `; ` (semicolon + space). Always include only the clauses that apply.
 
-Good:
+Each item is **one short clause** in plain language describing the user-visible outcome — what someone reading `git log --oneline` cares about. Implementation details (method/test/file names, renames, formatter passes, doc syncs) belong in the diff, not the commit. When squashing, write a fresh summary — do not concatenate the sub-commit messages.
+
+Good (single clause):
 ```
-0014-no-plan-commit-on-start.
+0030-chain. Added: cadence chain command runs an ordered list of tasks from a file, each on its own branch, failing fast if a task fails.
+```
 
-Changed: cadence no longer auto-commits the plan file when starting a task.
-Deleted: now-unused commit_plan_file / file_has_changes helpers.
+Good (multiple clauses, multiple items):
+```
+0014-no-plan-commit-on-start. Changed: cadence no longer auto-commits the plan file when starting a task. Deleted: now-unused commit_plan_file; file_has_changes helpers.
 ```
 
 Bad (verbose, name-listing, sub-commit concat): `0014-... Changed: _prepare_plan_branch returns only branch name (drops needs_commit), create_branch_for_plan no longer auto-commits, ruff format applied, test_creates_branch_and_commits renamed to test_creates_branch_no_commit, ...`

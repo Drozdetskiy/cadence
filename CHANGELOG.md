@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.21.0 - 2026-05-05
+
+### Breaking changes
+
+CLI reworked from flag style to subcommand style. Old flags removed; no aliases. Migration:
+
+| Old | New |
+|---|---|
+| `cadence --plan <path>` | `cadence plan <path>` |
+| `cadence --task <path>` | `cadence task <path>` |
+| `cadence --review` | `cadence review` |
+| `cadence --review --base X` | `cadence review --base X` |
+| `cadence --task-init <name>` | `cadence init <name>` |
+| `cadence --run` | `cadence run` |
+| `cadence --run --impl` | `cadence run` (auto-detect) or explicit `cadence run plan && cadence run task` |
+| `cadence --plan <path> --impl` | `cadence plan <path> && cadence task <derived-plan>` |
+| `cadence --squash` | `cadence squash` |
+| `cadence --task <p> --squash` | `cadence task <p> && cadence squash` |
+| `cadence --chain <path>` | `cadence chain <path>` |
+
+- `--impl` and `--squash` flags removed. Compose pipelines with shell `&&`.
+- `cadence run` no longer auto-chains into squash after `plan-completed`; squash is always an explicit step.
+- Exit codes now follow git: `0` success, `1` runtime failure, `2` misuse (bad paths, invalid repo state, missing arguments).
+
+### Changed
+
+- Shell completion enabled (`cadence --install-completion` / `--show-completion`) — useful now that subcommands replace flags.
+- `cadence <subcommand> --help` provides per-command help.
+
 ## v0.20.0 - 2026-05-05
 
 ### New Features
