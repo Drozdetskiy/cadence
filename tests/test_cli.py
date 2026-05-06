@@ -9519,3 +9519,145 @@ class TestRunStatusMode:
         out = capsys.readouterr().out
         assert out.strip() != ""
         assert "no current cadence task" in out
+
+
+class TestDoctorCli:
+    @staticmethod
+    def _runner() -> Any:
+        from typer.testing import CliRunner
+
+        return CliRunner()
+
+    @staticmethod
+    def _init_repo(repo: Path) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            check=True,
+        )
+        readme = repo / "README.md"
+        readme.write_text("hello\n")
+        subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "initial"], check=True)
+
+    def test_help_lists_doctor(self) -> None:
+        result = self._runner().invoke(app, ["doctor", "--help"])
+        assert result.exit_code == 0
+        assert "pre-flight" in result.output
+
+    def test_help_top_level_lists_doctor(self) -> None:
+        result = self._runner().invoke(app, ["--help"])
+        assert result.exit_code == 0
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "doctor" in plain
+
+    @patch("cadence.cli.run_doctor_mode")
+    def test_doctor_calls_run_doctor_mode(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(config=None)
+
+    @patch("cadence.cli.run_doctor_mode")
+    def test_global_config_propagates_to_doctor(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        cfg = tmp_path / "override.yaml"
+        cfg.write_text("default_branch: main\n")
+        result = self._runner().invoke(app, ["--config", str(cfg), "doctor"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(config=cfg)
+
+    @staticmethod
+    def _stub_binaries(monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess as _subprocess
+
+        def fake_which(name: str, *args: Any, **kwargs: Any) -> str | None:
+            if name == "claude":
+                return "/fake/claude"
+            if name == "git":
+                return "/fake/git"
+            return None
+
+        def fake_run(*args: Any, **kwargs: Any) -> _subprocess.CompletedProcess[str]:
+            argv = args[0]
+            return _subprocess.CompletedProcess(argv, 0, stdout="x 1.0\n", stderr="")
+
+        monkeypatch.setattr("cadence.diagnostics.doctor.shutil.which", fake_which)
+        monkeypatch.setattr("cadence.diagnostics.doctor.subprocess.run", fake_run)
+
+    def test_happy_path_exits_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        local = repo / ".cadence"
+        local.mkdir()
+        (local / "config.yaml").write_text("default_branch: main\n")
+        monkeypatch.chdir(repo)
+        self._stub_binaries(monkeypatch)
+
+        result = self._runner().invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "environment" in result.output
+        assert "repository" in result.output
+        assert "config" in result.output
+
+    def test_failure_when_claude_missing_exits_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import shutil as _shutil
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        monkeypatch.chdir(repo)
+
+        real_which = _shutil.which
+
+        def fake_which(name: str, *args: Any, **kwargs: Any) -> str | None:
+            if name == "claude":
+                return None
+            return real_which(name, *args, **kwargs)
+
+        monkeypatch.setattr("cadence.diagnostics.doctor.shutil.which", fake_which)
+
+        result = self._runner().invoke(app, ["doctor"])
+        assert result.exit_code == 1
+        assert "✗" in result.output
+
+    def test_unknown_key_in_local_config_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        local = repo / ".cadence"
+        local.mkdir()
+        (local / "config.yaml").write_text("not_a_real_field: 1\n")
+        monkeypatch.chdir(repo)
+        self._stub_binaries(monkeypatch)
+
+        result = self._runner().invoke(app, ["doctor"])
+        assert result.exit_code == 0
+        assert "not_a_real_field" in result.output
+        assert "unknown config key" in result.output
+
+    def test_malformed_local_config_reports_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        local = repo / ".cadence"
+        local.mkdir()
+        (local / "config.yaml").write_text("foo: [unclosed\n")
+        monkeypatch.chdir(repo)
+        self._stub_binaries(monkeypatch)
+
+        result = self._runner().invoke(app, ["doctor"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "invalid YAML" in result.output

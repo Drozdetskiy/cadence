@@ -89,6 +89,9 @@ class Service:
     def branch_exists(self, name: str) -> bool:
         return self._repo.branch_exists(name)
 
+    def remote_branch_exists(self, name: str) -> bool:
+        return self._repo._ref_exists(f"refs/remotes/origin/{name}")
+
     def worktree_add(self, path: str, branch: str, base: str) -> None:
         self._repo.worktree_add(path, branch, base)
 

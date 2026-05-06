@@ -22,6 +22,8 @@ from cadence.config import (
     load_yaml_config,
     parse_duration,
 )
+from cadence.diagnostics.doctor import render as render_doctor
+from cadence.diagnostics.doctor import run_doctor
 from cadence.diagnostics.status import (
     STATE_EMPTY,
     TaskState,
@@ -1492,6 +1494,20 @@ def run_status_mode(
     )
 
 
+def run_doctor_mode(*, config: Path | None = None) -> None:
+    local_dir = detect_local_dir()
+    try:
+        cfg = load_config(local_dir)
+    except ValueError:
+        cfg = Config()
+    _apply_yaml_overrides(cfg, config, anchor=None)
+
+    results, exit_code = run_doctor(cfg=cfg, local_dir=local_dir)
+    typer.echo(render_doctor(results, no_color=not sys.stdout.isatty()), nl=False)
+    if exit_code != 0:
+        raise SystemExit(exit_code)
+
+
 def _resolve_current_task_dir(
     config: Path | None,
     *,
@@ -2106,6 +2122,12 @@ def cmd_status(
 ) -> None:
     opts = _ctx_opts(ctx)
     run_status_mode(current_only=current, json_output=json_output, config=opts.config)
+
+
+@app.command("doctor", help="Run pre-flight environment & config checks (no Claude calls)")
+def cmd_doctor(ctx: typer.Context) -> None:
+    opts = _ctx_opts(ctx)
+    run_doctor_mode(config=opts.config)
 
 
 @app.command("chain", help="Run a sequence of tasks listed in a file (one task name per line)")
