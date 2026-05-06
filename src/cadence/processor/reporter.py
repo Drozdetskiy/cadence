@@ -7,7 +7,10 @@ from typing import Protocol
 import typer
 
 from cadence.executor.claude_executor import Result
-from cadence.processor.prompts import build_report_api_changes_prompt
+from cadence.processor.prompts import (
+    build_report_api_changes_prompt,
+    build_report_test_cases_prompt,
+)
 from cadence.processor.signals import (
     is_report_failed,
     parse_report_body,
@@ -44,19 +47,27 @@ def run_report(
     default_branch: str,
     report_path: str,
 ) -> bool:
-    if report_type != "api-changes":
-        raise ValueError(f"unknown report_type: {report_type!r}")
-
     del base, git_svc
 
-    prompt = build_report_api_changes_prompt(
-        local_dir=local_dir,
-        branch=branch,
-        default_branch=default_branch,
-        public_api_paths=public_api_paths,
-        progress_file=logger.path,
-        warn=lambda msg: logger.warn("%s", msg),
-    )
+    if report_type == "api-changes":
+        prompt = build_report_api_changes_prompt(
+            local_dir=local_dir,
+            branch=branch,
+            default_branch=default_branch,
+            public_api_paths=public_api_paths,
+            progress_file=logger.path,
+            warn=lambda msg: logger.warn("%s", msg),
+        )
+    elif report_type == "test-cases":
+        prompt = build_report_test_cases_prompt(
+            local_dir=local_dir,
+            branch=branch,
+            default_branch=default_branch,
+            progress_file=logger.path,
+            warn=lambda msg: logger.warn("%s", msg),
+        )
+    else:
+        raise ValueError(f"unknown report_type: {report_type!r}")
 
     result = executor.run(prompt)
 

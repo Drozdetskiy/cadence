@@ -9,6 +9,7 @@ from cadence.processor.prompts import (
     append_commit_format_instruction,
     build_plan_prompt,
     build_report_api_changes_prompt,
+    build_report_test_cases_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
     build_squash_commit_prompt,
@@ -979,6 +980,142 @@ class TestDefaultReportApiChangesPrompt:
         assert "<<<CADENCE:REPORT_END>>>" in prompt
         assert "<<<CADENCE:REPORT_DONE>>>" in prompt
         assert "<<<CADENCE:REPORT_FAILED>>>" in prompt
+
+
+class TestBuildReportTestCasesPrompt:
+    def _write_template(self, tmp_path: Path) -> None:
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir(exist_ok=True)
+        (prompts_dir / "report_test_cases.txt").write_text(
+            "branch={{BRANCH}}\n"
+            "base={{DEFAULT_BRANCH}}\n"
+            "progress={{PROGRESS_FILE}}\n"
+            "context:\n{{PROJECT_CONTEXT}}\n"
+        )
+
+    def test_substitutes_all_variables(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            progress_file="/tmp/progress.txt",
+        )
+        assert "branch=feature-x" in result
+        assert "base=main" in result
+        assert "progress=/tmp/progress.txt" in result
+        for token in (
+            "{{BRANCH}}",
+            "{{DEFAULT_BRANCH}}",
+            "{{PROGRESS_FILE}}",
+            "{{PROJECT_CONTEXT}}",
+        ):
+            assert token not in result
+
+    def test_default_branch_falls_back_to_main(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="",
+        )
+        assert "base=main" in result
+
+    def test_injects_project_context_when_present(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "schema.sql").write_text("CREATE TABLE users (id INT);")
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+        )
+        assert "# Project context" in result
+        assert "## schema.sql" in result
+        assert "CREATE TABLE users (id INT);" in result
+
+    def test_no_project_context_block_when_dir_absent(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+        )
+        assert "# Project context" not in result
+        assert result.endswith("context:\n\n")
+
+    def test_no_agent_expansion(self, tmp_path: Path) -> None:
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "report_test_cases.txt").write_text("marker {{agent:quality}} end")
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+        )
+        assert "{{agent:quality}}" in result
+        assert "Use the Task tool" not in result
+
+    def test_no_commit_format_block_by_default(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_appends_commit_format_when_provided(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_test_cases_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.rstrip().endswith("CUSTOM_FMT_BODY")
+
+
+class TestDefaultReportTestCasesPrompt:
+    def test_loads_and_has_required_placeholders(self) -> None:
+        prompt = load_prompt("report_test_cases")
+        for token in (
+            "{{BRANCH}}",
+            "{{DEFAULT_BRANCH}}",
+            "{{PROGRESS_FILE}}",
+            "{{PROJECT_CONTEXT}}",
+        ):
+            assert token in prompt, f"missing placeholder {token!r} in default prompt"
+
+    def test_loads_and_has_required_signal_names(self) -> None:
+        prompt = load_prompt("report_test_cases")
+        assert "<<<CADENCE:REPORT_BEGIN>>>" in prompt
+        assert "<<<CADENCE:REPORT_END>>>" in prompt
+        assert "<<<CADENCE:REPORT_DONE>>>" in prompt
+        assert "<<<CADENCE:REPORT_FAILED>>>" in prompt
+
+    def test_loads_and_has_required_tc_field_labels(self) -> None:
+        prompt = load_prompt("report_test_cases")
+        for label in (
+            "**Type:**",
+            "**Priority:**",
+            "**Preconditions:**",
+            "**Steps:**",
+            "**Expected:**",
+            "**DB verification:**",
+            "**DB setup hint:**",
+        ):
+            assert label in prompt, f"missing TC field label {label!r} in default prompt"
+
+    def test_loads_and_has_required_db_context_warning(self) -> None:
+        prompt = load_prompt("report_test_cases")
+        assert (
+            "Note: no DB schema context found in .cadence/context/. "
+            "DB verification and setup sections were omitted. "
+            "To enable them, add a schema dump or entity description to .cadence/context/."
+        ) in prompt
 
 
 class TestPlanPromptHasNoCommitFormat:

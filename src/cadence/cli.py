@@ -916,6 +916,101 @@ def run_report_api_changes_mode(
         log.close(success=run_success)
 
 
+def run_report_test_cases_mode(
+    *,
+    base: str | None = None,
+    stdout_only: bool = False,
+    config: Path | None = None,
+) -> None:
+    cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
+        config, anchor=None
+    )
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    if base is not None:
+        default_branch = base
+
+    branch = git_svc.current_branch()
+    if not branch:
+        typer.echo("error: cannot report from a detached HEAD", err=True)
+        raise SystemExit(2)
+
+    task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
+
+    if config is None:
+        per_task_yaml = find_yaml_config(task_dir)
+        if per_task_yaml is not None:
+            try:
+                apply_yaml_overrides(cfg, load_yaml_config(per_task_yaml))
+            except ValueError as exc:
+                typer.echo(f"error: {exc}", err=True)
+                raise SystemExit(1) from None
+            if base is None:
+                default_branch = cfg.default_branch
+
+    if git_svc.is_default_branch(default_branch):
+        typer.echo(f"error: cannot report on default branch {default_branch}", err=True)
+        raise SystemExit(2)
+
+    try:
+        progress_path = compute_progress_path(
+            Mode.REPORT,
+            branch=branch,
+            tasks_root=cfg.tasks_root,
+            default_branch=default_branch,
+            report_type="test-cases",
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    report_path = compute_report_path("test-cases", branch=branch, tasks_root=cfg.tasks_root)
+
+    log = _build_logger(progress_path, "", "", Mode.REPORT, branch, colors, holder)
+
+    log.print("cadence %s", resolve_version())
+    log.print("mode: report")
+    log.print("report: test-cases")
+    log.print("branch: %s", branch)
+    log.print("base: %s", default_branch)
+    log.print("progress: %s", log.path)
+
+    git_svc.set_log(log)
+
+    model = cfg.report_test_cases_model or cfg.review_model
+    claude = factory(log, model)
+
+    run_success = False
+    try:
+        run_success = run_report(
+            "test-cases",
+            base=default_branch,
+            stdout_only=stdout_only,
+            executor=claude,
+            git_svc=git_svc,
+            logger=log,
+            local_dir=local_dir,
+            public_api_paths=cfg.public_api_paths,
+            branch=branch,
+            default_branch=default_branch,
+            report_path=report_path,
+        )
+        if run_success and not stdout_only:
+            typer.echo(f"wrote: {report_path}")
+    except KeyboardInterrupt:
+        log.print("interrupted by user")
+        return
+    except RuntimeError as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from None
+    except Exception as exc:
+        log.error("execution failed: %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        log.close(success=run_success)
+
+
 def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     if not task_name or "/" in task_name or "\\" in task_name or task_name.startswith((".", "-")):
         typer.echo(f"error: invalid task name: {task_name!r}", err=True)
@@ -1526,3 +1621,17 @@ def cmd_report_api_changes(
     opts = _ctx_opts(ctx)
     _arm_sigint()
     run_report_api_changes_mode(base=base, stdout_only=stdout_only, config=opts.config)
+
+
+@report_app.command(
+    "test-cases",
+    help="Generate a manual-QA test-case report for the current branch",
+)
+def cmd_report_test_cases(
+    ctx: typer.Context,
+    base: str | None = _BASE_OPTION,
+    stdout_only: bool = _STDOUT_ONLY_OPTION,
+) -> None:
+    opts = _ctx_opts(ctx)
+    _arm_sigint()
+    run_report_test_cases_mode(base=base, stdout_only=stdout_only, config=opts.config)

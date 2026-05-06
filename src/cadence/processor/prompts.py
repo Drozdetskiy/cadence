@@ -285,6 +285,24 @@ def build_report_api_changes_prompt(
     return prompt
 
 
+def build_report_test_cases_prompt(
+    *,
+    local_dir: Path | None,
+    branch: str,
+    default_branch: str,
+    progress_file: str = "",
+    commit_format: str = "",
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    prompt = load_prompt("report_test_cases", local_dir=local_dir)
+    prompt = prompt.replace("{{BRANCH}}", branch)
+    prompt = prompt.replace("{{DEFAULT_BRANCH}}", default_branch or "main")
+    prompt = prompt.replace("{{PROGRESS_FILE}}", progress_file)
+    prompt = prompt.replace("{{PROJECT_CONTEXT}}", load_context_files(local_dir, warn=warn))
+    prompt = append_commit_format_instruction(prompt, commit_format)
+    return prompt
+
+
 def build_squash_commit_prompt(
     *,
     local_dir: Path | None = None,
@@ -351,6 +369,7 @@ __all__ = [
     "append_commit_trailer_instruction",
     "build_plan_prompt",
     "build_report_api_changes_prompt",
+    "build_report_test_cases_prompt",
     "build_review_first_prompt",
     "build_review_second_prompt",
     "build_squash_commit_prompt",
