@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import signal
 import threading
 from pathlib import Path
@@ -32,6 +33,7 @@ from cadence.cli import (
     run_report_test_cases_mode,
     run_review_mode,
     run_squash_mode,
+    run_status_mode,
     run_task_init_mode,
     run_task_mode,
     to_rel_path,
@@ -9006,3 +9008,274 @@ class TestRunReportTestCasesModeHooks:
         post_env = recorder.calls[1]["env"]
         assert post_env["CADENCE_PHASE_RESULT"] == "failure"
         assert post_env["CADENCE_REPORT_TYPE"] == "test-cases"
+
+
+class TestStatusCli:
+    @staticmethod
+    def _runner() -> Any:
+        from typer.testing import CliRunner
+
+        return CliRunner()
+
+    def test_help_lists_status(self) -> None:
+        result = self._runner().invoke(app, ["status", "--help"])
+        assert result.exit_code == 0
+        assert "Show the status of cadence tasks" in result.output
+
+    @patch("cadence.cli.run_status_mode")
+    def test_status_no_flags(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["status"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(current_only=False, json_output=False, config=None)
+
+    @patch("cadence.cli.run_status_mode")
+    def test_status_current_flag(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["status", "--current"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(current_only=True, json_output=False, config=None)
+
+    @patch("cadence.cli.run_status_mode")
+    def test_status_json_flag(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["status", "--json"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(current_only=False, json_output=True, config=None)
+
+    @patch("cadence.cli.run_status_mode")
+    def test_status_global_config_propagates(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        cfg = tmp_path / "override.yaml"
+        cfg.write_text("default_branch: main\n")
+        result = self._runner().invoke(app, ["--config", str(cfg), "status"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(current_only=False, json_output=False, config=cfg)
+
+
+class TestRunStatusMode:
+    @staticmethod
+    def _init_repo(repo: Path, *, branch: str = "main") -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            check=True,
+        )
+        readme = repo / "README.md"
+        readme.write_text("hello\n")
+        subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "initial"], check=True)
+
+    @staticmethod
+    def _checkout_branch(repo: Path, branch: str) -> None:
+        import subprocess
+
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", branch], check=True)
+
+    def test_not_a_git_repo(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as excinfo:
+            run_status_mode(current_only=False, json_output=False)
+        assert excinfo.value.code == 2
+        assert "error:" in capsys.readouterr().err
+
+    def test_happy_path_init_only(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        self._checkout_branch(repo, "feat-x")
+        task_dir = repo / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("scaffold")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "current branch: feat-x" in out
+        assert re.search(r"^\s*state\s+init only", out, re.MULTILINE)
+        assert re.search(r"^\s*last commit\s+\S+\s+\(.+\)\s+\"initial\"", out, re.MULTILINE)
+
+    def test_json_output_parses(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json as _json
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        self._checkout_branch(repo, "feat-y")
+        task_dir = repo / "cdc-tasks" / "feat-y"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("scaffold")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=True)
+
+        out = capsys.readouterr().out
+        payload = _json.loads(out)
+        assert "current" in payload
+        assert "tasks" in payload
+        assert payload["current"]["branch"] == "feat-y"
+        assert payload["current"]["state"] == "init only"
+        assert payload["tasks"] == []
+
+    def test_current_only_skips_others(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        self._checkout_branch(repo, "feat-current")
+        cur_dir = repo / "cdc-tasks" / "feat-current"
+        cur_dir.mkdir(parents=True)
+        (cur_dir / "init").write_text("x")
+        other_dir = repo / "cdc-tasks" / "feat-other"
+        other_dir.mkdir(parents=True)
+        (other_dir / "init").write_text("y")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=True, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "feat-current" in out
+        assert "feat-other" not in out
+        assert "other tasks under" not in out
+
+    def test_current_branch_excluded_from_others(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        self._checkout_branch(repo, "feat-current")
+        cur_dir = repo / "cdc-tasks" / "feat-current"
+        cur_dir.mkdir(parents=True)
+        (cur_dir / "init").write_text("x")
+        other_dir = repo / "cdc-tasks" / "feat-other"
+        other_dir.mkdir(parents=True)
+        (other_dir / "init").write_text("y")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=True)
+
+        import json as _json
+
+        out = capsys.readouterr().out
+        payload = _json.loads(out)
+        names = [t["name"] for t in payload["tasks"]]
+        assert names == ["feat-other"]
+        assert payload["current"]["branch"] == "feat-current"
+
+    def test_detached_head_no_current_section(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        # add a second commit so we have something to detach to
+        (repo / "extra.txt").write_text("e\n")
+        subprocess.run(["git", "-C", str(repo), "add", "extra.txt"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "second"], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD~1"], check=True)
+
+        task_dir = repo / "cdc-tasks" / "feat-z"
+        task_dir.mkdir(parents=True)
+        (task_dir / "init").write_text("z")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "current branch:" not in out
+        assert "feat-z" in out
+        assert "init only" in out
+
+    def test_detached_head_no_tasks(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "extra.txt").write_text("e\n")
+        subprocess.run(["git", "-C", str(repo), "add", "extra.txt"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "second"], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD~1"], check=True)
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "no tasks under cdc-tasks/" in out
+
+    def test_branch_with_no_task_dir(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        self._checkout_branch(repo, "feat-no-dir")
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=False)
+
+        out = capsys.readouterr().out
+        assert "current branch: feat-no-dir" in out
+        assert "no task dir under cdc-tasks/" in out
+
+    def test_current_only_detached_head_emits_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        (repo / "extra.txt").write_text("e\n")
+        subprocess.run(["git", "-C", str(repo), "add", "extra.txt"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "second"], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "HEAD~1"], check=True)
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=True, json_output=False)
+
+        out = capsys.readouterr().out
+        assert out.strip() != ""
+        assert "no current cadence task" in out

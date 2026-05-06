@@ -81,6 +81,7 @@ class Config:
     hooks_enabled: bool = True
     print_usage: bool = True
     cost_estimates: bool = True
+    running_threshold_minutes: int = 10
     colors: ColorConfig = field(default_factory=ColorConfig)
 
 
@@ -145,6 +146,7 @@ def load_config(config_dir: Path | None) -> Config:
         "task_retry_count",
         "max_iterations",
         "hooks_timeout_seconds",
+        "running_threshold_minutes",
     }
     _BOOL_FIELDS = {
         "hooks_enabled",

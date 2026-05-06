@@ -56,6 +56,7 @@ class TestConfigDefaults:
         assert cfg.hooks_enabled is True
         assert cfg.print_usage is True
         assert cfg.cost_estimates is True
+        assert cfg.running_threshold_minutes == 10
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -196,6 +197,18 @@ class TestLoadConfig:
         assert cfg.hooks_dir == "custom/path"
         assert cfg.hooks_timeout_seconds == 30
         assert cfg.hooks_enabled is False
+
+    def test_load_running_threshold_minutes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("running_threshold_minutes: 30\n")
+        cfg = load_config(tmp_path)
+        assert cfg.running_threshold_minutes == 30
+
+    def test_default_running_threshold_minutes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.running_threshold_minutes == 10
 
     def test_load_usage_flags_false(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
