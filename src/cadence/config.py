@@ -81,6 +81,7 @@ class Config:
     hooks_enabled: bool = True
     print_usage: bool = True
     cost_estimates: bool = True
+    progress_jsonl: bool = False
     running_threshold_minutes: int = 10
     import_max_bytes: int = 256 * 1024
     colors: ColorConfig = field(default_factory=ColorConfig)
@@ -154,6 +155,7 @@ def load_config(config_dir: Path | None) -> Config:
         "hooks_enabled",
         "print_usage",
         "cost_estimates",
+        "progress_jsonl",
     }
     _LIST_FIELDS = {
         "claude_error_patterns",

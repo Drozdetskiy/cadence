@@ -34,6 +34,15 @@ from cadence.processor.signals import (
     parse_plan_draft_payload,
     parse_question_payload,
 )
+from cadence.progress.events import (
+    ErrorEvent,
+    IterationEndEvent,
+    IterationStartEvent,
+    PhaseEndEvent,
+    PhaseStartEvent,
+    SignalEvent,
+    now_ts,
+)
 from cadence.status import (
     Mode,
     PhaseHolder,
@@ -71,6 +80,7 @@ class Logger(Protocol):
     def log_answer(self, answer: str) -> None: ...
     def error(self, fmt: str, *args: object) -> None: ...
     def warn(self, fmt: str, *args: object) -> None: ...
+    def log_event(self, event: object) -> None: ...
     @property
     def path(self) -> str: ...
 
@@ -210,6 +220,15 @@ class Runner:
         i = 1
         phase_stats = UsageStats()
         phase_model = self._deps.task_model
+        phase_result = "success"
+        log.log_event(
+            PhaseStartEvent(
+                ts=now_ts(),
+                phase="task",
+                branch=self._ctx.default_branch,
+                model=phase_model,
+            )
+        )
         try:
             while i <= max_iterations:
                 task_num = self.next_plan_task_position()
@@ -217,12 +236,21 @@ class Runner:
                     task_num = i
                 log.print_section(new_task_iteration_section(task_num))
 
+                log.log_event(
+                    IterationStartEvent(
+                        ts=now_ts(),
+                        phase="task",
+                        iteration=i,
+                        task_index=task_num,
+                    )
+                )
                 result = self._run_iteration(
                     claude,
                     prompt,
                     iteration=i,
                     phase_stats=phase_stats,
                     model_fallback=phase_model,
+                    phase="task",
                 )
                 if result.model:
                     phase_model = result.model
@@ -236,8 +264,19 @@ class Runner:
                     retry_count = 0
                     continue
 
-                if not self._check_result_error(result):
+                if not self._check_result_error(result, phase="task", iteration=i):
+                    phase_result = "failure"
                     return False
+
+                if result.signal:
+                    log.log_event(
+                        SignalEvent(
+                            ts=now_ts(),
+                            phase="task",
+                            iteration=i,
+                            signal=result.signal,
+                        )
+                    )
 
                 if is_all_tasks_done(result.signal):
                     if self.has_uncompleted_tasks():
@@ -268,9 +307,13 @@ class Runner:
                 i += 1
 
             log.warn("max iterations reached")
+            phase_result = "failure"
             return False
+        except BaseException:
+            phase_result = "failure"
+            raise
         finally:
-            self._emit_phase_summary("task", phase_stats, phase_model)
+            self._emit_phase_summary("task", phase_stats, phase_model, result=phase_result)
 
     def has_uncompleted_tasks(self) -> bool:
         path = self.resolve_plan_file_path()
@@ -317,19 +360,41 @@ class Runner:
 
         phase_stats = UsageStats()
         phase_model = self._deps.review_model
+        phase_result = "success"
+        log.log_event(
+            PhaseStartEvent(
+                ts=now_ts(),
+                phase="review",
+                branch=self._ctx.default_branch,
+                model=phase_model,
+            )
+        )
         try:
+            log.log_event(IterationStartEvent(ts=now_ts(), phase="review", iteration=1))
             result = self._run_iteration(
                 self._review_executor,
                 prompt,
                 iteration=1,
                 phase_stats=phase_stats,
                 model_fallback=phase_model,
+                phase="review",
             )
             if result.model:
                 phase_model = result.model
 
-            if not self._check_result_error(result):
+            if not self._check_result_error(result, phase="review", iteration=1):
+                phase_result = "failure"
                 return False
+
+            if result.signal:
+                log.log_event(
+                    SignalEvent(
+                        ts=now_ts(),
+                        phase="review",
+                        iteration=1,
+                        signal=result.signal,
+                    )
+                )
 
             if is_task_failed(result.signal):
                 log.error("review reported failure")
@@ -341,8 +406,11 @@ class Runner:
 
             log.warn("review did not complete cleanly")
             return True
+        except BaseException:
+            phase_result = "failure"
+            raise
         finally:
-            self._emit_phase_summary("review", phase_stats, phase_model)
+            self._emit_phase_summary("review", phase_stats, phase_model, result=phase_result)
 
     def run_claude_review_loop(self) -> bool:
         log = self._deps.logger
@@ -363,24 +431,46 @@ class Runner:
 
         phase_stats = UsageStats()
         phase_model = self._deps.review_model
+        phase_result = "success"
+        log.log_event(
+            PhaseStartEvent(
+                ts=now_ts(),
+                phase="review-loop",
+                branch=self._ctx.default_branch,
+                model=phase_model,
+            )
+        )
         try:
             for i in range(1, max_review_iterations + 1):
                 log.print_section(new_claude_review_section(i, "critical/major"))
 
                 head_before = self._git_checker.head_hash() if self._git_checker else ""
 
+                log.log_event(IterationStartEvent(ts=now_ts(), phase="review-loop", iteration=i))
                 result = self._run_iteration(
                     self._review_executor,
                     prompt,
                     iteration=i,
                     phase_stats=phase_stats,
                     model_fallback=phase_model,
+                    phase="review-loop",
                 )
                 if result.model:
                     phase_model = result.model
 
-                if not self._check_result_error(result):
+                if not self._check_result_error(result, phase="review-loop", iteration=i):
+                    phase_result = "failure"
                     return False
+
+                if result.signal:
+                    log.log_event(
+                        SignalEvent(
+                            ts=now_ts(),
+                            phase="review-loop",
+                            iteration=i,
+                            signal=result.signal,
+                        )
+                    )
 
                 if is_task_failed(result.signal):
                     log.error("review reported failure")
@@ -406,8 +496,11 @@ class Runner:
 
             log.warn("max review iterations reached")
             return True
+        except BaseException:
+            phase_result = "failure"
+            raise
         finally:
-            self._emit_phase_summary("review-loop", phase_stats, phase_model)
+            self._emit_phase_summary("review-loop", phase_stats, phase_model, result=phase_result)
 
     def run_plan_creation(self) -> bool:
         log = self._deps.logger
@@ -421,6 +514,15 @@ class Runner:
 
         phase_stats = UsageStats()
         phase_model = self._deps.plan_model
+        phase_result = "success"
+        log.log_event(
+            PhaseStartEvent(
+                ts=now_ts(),
+                phase="plan",
+                branch=self._ctx.default_branch,
+                model=phase_model,
+            )
+        )
         try:
             for i in range(1, max_plan_iterations + 1):
                 log.print_section(new_plan_iteration_section(i))
@@ -437,18 +539,31 @@ class Runner:
                     imported_brief_source=self._ctx.imported_brief_source,
                 )
 
+                log.log_event(IterationStartEvent(ts=now_ts(), phase="plan", iteration=i))
                 result = self._run_iteration(
                     claude,
                     prompt,
                     iteration=i,
                     phase_stats=phase_stats,
                     model_fallback=phase_model,
+                    phase="plan",
                 )
                 if result.model:
                     phase_model = result.model
 
-                if not self._check_result_error(result):
+                if not self._check_result_error(result, phase="plan", iteration=i):
+                    phase_result = "failure"
                     return False
+
+                if result.signal:
+                    log.log_event(
+                        SignalEvent(
+                            ts=now_ts(),
+                            phase="plan",
+                            iteration=i,
+                            signal=result.signal,
+                        )
+                    )
 
                 if is_task_failed(result.signal):
                     log.error("plan creation failed")
@@ -482,9 +597,13 @@ class Runner:
                     self._sleep_with_cancel(self._iteration_delay)
 
             log.warn("max plan iterations reached")
+            phase_result = "failure"
             return False
+        except BaseException:
+            phase_result = "failure"
+            raise
         finally:
-            self._emit_phase_summary("plan", phase_stats, phase_model)
+            self._emit_phase_summary("plan", phase_stats, phase_model, result=phase_result)
 
     def _handle_plan_question(self, question: str, options: list[str]) -> None:
         log = self._deps.logger
@@ -495,13 +614,35 @@ class Runner:
     def _handle_pattern_match_error(self, err: PatternMatchError | LimitPatternError) -> None:
         self._deps.logger.error("pattern matched: %s", err.pattern)
 
-    def _check_result_error(self, result: Result) -> bool:
+    def _check_result_error(
+        self,
+        result: Result,
+        *,
+        phase: str = "",
+        iteration: int | None = None,
+    ) -> bool:
         if result.error is None:
             return True
         if isinstance(result.error, (PatternMatchError, LimitPatternError)):
             self._handle_pattern_match_error(result.error)
+            self._deps.logger.log_event(
+                ErrorEvent(
+                    ts=now_ts(),
+                    phase=phase,
+                    iteration=iteration,
+                    message=str(result.error),
+                )
+            )
             return False
         self._deps.logger.error("%s", str(result.error))
+        self._deps.logger.log_event(
+            ErrorEvent(
+                ts=now_ts(),
+                phase=phase,
+                iteration=iteration,
+                message=str(result.error),
+            )
+        )
         raise result.error
 
     def _is_break(self) -> bool:
@@ -567,15 +708,16 @@ class Runner:
         iteration: int,
         phase_stats: UsageStats,
         model_fallback: str,
+        phase: str = "",
     ) -> Result:
         start = time.monotonic()
         result = self._run_with_limit_retry(executor, prompt)
         duration_ms = int((time.monotonic() - start) * 1000)
+        iter_stats = UsageStats()
+        iter_stats.add(result.usage, duration_ms=duration_ms)
+        phase_stats.add(result.usage, duration_ms=duration_ms)
+        model = result.model or model_fallback
         if self._app.print_usage:
-            iter_stats = UsageStats()
-            iter_stats.add(result.usage, duration_ms=duration_ms)
-            phase_stats.add(result.usage, duration_ms=duration_ms)
-            model = result.model or model_fallback
             line = format_iteration_summary(
                 iter_stats,
                 model,
@@ -584,6 +726,18 @@ class Runner:
                 cost_estimates=self._app.cost_estimates,
             )
             self._deps.logger.print("%s", line)
+        self._deps.logger.log_event(
+            IterationEndEvent(
+                ts=now_ts(),
+                phase=phase,
+                iteration=iteration,
+                duration_ms=duration_ms,
+                session_id=result.session_id,
+                tokens_in=iter_stats.input,
+                tokens_out=iter_stats.output,
+                cost_usd_estimate=estimate_cost(iter_stats, model),
+            )
+        )
         return result
 
     def _emit_phase_summary(
@@ -591,10 +745,24 @@ class Runner:
         phase: str,
         phase_stats: UsageStats,
         model: str,
+        *,
+        result: str = "success",
     ) -> None:
+        cost = estimate_cost(phase_stats, model)
+        self._deps.logger.log_event(
+            PhaseEndEvent(
+                ts=now_ts(),
+                phase=phase,
+                duration_ms=phase_stats.duration_ms,
+                iterations=phase_stats.iterations,
+                result=result,
+                tokens_in_total=phase_stats.input,
+                tokens_out_total=phase_stats.output,
+                cost_usd_estimate=cost,
+            )
+        )
         if not self._app.print_usage:
             return
-        cost = estimate_cost(phase_stats, model)
         phase_stats.set_cost(cost)
         line = format_phase_summary(
             phase_stats,

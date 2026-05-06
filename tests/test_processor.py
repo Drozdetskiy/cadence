@@ -27,6 +27,14 @@ from cadence.processor.runner import (
     Runner,
     UserAbortedError,
 )
+from cadence.progress.events import (
+    ErrorEvent,
+    IterationEndEvent,
+    IterationStartEvent,
+    PhaseEndEvent,
+    PhaseStartEvent,
+    SignalEvent,
+)
 from cadence.status import (
     Mode,
     PhaseHolder,
@@ -1351,3 +1359,228 @@ class TestRunnerUsageSummaries:
 
         printed = _flatten_print_calls(log)
         assert "phase review-loop done in" in printed
+
+
+class _FakeLogger:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.path = "/tmp/progress.txt"
+
+    def print(self, fmt: str, *args: object) -> None:
+        pass
+
+    def print_section(self, section: object) -> None:
+        pass
+
+    def print_aligned(self, text: str) -> None:
+        pass
+
+    def log_question(self, question: str, options: list[str]) -> None:
+        pass
+
+    def log_answer(self, answer: str) -> None:
+        pass
+
+    def error(self, fmt: str, *args: object) -> None:
+        pass
+
+    def warn(self, fmt: str, *args: object) -> None:
+        pass
+
+    def log_event(self, event: object) -> None:
+        self.events.append(event)
+
+
+def _event_kinds(events: list[object]) -> list[str]:
+    return [type(e).__name__ for e in events]
+
+
+class TestRunnerEmitsEvents:
+    def test_task_phase_event_sequence(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            session_id="sess-1",
+        )
+
+        ctx = RunContext(
+            mode=Mode.FULL,
+            plan_file=str(plan),
+            default_branch="main",
+        )
+        log = _FakeLogger()
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,  # type: ignore[arg-type]
+            holder=PhaseHolder(),
+            task_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        assert runner.run_task_phase() is True
+
+        assert _event_kinds(log.events) == [
+            "PhaseStartEvent",
+            "IterationStartEvent",
+            "IterationEndEvent",
+            "SignalEvent",
+            "PhaseEndEvent",
+        ]
+        ps = log.events[0]
+        assert isinstance(ps, PhaseStartEvent)
+        assert ps.phase == "task"
+        assert ps.branch == "main"
+        assert ps.model == "claude-opus-4-7"
+
+        it_start = log.events[1]
+        assert isinstance(it_start, IterationStartEvent)
+        assert it_start.phase == "task"
+        assert it_start.iteration == 1
+        assert it_start.task_index == 1
+
+        it_end = log.events[2]
+        assert isinstance(it_end, IterationEndEvent)
+        assert it_end.iteration == 1
+        assert it_end.session_id == "sess-1"
+
+        sig = log.events[3]
+        assert isinstance(sig, SignalEvent)
+        assert sig.signal == SignalCompleted
+        assert sig.iteration == 1
+
+        pe = log.events[4]
+        assert isinstance(pe, PhaseEndEvent)
+        assert pe.phase == "task"
+        assert pe.result == "success"
+        assert pe.iterations == 1
+
+    def test_plan_creation_event_sequence(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalPlanReady,
+            session_id="sess-plan",
+        )
+        ctx = RunContext(
+            mode=Mode.PLAN,
+            plan_description="desc",
+            default_branch="main",
+        )
+        log = _FakeLogger()
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,  # type: ignore[arg-type]
+            holder=PhaseHolder(),
+            plan_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=50, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        assert runner.run_plan_creation() is True
+
+        assert _event_kinds(log.events) == [
+            "PhaseStartEvent",
+            "IterationStartEvent",
+            "IterationEndEvent",
+            "SignalEvent",
+            "PhaseEndEvent",
+        ]
+        it_start = log.events[1]
+        assert isinstance(it_start, IterationStartEvent)
+        assert it_start.task_index is None
+        pe = log.events[4]
+        assert isinstance(pe, PhaseEndEvent)
+        assert pe.phase == "plan"
+        assert pe.result == "success"
+
+    def test_task_phase_failure_marks_phase_end_failure(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=PatternMatchError("API Error:", "claude /usage"),
+        )
+        ctx = RunContext(mode=Mode.FULL, plan_file=str(plan), default_branch="main")
+        log = _FakeLogger()
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,  # type: ignore[arg-type]
+            holder=PhaseHolder(),
+            task_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        assert runner.run_task_phase() is False
+
+        kinds = _event_kinds(log.events)
+        assert "ErrorEvent" in kinds
+        assert kinds[-1] == "PhaseEndEvent"
+        err = next(e for e in log.events if isinstance(e, ErrorEvent))
+        assert err.phase == "task"
+        assert err.iteration == 1
+        assert "API Error" in err.message
+        pe = log.events[-1]
+        assert isinstance(pe, PhaseEndEvent)
+        assert pe.result == "failure"
+
+    def test_limit_pattern_emits_error_event(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=LimitPatternError("limit", "claude /usage"),
+        )
+        ctx = RunContext(mode=Mode.PLAN, plan_description="desc", default_branch="main")
+        log = _FakeLogger()
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,  # type: ignore[arg-type]
+            holder=PhaseHolder(),
+            plan_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=50, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        assert runner.run_plan_creation() is False
+
+        errs = [e for e in log.events if isinstance(e, ErrorEvent)]
+        assert len(errs) == 1
+        assert errs[0].phase == "plan"
+        assert errs[0].iteration == 1
+
+    def test_task_phase_runtime_error_still_emits_phase_end_failure(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalFailed,
+            session_id="sess-1",
+        )
+        ctx = RunContext(mode=Mode.FULL, plan_file=str(plan), default_branch="main")
+        log = _FakeLogger()
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,  # type: ignore[arg-type]
+            holder=PhaseHolder(),
+            task_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0, task_retry_count=0)
+        runner = Runner(ctx, cfg, deps)
+
+        with pytest.raises(RuntimeError, match="task execution failed"):
+            runner.run_task_phase()
+
+        pe = log.events[-1]
+        assert isinstance(pe, PhaseEndEvent)
+        assert pe.phase == "task"
+        assert pe.result == "failure"

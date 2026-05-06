@@ -11,6 +11,7 @@ import pytest
 
 from cadence.cli import (
     _auto_detect_and_run,
+    _build_logger,
     _parse_chain_file,
     _resolve_chain_default_branch,
     _run_plan_on_current_branch,
@@ -9661,3 +9662,88 @@ class TestDoctorCli:
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         assert "invalid YAML" in result.output
+
+
+class TestBuildLoggerProgressJsonl:
+    def _invoke(self, tmp_path: Path, *, progress_jsonl: bool) -> Any:
+        from cadence.config import ColorConfig
+        from cadence.progress.colors import Colors
+        from cadence.status import Mode, PhaseHolder
+
+        progress_path = str(tmp_path / "progress-plan.txt")
+        with patch("cadence.cli.Logger") as mock_logger_cls:
+            _build_logger(
+                progress_path,
+                "plan-file",
+                "desc",
+                Mode.PLAN,
+                "branch-x",
+                Colors(ColorConfig()),
+                PhaseHolder(),
+                progress_jsonl=progress_jsonl,
+            )
+        assert mock_logger_cls.call_count == 1
+        return mock_logger_cls.call_args.args[0]
+
+    def test_progress_jsonl_true_propagates(self, tmp_path: Path) -> None:
+        cfg = self._invoke(tmp_path, progress_jsonl=True)
+        assert cfg.progress_jsonl is True
+
+    def test_progress_jsonl_false_propagates(self, tmp_path: Path) -> None:
+        cfg = self._invoke(tmp_path, progress_jsonl=False)
+        assert cfg.progress_jsonl is False
+
+    def test_progress_jsonl_default_is_false(self, tmp_path: Path) -> None:
+        from cadence.config import ColorConfig
+        from cadence.progress.colors import Colors
+        from cadence.status import Mode, PhaseHolder
+
+        progress_path = str(tmp_path / "progress-plan.txt")
+        with patch("cadence.cli.Logger") as mock_logger_cls:
+            _build_logger(
+                progress_path,
+                "plan-file",
+                "desc",
+                Mode.PLAN,
+                "branch-x",
+                Colors(ColorConfig()),
+                PhaseHolder(),
+            )
+        cfg = mock_logger_cls.call_args.args[0]
+        assert cfg.progress_jsonl is False
+
+    def test_yaml_flag_flows_through_run_plan_mode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from cadence.config import Config
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("implement feature X")
+
+        cfg = Config()
+        cfg.progress_jsonl = True
+
+        captured: dict[str, Any] = {}
+
+        def fake_build_logger(*args: Any, **kwargs: Any) -> Any:
+            captured["progress_jsonl"] = kwargs.get("progress_jsonl")
+            raise SystemExit(0)
+
+        with (
+            patch("cadence.cli._setup_runtime") as setup,
+            patch("cadence.cli.compute_progress_path", return_value=str(tmp_path / "progress.txt")),
+            patch("cadence.cli._build_logger", side_effect=fake_build_logger),
+        ):
+            setup.return_value = (
+                cfg,
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                "main",
+                None,
+            )
+            with pytest.raises(SystemExit):
+                run_plan_mode(plan_file)
+
+        assert captured["progress_jsonl"] is True

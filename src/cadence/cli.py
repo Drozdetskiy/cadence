@@ -338,6 +338,7 @@ def _build_logger(
     holder: PhaseHolder,
     *,
     quiet: bool = False,
+    progress_jsonl: bool = False,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
         progress_path=progress_path,
@@ -346,6 +347,7 @@ def _build_logger(
         mode=mode,
         branch=branch,
         quiet=quiet,
+        progress_jsonl=progress_jsonl,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -536,6 +538,7 @@ def run_plan_mode(
         colors,
         holder,
         quiet=repo_path is not None,
+        progress_jsonl=cfg.progress_jsonl,
     )
 
     log.print("cadence %s", resolve_version())
@@ -696,6 +699,7 @@ def run_task_mode(
         colors,
         holder,
         quiet=repo_path is not None,
+        progress_jsonl=cfg.progress_jsonl,
     )
 
     log.print("cadence %s", resolve_version())
@@ -812,7 +816,16 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
-    log = _build_logger(progress_path, plan_file, "", Mode.REVIEW, branch, colors, holder)
+    log = _build_logger(
+        progress_path,
+        plan_file,
+        "",
+        Mode.REVIEW,
+        branch,
+        colors,
+        holder,
+        progress_jsonl=cfg.progress_jsonl,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: review")
@@ -969,6 +982,7 @@ def run_squash_mode(
         colors,
         holder,
         quiet=repo_path is not None,
+        progress_jsonl=cfg.progress_jsonl,
     )
 
     log.print("cadence %s", resolve_version())
@@ -1155,7 +1169,16 @@ def run_report_api_changes_mode(
 
     report_path = compute_report_path("api-changes", branch=branch, tasks_root=cfg.tasks_root)
 
-    log = _build_logger(progress_path, "", "", Mode.REPORT, branch, colors, holder)
+    log = _build_logger(
+        progress_path,
+        "",
+        "",
+        Mode.REPORT,
+        branch,
+        colors,
+        holder,
+        progress_jsonl=cfg.progress_jsonl,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: report")
@@ -1282,7 +1305,16 @@ def run_report_test_cases_mode(
 
     report_path = compute_report_path("test-cases", branch=branch, tasks_root=cfg.tasks_root)
 
-    log = _build_logger(progress_path, "", "", Mode.REPORT, branch, colors, holder)
+    log = _build_logger(
+        progress_path,
+        "",
+        "",
+        Mode.REPORT,
+        branch,
+        colors,
+        holder,
+        progress_jsonl=cfg.progress_jsonl,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: report")

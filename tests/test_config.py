@@ -56,6 +56,7 @@ class TestConfigDefaults:
         assert cfg.hooks_enabled is True
         assert cfg.print_usage is True
         assert cfg.cost_estimates is True
+        assert cfg.progress_jsonl is False
         assert cfg.running_threshold_minutes == 10
         assert cfg.import_max_bytes == 262144
         assert cfg.commit_format != ""
@@ -243,6 +244,30 @@ class TestLoadConfig:
         cfg = load_config(tmp_path)
         assert cfg.print_usage is True
         assert cfg.cost_estimates is True
+
+    def test_load_progress_jsonl_true(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("progress_jsonl: true\n")
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is True
+
+    def test_default_progress_jsonl_when_yaml_missing_key(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is False
+
+    def test_progress_jsonl_non_bool_value_coerced(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('progress_jsonl: "yes"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is True
+
+    def test_progress_jsonl_empty_string_coerced_false(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('progress_jsonl: ""\n')
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is False
 
     def test_invalid_hooks_timeout_raises(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
