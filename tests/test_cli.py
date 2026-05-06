@@ -6068,7 +6068,8 @@ class TestRunChainParallel:
 
         result = CliRunner().invoke(app, ["chain", "--help"])
         assert result.exit_code == 0
-        assert "--parallel" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--parallel" in plain
 
     @patch("cadence.cli.run_squash_mode")
     @patch("cadence.cli._run_task_on_current_branch")
@@ -6778,8 +6779,9 @@ class TestReportApiChangesCli:
     def test_help_lists_options(self) -> None:
         result = self._runner().invoke(app, ["report", "api-changes", "--help"])
         assert result.exit_code == 0
-        assert "--base" in result.output
-        assert "--stdout-only" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--base" in plain
+        assert "--stdout-only" in plain
 
     def test_report_no_subcommand_shows_help(self) -> None:
         result = self._runner().invoke(app, ["report"])
@@ -7769,8 +7771,9 @@ class TestReportTestCasesCli:
     def test_help_lists_options(self) -> None:
         result = self._runner().invoke(app, ["report", "test-cases", "--help"])
         assert result.exit_code == 0
-        assert "--base" in result.output
-        assert "--stdout-only" in result.output
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--base" in plain
+        assert "--stdout-only" in plain
 
     @patch("cadence.cli.run_report_test_cases_mode")
     def test_default_call(self, mock_run: MagicMock) -> None:
