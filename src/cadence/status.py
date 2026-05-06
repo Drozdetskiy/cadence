@@ -20,6 +20,10 @@ SignalPlanDraft = "<<<CADENCE:PLAN_DRAFT>>>"
 SignalEnd = "<<<CADENCE:END>>>"
 SignalCommitMsgBegin = "<<<CADENCE:COMMIT_MSG_BEGIN>>>"
 SignalCommitMsgEnd = "<<<CADENCE:COMMIT_MSG_END>>>"
+SignalReportDone = "<<<CADENCE:REPORT_DONE>>>"
+SignalReportFailed = "<<<CADENCE:REPORT_FAILED>>>"
+SignalReportBegin = "<<<CADENCE:REPORT_BEGIN>>>"
+SignalReportEnd = "<<<CADENCE:REPORT_END>>>"
 
 
 class Mode(StrEnum):
@@ -27,6 +31,7 @@ class Mode(StrEnum):
     FULL = "full"
     REVIEW = "review"
     SQUASH = "squash"
+    REPORT = "report"
 
 
 @dataclass(frozen=True)

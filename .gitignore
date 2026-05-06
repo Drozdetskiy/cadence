@@ -82,6 +82,7 @@ dmypy.json
 
 .claude/
 .cadence/
+.cadence/worktrees/
 .idea/
 
 cdc-tasks/

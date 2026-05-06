@@ -67,3 +67,11 @@ class TerminalCollector:
         self._stdout.write("Type your answer: ")
         self._stdout.flush()
         return read_line_with_context(self._stdin)
+
+
+class ParallelAbortCollector:
+    def ask_question(self, question: str, options: list[str]) -> str:
+        raise RuntimeError(
+            "plan requires interactive input; cannot run plan-phase questions"
+            " in --parallel mode (re-run this task sequentially: cadence run plan)"
+        )

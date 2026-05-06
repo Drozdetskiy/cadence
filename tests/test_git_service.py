@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -726,3 +727,159 @@ class TestServiceDelegation:
         svc = Service(path, _Log())
         assert svc.branch_exists("main") is True
         assert svc.branch_exists("nope") is False
+
+
+class TestDiffAgainstPaths:
+    @staticmethod
+    def _diff_calls(captured: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+        return [args for args in captured if args and args[0] == "diff"]
+
+    def test_invokes_git_with_pathspecs(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        be = ExternalBackend(str(tmp_path))
+        captured: list[tuple[str, ...]] = []
+        original = be._run_with_status
+
+        def fake_run_with_status(*args: str, **kwargs: object) -> tuple[int, str, str]:
+            captured.append(args)
+            if args and args[0] == "diff":
+                return 0, "fake-diff", ""
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        be._run_with_status = fake_run_with_status  # type: ignore[method-assign]
+        out = be.diff_against("main", paths=["src/api", "internal/api"])
+        assert out == "fake-diff"
+        diff_calls = self._diff_calls(captured)
+        assert len(diff_calls) == 1
+        argv = diff_calls[0]
+        assert argv[1] == "refs/heads/main...HEAD"
+        assert "--" in argv
+        sep = argv.index("--")
+        assert list(argv[sep + 1 :]) == ["src/api", "internal/api"]
+
+    def test_no_separator_when_paths_omitted(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        be = ExternalBackend(str(tmp_path))
+        captured: list[tuple[str, ...]] = []
+        original = be._run_with_status
+
+        def fake_run_with_status(*args: str, **kwargs: object) -> tuple[int, str, str]:
+            captured.append(args)
+            if args and args[0] == "diff":
+                return 0, "", ""
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        be._run_with_status = fake_run_with_status  # type: ignore[method-assign]
+        be.diff_against("main")
+        diff_calls = self._diff_calls(captured)
+        assert len(diff_calls) == 1
+        assert "--" not in diff_calls[0]
+
+    def test_no_separator_when_paths_empty(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        be = ExternalBackend(str(tmp_path))
+        captured: list[tuple[str, ...]] = []
+        original = be._run_with_status
+
+        def fake_run_with_status(*args: str, **kwargs: object) -> tuple[int, str, str]:
+            captured.append(args)
+            if args and args[0] == "diff":
+                return 0, "", ""
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        be._run_with_status = fake_run_with_status  # type: ignore[method-assign]
+        be.diff_against("main", paths=[])
+        diff_calls = self._diff_calls(captured)
+        assert len(diff_calls) == 1
+        assert "--" not in diff_calls[0]
+
+    def test_real_diff_filters_to_pathspec(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path, branch="main")
+        _make_commit(path, filename="a.txt", content="a\n")
+        _git(path, "checkout", "-b", "feature")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "api.py").write_text("def hi(): ...\n")
+        (tmp_path / "other.txt").write_text("other\n")
+        _git(path, "add", "src/api.py", "other.txt")
+        _git(path, "commit", "-m", "feature")
+
+        be = ExternalBackend(path)
+        scoped = be.diff_against("main", paths=["src"])
+        assert "src/api.py" in scoped
+        assert "other.txt" not in scoped
+
+        unscoped = be.diff_against("main")
+        assert "src/api.py" in unscoped
+        assert "other.txt" in unscoped
+
+
+class TestServiceDiffAgainst:
+    def test_forwards_paths_kwarg(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        svc = Service(str(tmp_path), _Log())
+        mock = MagicMock()
+        mock.diff_against.return_value = "result-diff"
+        svc._repo = mock
+
+        out = svc.diff_against("main", paths=["src/api"])
+        assert out == "result-diff"
+        mock.diff_against.assert_called_once_with("main", paths=["src/api"])
+
+    def test_default_paths_is_none(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        svc = Service(str(tmp_path), _Log())
+        mock = MagicMock()
+        mock.diff_against.return_value = ""
+        svc._repo = mock
+
+        svc.diff_against("main")
+        mock.diff_against.assert_called_once_with("main", paths=None)
+
+
+class TestServiceWorktreePassThroughs:
+    def _service_with_mock_backend(self, tmp_path: Path) -> tuple[Service, MagicMock]:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        svc = Service(str(tmp_path), _Log())
+        mock = MagicMock()
+        svc._repo = mock
+        return svc, mock
+
+    def test_worktree_add_forwards(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        svc.worktree_add("/some/path", "feature", "main")
+        mock.worktree_add.assert_called_once_with("/some/path", "feature", "main")
+
+    def test_worktree_add_propagates_error(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_add.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            svc.worktree_add("/p", "b", "main")
+
+    def test_worktree_remove_forwards(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        svc.worktree_remove("/some/path")
+        mock.worktree_remove.assert_called_once_with("/some/path")
+
+    def test_worktree_remove_propagates_error(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_remove.side_effect = RuntimeError("rm failed")
+        with pytest.raises(RuntimeError, match="rm failed"):
+            svc.worktree_remove("/p")
+
+    def test_worktree_exists_forwards_true(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_exists.return_value = True
+        assert svc.worktree_exists("/p") is True
+        mock.worktree_exists.assert_called_once_with("/p")
+
+    def test_worktree_exists_forwards_false(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_exists.return_value = False
+        assert svc.worktree_exists("/p") is False

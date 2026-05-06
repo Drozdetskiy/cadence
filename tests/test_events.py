@@ -9,6 +9,7 @@ from cadence.executor.events import (
     TextContent,
     TextDelta,
     ToolUseBlock,
+    Usage,
     parse_event,
 )
 
@@ -194,3 +195,103 @@ class TestParseEvent:
         ev = parse_event({"type": "result"})
         assert isinstance(ev, ResultEvent)
         assert ev.result is None
+        assert ev.usage is None
+        assert ev.session_id == ""
+        assert ev.model == ""
+
+    def test_result_with_full_usage(self) -> None:
+        ev = parse_event(
+            {
+                "type": "result",
+                "result": {"output": "ok"},
+                "usage": {
+                    "input_tokens": 124000,
+                    "output_tokens": 8200,
+                    "cache_read_input_tokens": 612000,
+                    "cache_creation_input_tokens": 4100,
+                },
+                "session_id": "abc123",
+                "model": "claude-opus-4-7",
+            }
+        )
+        assert isinstance(ev, ResultEvent)
+        assert ev.usage == Usage(
+            input_tokens=124000,
+            output_tokens=8200,
+            cache_read_tokens=612000,
+            cache_creation_tokens=4100,
+        )
+        assert ev.session_id == "abc123"
+        assert ev.model == "claude-opus-4-7"
+
+    def test_result_with_partial_usage(self) -> None:
+        ev = parse_event(
+            {
+                "type": "result",
+                "result": "stringy",
+                "usage": {"input_tokens": 100},
+            }
+        )
+        assert isinstance(ev, ResultEvent)
+        assert ev.usage == Usage(
+            input_tokens=100,
+            output_tokens=0,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+        )
+
+    def test_result_missing_usage_is_none(self) -> None:
+        ev = parse_event({"type": "result", "result": {"output": "ok"}})
+        assert isinstance(ev, ResultEvent)
+        assert ev.usage is None
+
+    def test_result_malformed_counter_field_becomes_zero(self) -> None:
+        ev = parse_event(
+            {
+                "type": "result",
+                "result": "x",
+                "usage": {
+                    "input_tokens": "not-a-number",
+                    "output_tokens": 50,
+                },
+            }
+        )
+        assert isinstance(ev, ResultEvent)
+        assert ev.usage == Usage(
+            input_tokens=0,
+            output_tokens=50,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+        )
+
+    def test_result_session_id_and_model_propagated(self) -> None:
+        ev = parse_event(
+            {
+                "type": "result",
+                "result": "x",
+                "session_id": "sess-9",
+                "model": "claude-sonnet-4-6",
+            }
+        )
+        assert isinstance(ev, ResultEvent)
+        assert ev.session_id == "sess-9"
+        assert ev.model == "claude-sonnet-4-6"
+        assert ev.usage is None
+
+    def test_result_non_dict_usage_ignored(self) -> None:
+        ev = parse_event({"type": "result", "result": "x", "usage": "weird"})
+        assert isinstance(ev, ResultEvent)
+        assert ev.usage is None
+
+    def test_result_non_string_session_and_model_default_empty(self) -> None:
+        ev = parse_event(
+            {
+                "type": "result",
+                "result": "x",
+                "session_id": 123,
+                "model": ["a"],
+            }
+        )
+        assert isinstance(ev, ResultEvent)
+        assert ev.session_id == ""
+        assert ev.model == ""

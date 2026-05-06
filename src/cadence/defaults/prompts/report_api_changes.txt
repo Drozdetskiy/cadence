@@ -1,0 +1,99 @@
+You are generating a public-API changes report for branch {{BRANCH}} compared against {{DEFAULT_BRANCH}}.
+
+The host (cadence) will write the markdown you emit to disk and echo it to stdout — your only job is to produce the report body between the BEGIN/END markers shown below. Do not run `git commit`, `git reset`, `git rebase`, `git push`, or any other history-rewriting command. Do not create, modify, or delete any files. Do not write the report to disk yourself.
+
+## Step 1: Gather changes
+
+Run these commands to understand what changed on this branch:
+
+- `git log {{DEFAULT_BRANCH}}..HEAD --oneline` — list of commits unique to this branch with their short hashes.
+- `git diff {{DEFAULT_BRANCH}}...HEAD` — full diff against the merge-base. When the scoped-paths block below lists explicit paths, append `-- <path>...` to restrict the diff to those pathspecs.
+
+Use these as the source of truth. Do not invent symbols or endpoints that the diff does not support.
+
+## Step 2: Determine the public-API surface
+
+Scoped paths (from `public_api_paths`):
+
+{{PUBLIC_API_PATHS}}
+
+If the block above lists explicit paths, treat those paths as the authoritative public-API surface and ignore changes outside them. If it instead reads `(infer from project structure)`, infer the public surface from project conventions (HTTP route definitions, gRPC/protobuf service stubs, GraphQL schema, exported package symbols, OpenAPI specs, public CLI subcommands, etc.). Each inferred entry MUST be tagged with the literal suffix ` (inferred surface)` so a reviewer can see which items were not pinned by config.
+
+In both modes, restrict the report to public/external API only. Internal helpers, private functions, test fixtures, and refactors with no caller-visible effect MUST NOT appear in the report.
+
+## Step 3: Project context
+
+The block below is pre-formatted reference material from `.cadence/context/`. Use it verbatim as additional input — for example, an OpenAPI spec or proto file may help disambiguate which symbols are public. Do not modify or reformat it.
+
+{{PROJECT_CONTEXT}}
+
+## Step 4: Classify each change
+
+For every public-API entry that changed on this branch, classify it into exactly one bucket:
+
+- `Added` — new endpoint / symbol / RPC / message that did not exist on {{DEFAULT_BRANCH}}.
+- `Changed (breaking)` — existing entry whose change can break a caller that worked on {{DEFAULT_BRANCH}} (removed/renamed parameter, narrowed return type, stricter validation, removed option, status-code change, etc.).
+- `Changed (non-breaking)` — existing entry whose change is backwards-compatible for callers (new optional parameter with a default, additive enum value, expanded acceptance, etc.).
+- `Removed` — entry that existed on {{DEFAULT_BRANCH}} and no longer exists on HEAD.
+
+Classify purely by caller compatibility — do NOT attempt to label changes as semver major / minor / patch.
+
+## Step 5: Emit the report
+
+Output ONLY the markdown report between the BEGIN and END markers below. No surrounding prose, no markdown fences, no explanation, no diff dump.
+
+The report MUST follow this exact skeleton, with all four section headers always present (keep a section even when it has no entries — leave the bullet list empty so downstream consumers see a stable structure):
+
+```
+# API changes: {{BRANCH}} vs {{DEFAULT_BRANCH}}
+
+## Added
+
+- <endpoint or symbol> — <one-line description> (<short hash>)
+
+## Changed (breaking)
+
+- <endpoint or symbol> — <one-line description> (<short hash>)
+
+## Changed (non-breaking)
+
+- <endpoint or symbol> — <one-line description> (<short hash>)
+
+## Removed
+
+- <endpoint or symbol> — <one-line description> (<short hash>)
+```
+
+Each item is a single line: the endpoint or symbol identifier, an em-dash, a one-line description, and the short hash of the commit that introduced the change in parentheses. If a change spans multiple commits, cite the most recent one. Append ` (inferred surface)` to the description when the entry came from inference rather than a configured path.
+
+Wrap the report exactly like this:
+
+<<<CADENCE:REPORT_BEGIN>>>
+# API changes: {{BRANCH}} vs {{DEFAULT_BRANCH}}
+
+## Added
+
+...
+
+## Changed (breaking)
+
+...
+
+## Changed (non-breaking)
+
+...
+
+## Removed
+
+...
+<<<CADENCE:REPORT_END>>>
+
+After the END marker, on its own line, emit:
+
+<<<CADENCE:REPORT_DONE>>>
+
+If you cannot generate the report (e.g. git commands fail, the diff is unreadable, or you cannot determine the public-API surface at all), emit only:
+
+<<<CADENCE:REPORT_FAILED>>>
+
+and stop. Do not emit BEGIN/END markers in the failure case.

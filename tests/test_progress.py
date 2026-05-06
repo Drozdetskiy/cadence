@@ -525,6 +525,157 @@ class TestLogger:
             os.chdir(original)
 
 
+class TestLoggerJsonl:
+    def _make_logger_jsonl(
+        self, tmp_path: object, *, progress_jsonl: bool = True, plan_file: str = "test.md"
+    ) -> Logger:
+        import pathlib
+
+        p = pathlib.Path(str(tmp_path))
+        os.chdir(p)
+        progress_path = compute_progress_path(Mode.FULL, plan_file=plan_file)
+        cfg = ProgressLoggerConfig(
+            progress_path=progress_path,
+            plan_file=plan_file,
+            mode=Mode.FULL,
+            branch="feat",
+            progress_jsonl=progress_jsonl,
+        )
+        colors = Colors(ColorConfig())
+        holder = PhaseHolder()
+        return Logger(cfg, colors, holder)
+
+    def test_disabled_no_jsonl_file(self, tmp_path: object) -> None:
+        original = os.getcwd()
+        try:
+            logger = self._make_logger_jsonl(tmp_path, progress_jsonl=False)
+            txt_path = logger.path
+            logger.close()
+            jsonl_path = txt_path[: -len(".txt")] + ".jsonl"
+            assert os.path.isfile(txt_path)
+            assert not os.path.exists(jsonl_path)
+        finally:
+            os.chdir(original)
+
+    def test_enabled_creates_jsonl_file_with_chmod(self, tmp_path: object) -> None:
+        import stat
+
+        original = os.getcwd()
+        try:
+            logger = self._make_logger_jsonl(tmp_path, progress_jsonl=True)
+            txt_path = logger.path
+            jsonl_path = txt_path[: -len(".txt")] + ".jsonl"
+            assert os.path.isfile(jsonl_path)
+            mode = stat.S_IMODE(os.stat(jsonl_path).st_mode)
+            assert mode == 0o600
+            logger.close()
+        finally:
+            os.chdir(original)
+
+    def test_log_event_writes_parseable_json(self, tmp_path: object) -> None:
+        import json as _json
+
+        from cadence.progress.events import PhaseStartEvent, now_ts
+
+        original = os.getcwd()
+        try:
+            logger = self._make_logger_jsonl(tmp_path, progress_jsonl=True)
+            txt_path = logger.path
+            jsonl_path = txt_path[: -len(".txt")] + ".jsonl"
+            ev = PhaseStartEvent(ts=now_ts(), phase="task", branch="feat", model="sonnet")
+            logger.log_event(ev)
+            logger.close()
+            with open(jsonl_path) as f:
+                lines = [line for line in f.read().splitlines() if line]
+            assert len(lines) == 1
+            payload = _json.loads(lines[0])
+            assert payload["event"] == "phase_start"
+            assert payload["phase"] == "task"
+            assert payload["branch"] == "feat"
+            assert payload["model"] == "sonnet"
+        finally:
+            os.chdir(original)
+
+    def test_log_event_preserves_order(self, tmp_path: object) -> None:
+        import json as _json
+
+        from cadence.progress.events import IterationStartEvent, SignalEvent, now_ts
+
+        original = os.getcwd()
+        try:
+            logger = self._make_logger_jsonl(tmp_path, progress_jsonl=True)
+            txt_path = logger.path
+            jsonl_path = txt_path[: -len(".txt")] + ".jsonl"
+            for i in range(1, 4):
+                logger.log_event(IterationStartEvent(ts=now_ts(), phase="task", iteration=i))
+            logger.log_event(SignalEvent(ts=now_ts(), phase="task", iteration=3, signal="DONE"))
+            logger.close()
+            with open(jsonl_path) as f:
+                lines = [line for line in f.read().splitlines() if line]
+            assert len(lines) == 4
+            parsed = [_json.loads(line) for line in lines]
+            assert [p["event"] for p in parsed] == [
+                "iteration_start",
+                "iteration_start",
+                "iteration_start",
+                "signal",
+            ]
+            assert [p.get("iteration") for p in parsed] == [1, 2, 3, 3]
+        finally:
+            os.chdir(original)
+
+    def test_log_event_swallows_exceptions_and_warns_once(self, tmp_path: object) -> None:
+        original = os.getcwd()
+        try:
+            logger = self._make_logger_jsonl(tmp_path, progress_jsonl=True)
+            txt_path = logger.path
+
+            class BrokenEvent:
+                def to_jsonl_dict(self) -> dict[str, object]:
+                    raise RuntimeError("kaboom")
+
+            logger.log_event(BrokenEvent())
+            logger.log_event(BrokenEvent())
+            logger.log_event(BrokenEvent())
+            logger.close()
+            with open(txt_path) as f:
+                content = f.read()
+            warn_lines = [line for line in content.splitlines() if "WARN: progress jsonl" in line]
+            assert len(warn_lines) == 1
+            assert "kaboom" in warn_lines[0]
+        finally:
+            os.chdir(original)
+
+    def test_jsonl_init_failure_releases_text_log_lock(self, tmp_path: object) -> None:
+        import pathlib
+
+        original = os.getcwd()
+        try:
+            p = pathlib.Path(str(tmp_path))
+            os.chdir(p)
+            progress_path = compute_progress_path(Mode.FULL, plan_file="test.md")
+            cfg = ProgressLoggerConfig(
+                progress_path=progress_path[: -len(".txt")] + ".log",
+                plan_file="test.md",
+                mode=Mode.FULL,
+                branch="feat",
+                progress_jsonl=True,
+            )
+            colors = Colors(ColorConfig())
+            holder = PhaseHolder()
+            with pytest.raises(ValueError, match=r"progress_path must end with \.txt"):
+                Logger(cfg, colors, holder)
+
+            with open(cfg.progress_path, "a+", encoding="utf-8") as f:
+                lock_file(f)
+                try:
+                    f.write("can-acquire-lock\n")
+                finally:
+                    unlock_file(f)
+        finally:
+            os.chdir(original)
+
+
 class TestIsProgressCompleted:
     def test_empty_file(self, tmp_path: object) -> None:
         import pathlib

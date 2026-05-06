@@ -26,6 +26,8 @@ class Config:
     plan_model: str = "claude-opus-4-7"
     task_model: str = "claude-opus-4-7"
     review_model: str = "claude-opus-4-7"
+    report_api_changes_model: str = ""
+    report_test_cases_model: str = ""
     iteration_delay_ms: int = 2000
     task_retry_count: int = 1
     max_iterations: int = 50
@@ -73,6 +75,16 @@ class Config:
             "You've hit your limit",
         ]
     )
+    public_api_paths: list[str] = field(default_factory=list)
+    hooks_dir: str = ".cadence/hooks"
+    hooks_timeout_seconds: int = 60
+    hooks_enabled: bool = True
+    templates_dir: str = ".cadence/templates"
+    print_usage: bool = True
+    cost_estimates: bool = True
+    progress_jsonl: bool = False
+    running_threshold_minutes: int = 10
+    import_max_bytes: int = 256 * 1024
     colors: ColorConfig = field(default_factory=ColorConfig)
 
 
@@ -120,6 +132,8 @@ def load_config(config_dir: Path | None) -> Config:
         "plan_model",
         "task_model",
         "review_model",
+        "report_api_changes_model",
+        "report_test_cases_model",
         "session_timeout",
         "idle_timeout",
         "wait_on_limit",
@@ -128,15 +142,27 @@ def load_config(config_dir: Path | None) -> Config:
         "init_prompt_name",
         "commit_trailer",
         "commit_format",
+        "hooks_dir",
+        "templates_dir",
     }
     _INT_FIELDS = {
         "iteration_delay_ms",
         "task_retry_count",
         "max_iterations",
+        "hooks_timeout_seconds",
+        "running_threshold_minutes",
+        "import_max_bytes",
+    }
+    _BOOL_FIELDS = {
+        "hooks_enabled",
+        "print_usage",
+        "cost_estimates",
+        "progress_jsonl",
     }
     _LIST_FIELDS = {
         "claude_error_patterns",
         "claude_limit_patterns",
+        "public_api_paths",
     }
 
     for key in _STR_FIELDS:
@@ -146,6 +172,10 @@ def load_config(config_dir: Path | None) -> Config:
     for key in _INT_FIELDS:
         if key in data:
             setattr(cfg, key, int(data[key]))
+
+    for key in _BOOL_FIELDS:
+        if key in data:
+            setattr(cfg, key, bool(data[key]))
 
     for key in _LIST_FIELDS:
         if key in data:
@@ -173,6 +203,8 @@ class YamlOverrides:
     plan_model: str | None = None
     task_model: str | None = None
     review_model: str | None = None
+    report_api_changes_model: str | None = None
+    report_test_cases_model: str | None = None
     default_branch: str | None = None
 
 
@@ -191,7 +223,7 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     if not isinstance(raw, dict):
         raise ValueError("invalid config.yaml: top-level must be a mapping")
 
-    for section in ("plan", "task", "review"):
+    for section in ("plan", "task", "review", "report_api_changes", "report_test_cases"):
         value = raw.get(section)
         if not isinstance(value, dict):
             continue
@@ -202,8 +234,12 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
             overrides.plan_model = model
         elif section == "task":
             overrides.task_model = model
-        else:
+        elif section == "review":
             overrides.review_model = model
+        elif section == "report_api_changes":
+            overrides.report_api_changes_model = model
+        else:
+            overrides.report_test_cases_model = model
 
     default_branch = raw.get("default_branch")
     if isinstance(default_branch, str) and default_branch:
@@ -224,6 +260,10 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.task_model = overrides.task_model
     if overrides.review_model is not None:
         cfg.review_model = overrides.review_model
+    if overrides.report_api_changes_model is not None:
+        cfg.report_api_changes_model = overrides.report_api_changes_model
+    if overrides.report_test_cases_model is not None:
+        cfg.report_test_cases_model = overrides.report_test_cases_model
     if overrides.default_branch is not None:
         cfg.default_branch = overrides.default_branch
 

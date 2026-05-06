@@ -48,6 +48,18 @@ class TestConfigDefaults:
         assert cfg.default_branch == "main"
         assert cfg.init_prompt_name == "init"
         assert cfg.commit_trailer == ""
+        assert cfg.report_api_changes_model == ""
+        assert cfg.report_test_cases_model == ""
+        assert cfg.public_api_paths == []
+        assert cfg.hooks_dir == ".cadence/hooks"
+        assert cfg.hooks_timeout_seconds == 60
+        assert cfg.hooks_enabled is True
+        assert cfg.templates_dir == ".cadence/templates"
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
+        assert cfg.progress_jsonl is False
+        assert cfg.running_threshold_minutes == 10
+        assert cfg.import_max_bytes == 262144
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -148,6 +160,127 @@ class TestLoadConfig:
         yaml_path.write_text('claude_error_patterns:\n  - "custom error"\n')
         cfg = load_config(tmp_path)
         assert cfg.claude_error_patterns == ["custom error"]
+
+    def test_load_public_api_paths(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('public_api_paths:\n  - "src/api"\n  - "proto"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.public_api_paths == ["src/api", "proto"]
+
+    def test_load_report_api_changes_model(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("report_api_changes_model: claude-sonnet-4-6\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_api_changes_model == "claude-sonnet-4-6"
+
+    def test_default_report_api_changes_model_is_empty(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_api_changes_model == ""
+
+    def test_load_report_test_cases_model(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("report_test_cases_model: claude-sonnet-4-6\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_test_cases_model == "claude-sonnet-4-6"
+
+    def test_default_report_test_cases_model_is_empty(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_test_cases_model == ""
+
+    def test_load_hooks_fields(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(
+            "hooks_dir: custom/path\nhooks_timeout_seconds: 30\nhooks_enabled: false\n"
+        )
+        cfg = load_config(tmp_path)
+        assert cfg.hooks_dir == "custom/path"
+        assert cfg.hooks_timeout_seconds == 30
+        assert cfg.hooks_enabled is False
+
+    def test_load_templates_dir(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("templates_dir: custom/templates\n")
+        cfg = load_config(tmp_path)
+        assert cfg.templates_dir == "custom/templates"
+
+    def test_load_running_threshold_minutes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("running_threshold_minutes: 30\n")
+        cfg = load_config(tmp_path)
+        assert cfg.running_threshold_minutes == 30
+
+    def test_default_running_threshold_minutes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.running_threshold_minutes == 10
+
+    def test_load_import_max_bytes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("import_max_bytes: 1024\n")
+        cfg = load_config(tmp_path)
+        assert cfg.import_max_bytes == 1024
+
+    def test_default_import_max_bytes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.import_max_bytes == 262144
+
+    def test_load_usage_flags_false(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("print_usage: false\ncost_estimates: false\n")
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is False
+        assert cfg.cost_estimates is False
+
+    def test_default_usage_flags_when_yaml_missing_keys(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
+
+    def test_non_bool_yaml_value_coerced_to_true(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('print_usage: "no"\ncost_estimates: "no"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
+
+    def test_load_progress_jsonl_true(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("progress_jsonl: true\n")
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is True
+
+    def test_default_progress_jsonl_when_yaml_missing_key(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is False
+
+    def test_progress_jsonl_non_bool_value_coerced(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('progress_jsonl: "yes"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is True
+
+    def test_progress_jsonl_empty_string_coerced_false(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('progress_jsonl: ""\n')
+        cfg = load_config(tmp_path)
+        assert cfg.progress_jsonl is False
+
+    def test_invalid_hooks_timeout_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("hooks_timeout_seconds: not-a-number\n")
+        with pytest.raises(ValueError):
+            load_config(tmp_path)
 
     def test_load_colors(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -287,6 +420,51 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides("default_branch: 42\n")
         assert overrides.default_branch is None
 
+    def test_report_api_changes_model_override(self) -> None:
+        text = "report_api_changes:\n  model: opus-report\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_api_changes_model == "opus-report"
+        assert overrides.plan_model is None
+        assert overrides.task_model is None
+        assert overrides.review_model is None
+
+    def test_report_api_changes_model_alongside_others(self) -> None:
+        text = "task:\n  model: sonnet\nreport_api_changes:\n  model: opus-report\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+        assert overrides.report_api_changes_model == "opus-report"
+
+    def test_report_api_changes_model_empty_value_ignored(self) -> None:
+        text = "report_api_changes:\n  model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_api_changes_model is None
+
+    def test_report_test_cases_model_override(self) -> None:
+        text = "report_test_cases:\n  model: opus-tc\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_test_cases_model == "opus-tc"
+        assert overrides.plan_model is None
+        assert overrides.task_model is None
+        assert overrides.review_model is None
+        assert overrides.report_api_changes_model is None
+
+    def test_report_test_cases_model_alongside_others(self) -> None:
+        text = "task:\n  model: sonnet\nreport_test_cases:\n  model: opus-tc\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+        assert overrides.report_test_cases_model == "opus-tc"
+
+    def test_report_test_cases_model_empty_value_ignored(self) -> None:
+        text = "report_test_cases:\n  model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_test_cases_model is None
+
+    def test_report_api_and_test_cases_models_independent(self) -> None:
+        text = "report_api_changes:\n  model: opus-api\nreport_test_cases:\n  model: opus-tc\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_api_changes_model == "opus-api"
+        assert overrides.report_test_cases_model == "opus-tc"
+
 
 class TestLoadYamlConfig:
     def test_loads_valid_file(self, tmp_path: Path) -> None:
@@ -340,6 +518,26 @@ class TestApplyYamlOverrides:
         cfg = Config(default_branch="main")
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.default_branch == "main"
+
+    def test_report_api_changes_model_overrides(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(cfg, YamlOverrides(report_api_changes_model="opus-rep"))
+        assert cfg.report_api_changes_model == "opus-rep"
+
+    def test_report_api_changes_model_none_is_no_op(self) -> None:
+        cfg = Config(report_api_changes_model="preset")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.report_api_changes_model == "preset"
+
+    def test_report_test_cases_model_overrides(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(cfg, YamlOverrides(report_test_cases_model="opus-tc"))
+        assert cfg.report_test_cases_model == "opus-tc"
+
+    def test_report_test_cases_model_none_is_no_op(self) -> None:
+        cfg = Config(report_test_cases_model="preset")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.report_test_cases_model == "preset"
 
 
 class TestFindYamlConfig:
