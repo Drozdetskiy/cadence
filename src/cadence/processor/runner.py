@@ -97,6 +97,8 @@ class RunContext:
     default_branch: str = ""
     local_dir: Path | None = None
     derived_plan_path: str = ""
+    imported_brief: str | None = None
+    imported_brief_source: str = ""
 
 
 @dataclass
@@ -431,6 +433,8 @@ class Runner:
                     default_branch=self._ctx.default_branch,
                     commit_trailer=self._app.commit_trailer,
                     derived_plan_path=self._ctx.derived_plan_path,
+                    imported_brief=self._ctx.imported_brief,
+                    imported_brief_source=self._ctx.imported_brief_source,
                 )
 
                 result = self._run_iteration(

@@ -197,6 +197,61 @@ class TestBuildPlanPrompt:
         assert ctx < accepted < out_of_scope < approach
 
 
+class TestBuildPlanPromptImportedBrief:
+    def test_no_imported_brief_omits_external_brief_section(self) -> None:
+        result = build_plan_prompt(
+            plan_description="add a feature",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+        )
+        assert "# External brief" not in result
+        assert "# Task brief (init)" not in result
+        assert "add a feature" in result
+
+    def test_imported_only_renders_single_section_no_precedence_note(self) -> None:
+        content = "Imported brief body content."
+        source = "/abs/path/to/brief.md"
+        result = build_plan_prompt(
+            plan_description="",
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+            imported_brief=content,
+            imported_brief_source=source,
+        )
+        assert f"# External brief (imported from {source})" in result
+        assert "# Task brief (init)" not in result
+        assert content in result
+        assert "authoritative source" not in result
+
+    def test_imported_with_init_renders_both_sections_and_precedence_note(self) -> None:
+        init_content = "Init file body."
+        imported_content = "Imported brief body."
+        source = "/abs/path/to/brief.md"
+        result = build_plan_prompt(
+            plan_description=init_content,
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+            derived_plan_path="/tmp/derived.md",
+            imported_brief=imported_content,
+            imported_brief_source=source,
+        )
+        assert "# Task brief (init)" in result
+        assert f"# External brief (imported from {source})" in result
+        assert init_content in result
+        assert imported_content in result
+        assert (
+            "`# Task brief (init)` is the authoritative source; "
+            "`# External brief` is supplementary context — prefer init when they conflict."
+        ) in result
+        assert result.index("# Task brief (init)") < result.index("# External brief")
+        assert result.index(init_content) < result.index(imported_content)
+
+
 class TestFormatAgentExpansion:
     def test_with_model(self) -> None:
         out = format_agent_expansion("hello body", model="sonnet", agent_type="general-purpose")

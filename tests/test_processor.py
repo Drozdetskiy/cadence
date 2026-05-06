@@ -316,6 +316,54 @@ class TestRunnerPlanCreationIdleTimeout:
         assert executor.run.call_count == 2
 
 
+class TestRunnerPlanCreationImportedBrief:
+    def _make_runner_with_ctx(
+        self,
+        executor: object,
+        ctx: RunContext,
+    ) -> Runner:
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        holder = PhaseHolder()
+        deps = Dependencies(
+            executor=executor,  # type: ignore[arg-type]
+            input_collector=MagicMock(),
+            logger=log,
+            holder=holder,
+        )
+        cfg = AppConfig(max_iterations=50, iteration_delay_ms=0)
+        return Runner(ctx, cfg, deps)
+
+    def test_no_imported_brief_omits_external_section(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        ctx = RunContext(mode=Mode.PLAN, plan_description="init body")
+        runner = self._make_runner_with_ctx(executor, ctx)
+
+        runner.run_plan_creation()
+
+        prompt = executor.run.call_args_list[0][0][0]
+        assert "# External brief" not in prompt
+        assert "init body" in prompt
+
+    def test_imported_brief_included_with_source_path(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        ctx = RunContext(
+            mode=Mode.PLAN,
+            plan_description="",
+            imported_brief="external content here",
+            imported_brief_source="/abs/path/to/brief.md",
+        )
+        runner = self._make_runner_with_ctx(executor, ctx)
+
+        runner.run_plan_creation()
+
+        prompt = executor.run.call_args_list[0][0][0]
+        assert "# External brief (imported from /abs/path/to/brief.md)" in prompt
+        assert "external content here" in prompt
+
+
 def _make_resolver_runner(plan_file: str) -> Runner:
     ctx = RunContext(mode=Mode.REVIEW, plan_file=plan_file)
     log = MagicMock()

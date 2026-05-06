@@ -496,6 +496,201 @@ class TestRunPlanMode:
         assert str(tmp_path) in captured_progress[0]
 
 
+class TestRunPlanModeImport:
+    def test_missing_import_path_exits_2_before_executor(self, tmp_path: Path) -> None:
+        from cadence.config import Config
+
+        plan_file = tmp_path / "init"
+        plan_file.write_text("brief")
+
+        missing = tmp_path / "no-such.md"
+
+        with (
+            patch("cadence.cli.ClaudeExecutor") as mock_executor_cls,
+            patch("cadence.cli._setup_runtime") as mock_setup,
+            patch("cadence.cli.Logger"),
+        ):
+            mock_setup.return_value = (
+                Config(iteration_delay_ms=0),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                "main",
+                None,
+            )
+            with pytest.raises(SystemExit) as excinfo:
+                run_plan_mode(plan_file, import_path=missing)
+            assert excinfo.value.code == 2
+            mock_executor_cls.assert_not_called()
+
+    def test_oversized_import_exits_2_before_executor(self, tmp_path: Path) -> None:
+        from cadence.config import Config
+
+        plan_file = tmp_path / "init"
+        plan_file.write_text("brief")
+
+        big = tmp_path / "big.md"
+        big.write_bytes(b"x" * 100)
+
+        with (
+            patch("cadence.cli.ClaudeExecutor") as mock_executor_cls,
+            patch("cadence.cli._setup_runtime") as mock_setup,
+            patch("cadence.cli.Logger"),
+        ):
+            mock_setup.return_value = (
+                Config(iteration_delay_ms=0, import_max_bytes=10),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                "main",
+                None,
+            )
+            with pytest.raises(SystemExit) as excinfo:
+                run_plan_mode(plan_file, import_path=big)
+            assert excinfo.value.code == 2
+            mock_executor_cls.assert_not_called()
+
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_path_bound_import_includes_external_brief_in_prompt(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        brief = tmp_path / "brief.md"
+        brief.write_text("EXTERNAL_BRIEF_BODY")
+
+        run_plan_mode(brief, import_path=brief, init_content_override="")
+
+        prompt = mock_executor.run.call_args.args[0]
+        abs_brief = str(brief.resolve())
+        assert f"# External brief (imported from {abs_brief})" in prompt
+        assert "EXTERNAL_BRIEF_BODY" in prompt
+        assert "# Task brief (init)" not in prompt
+
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_branch_bound_style_includes_both_init_and_external(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        init_file = tmp_path / "init"
+        init_file.write_text("INIT_CONTENT_BODY")
+
+        brief = tmp_path / "brief.md"
+        brief.write_text("EXTERNAL_BRIEF_BODY")
+
+        run_plan_mode(init_file, import_path=brief)
+
+        prompt = mock_executor.run.call_args.args[0]
+        assert "# Task brief (init)" in prompt
+        assert "INIT_CONTENT_BODY" in prompt
+        assert "# External brief" in prompt
+        assert "EXTERNAL_BRIEF_BODY" in prompt
+
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_qa_loop_still_triggers_with_import(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        question_payload = (
+            '<<<CADENCE:QUESTION>>>\n{"question": "DB?", "options": ["pg", "sqlite"]}\n'
+            "<<<CADENCE:END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.side_effect = [
+            Result(output=question_payload, signal=""),
+            Result(output="done", signal=SignalPlanReady),
+        ]
+        mock_executor_cls.return_value = mock_executor
+
+        mock_collector = MagicMock()
+        mock_collector.ask_question.return_value = "pg"
+        mock_terminal_cls.return_value = mock_collector
+
+        brief = tmp_path / "brief.md"
+        brief.write_text("EXTERNAL")
+
+        run_plan_mode(brief, import_path=brief, init_content_override="")
+
+        assert mock_collector.ask_question.called
+        assert mock_executor.run.call_count >= 2
+
+
 class TestSubcommandRouting:
     @staticmethod
     def _runner() -> Any:
@@ -551,7 +746,7 @@ class TestSubcommandRouting:
     def test_run_plan_calls_branch_plan(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["run", "plan"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with(config=None)
+        mock_run.assert_called_once_with(config=None, import_path=None)
 
     @patch("cadence.cli._run_task_on_current_branch")
     def test_run_task_calls_branch_task(self, mock_run: MagicMock) -> None:
@@ -625,6 +820,50 @@ class TestSubcommandRouting:
         assert result.exit_code == 0
         _args, kwargs = mock_run.call_args
         assert kwargs == {"config": cfg}
+
+    @patch("cadence.cli.run_plan_mode")
+    def test_plan_with_import_flag_passes_path_and_empty_init(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "brief.md"
+        f.write_text("external doc")
+        result = self._runner().invoke(app, ["plan", str(f), "--import"])
+        assert result.exit_code == 0
+        args, kwargs = mock_run.call_args
+        assert args[0] == f
+        assert kwargs == {"config": None, "import_path": f, "init_content_override": ""}
+
+    @patch("cadence.cli.run_plan_mode")
+    def test_plan_without_import_keeps_default_kwargs(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "prompt.md"
+        f.write_text("implement X")
+        result = self._runner().invoke(app, ["plan", str(f)])
+        assert result.exit_code == 0
+        args, kwargs = mock_run.call_args
+        assert args[0] == f
+        assert kwargs == {"config": None}
+
+    @patch("cadence.cli._run_plan_on_current_branch")
+    def test_run_plan_with_import_propagates_path(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        f = tmp_path / "brief.md"
+        f.write_text("external doc")
+        result = self._runner().invoke(app, ["run", "plan", "--import", str(f)])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(config=None, import_path=f)
+
+    @patch("cadence.cli._run_plan_on_current_branch")
+    def test_run_plan_without_import_propagates_none(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["run", "plan"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(config=None, import_path=None)
+
+    def test_run_plan_import_without_value_exits_nonzero(self) -> None:
+        result = self._runner().invoke(app, ["run", "plan", "--import"])
+        assert result.exit_code != 0
 
     def test_plan_with_missing_path_exits_2(self, tmp_path: Path) -> None:
         result = self._runner().invoke(app, ["plan", str(tmp_path / "no-such.md")])
@@ -3490,6 +3729,7 @@ class TestRunPlanSubcommand:
             "repo_path": None,
             "input_collector": None,
             "chain_collector": None,
+            "import_path": None,
         }
 
 

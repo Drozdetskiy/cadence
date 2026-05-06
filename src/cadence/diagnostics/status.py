@@ -293,7 +293,7 @@ def query_last_external_commit(repo_path: str, *, tasks_root: str) -> CommitInfo
             errors="replace",
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return None
     if result.returncode != 0:
         return None

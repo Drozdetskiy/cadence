@@ -98,6 +98,28 @@ def append_commit_format_instruction(prompt: str, commit_format: str) -> str:
 _PLAN_DESC_PLACEHOLDER = "{{PLAN_DESCRIPTION}}"
 _AGENT_REF_RE = re.compile(r"\{\{agent:([a-zA-Z0-9_-]+)\}\}")
 
+_IMPORT_PRECEDENCE_NOTE = (
+    "`# Task brief (init)` is the authoritative source; `# External brief` is "
+    "supplementary context — prefer init when they conflict."
+)
+
+
+def _compose_plan_description(
+    plan_description: str,
+    imported_brief: str | None,
+    imported_brief_source: str,
+) -> str:
+    if imported_brief is None:
+        return plan_description
+    external_heading = f"# External brief (imported from {imported_brief_source})"
+    if not plan_description:
+        return f"{external_heading}\n\n{imported_brief}"
+    return (
+        f"# Task brief (init)\n\n{plan_description}\n\n"
+        f"{external_heading}\n\n{imported_brief}\n\n"
+        f"{_IMPORT_PRECEDENCE_NOTE}"
+    )
+
 
 def format_agent_expansion(prompt_body: str, *, model: str, agent_type: str) -> str:
     model_clause = f" with model={model}" if model else ""
@@ -166,6 +188,8 @@ def build_plan_prompt(
     default_branch: str = "",
     commit_trailer: str = "",
     derived_plan_path: str = "",
+    imported_brief: str | None = None,
+    imported_brief_source: str = "",
 ) -> str:
     prompt = load_prompt("make_plan", local_dir=local_dir)
     prompt = replace_base_variables(
@@ -174,7 +198,8 @@ def build_plan_prompt(
         progress_file=progress_file,
         default_branch=default_branch,
     )
-    prompt = prompt.replace(_PLAN_DESC_PLACEHOLDER, plan_description)
+    composed = _compose_plan_description(plan_description, imported_brief, imported_brief_source)
+    prompt = prompt.replace(_PLAN_DESC_PLACEHOLDER, composed)
     prompt = prompt.replace(
         "{{DERIVED_PLAN_PATH}}",
         derived_plan_path or "(next to the prompt file)",

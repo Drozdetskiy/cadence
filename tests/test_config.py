@@ -57,6 +57,7 @@ class TestConfigDefaults:
         assert cfg.print_usage is True
         assert cfg.cost_estimates is True
         assert cfg.running_threshold_minutes == 10
+        assert cfg.import_max_bytes == 262144
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -209,6 +210,18 @@ class TestLoadConfig:
         yaml_path.write_text("claude_command: x\n")
         cfg = load_config(tmp_path)
         assert cfg.running_threshold_minutes == 10
+
+    def test_load_import_max_bytes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("import_max_bytes: 1024\n")
+        cfg = load_config(tmp_path)
+        assert cfg.import_max_bytes == 1024
+
+    def test_default_import_max_bytes(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.import_max_bytes == 262144
 
     def test_load_usage_flags_false(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

@@ -205,6 +205,22 @@ def _read_plan_file(plan_file: Path) -> str:
     return content
 
 
+def _read_import_file(path: Path, max_bytes: int) -> tuple[str, str]:
+    if not path.is_file():
+        typer.echo(f"error: import file not found: {path}", err=True)
+        raise SystemExit(2)
+    raw = path.read_bytes()
+    if len(raw) > max_bytes:
+        typer.echo(
+            f"error: import file too large ({len(raw)} bytes > {max_bytes} limit); "
+            f"either trim or split",
+            err=True,
+        )
+        raise SystemExit(2)
+    content = raw.decode("utf-8", errors="replace")
+    return content, str(path.resolve())
+
+
 def _apply_yaml_overrides(
     cfg: Config,
     config_arg: Path | None,
@@ -476,8 +492,13 @@ def run_plan_mode(
     repo_path: str | None = None,
     input_collector: InputCollector | None = None,
     chain_collector: UsageStats | None = None,
+    import_path: Path | None = None,
+    init_content_override: str | None = None,
 ) -> None:
-    content = _read_plan_file(plan_file)
+    if init_content_override is not None:
+        content = init_content_override
+    else:
+        content = _read_plan_file(plan_file)
 
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
         config,
@@ -485,6 +506,13 @@ def run_plan_mode(
         repo_path=repo_path if repo_path is not None else ".",
         claude_cwd=repo_path,
     )
+
+    imported_brief: str | None
+    if import_path is not None:
+        imported_brief, imported_brief_source = _read_import_file(import_path, cfg.import_max_bytes)
+    else:
+        imported_brief = None
+        imported_brief_source = ""
 
     plan_file_str = str(plan_file.resolve()) if repo_path is not None else to_rel_path(plan_file)
     try:
@@ -525,6 +553,8 @@ def run_plan_mode(
         default_branch=default_branch,
         local_dir=local_dir,
         derived_plan_path=plan_path,
+        imported_brief=imported_brief,
+        imported_brief_source=imported_brief_source,
     )
 
     deps = Dependencies(
@@ -1526,6 +1556,7 @@ def _run_plan_on_current_branch(
     repo_path: str | None = None,
     input_collector: InputCollector | None = None,
     chain_collector: UsageStats | None = None,
+    import_path: Path | None = None,
 ) -> None:
     cfg, _branch, task_dir = _resolve_current_task_dir(config, repo_path=repo_path)
 
@@ -1544,6 +1575,7 @@ def _run_plan_on_current_branch(
         repo_path=repo_path,
         input_collector=input_collector,
         chain_collector=chain_collector,
+        import_path=import_path,
     )
 
 
@@ -1955,6 +1987,16 @@ _STDOUT_ONLY_OPTION: bool = typer.Option(
 )
 _TASK_NAME_ARG: str = typer.Argument(...)
 _PATH_ARG: Path = typer.Argument(...)
+_IMPORT_FLAG: bool = typer.Option(
+    False,
+    "--import",
+    help="Treat <path> as an external brief to import",
+)
+_IMPORT_PATH_OPTION: Path | None = typer.Option(
+    None,
+    "--import",
+    help="Path to an external brief to fold into the plan prompt",
+)
 
 
 @app.callback()
@@ -1983,10 +2025,13 @@ def cmd_run(ctx: typer.Context) -> None:
 
 
 @run_app.command("plan", help="Run plan creation on the current branch's init file")
-def cmd_run_plan(ctx: typer.Context) -> None:
+def cmd_run_plan(
+    ctx: typer.Context,
+    import_path: Path | None = _IMPORT_PATH_OPTION,
+) -> None:
     opts = _ctx_opts(ctx)
     _arm_sigint()
-    _run_plan_on_current_branch(config=opts.config)
+    _run_plan_on_current_branch(config=opts.config, import_path=import_path)
 
 
 @run_app.command("task", help="Run task execution on the current branch's plan file")
@@ -1997,10 +2042,22 @@ def cmd_run_task(ctx: typer.Context) -> None:
 
 
 @app.command("plan", help="Create a plan from a prompt file at <path>")
-def cmd_plan(ctx: typer.Context, path: Path = _PATH_ARG) -> None:
+def cmd_plan(
+    ctx: typer.Context,
+    path: Path = _PATH_ARG,
+    import_: bool = _IMPORT_FLAG,
+) -> None:
     opts = _ctx_opts(ctx)
     _arm_sigint()
-    run_plan_mode(path, config=opts.config)
+    if import_:
+        run_plan_mode(
+            path,
+            config=opts.config,
+            import_path=path,
+            init_content_override="",
+        )
+    else:
+        run_plan_mode(path, config=opts.config)
 
 
 @app.command("task", help="Execute tasks from a plan file at <path>")
