@@ -79,6 +79,7 @@ class Config:
     hooks_dir: str = ".cadence/hooks"
     hooks_timeout_seconds: int = 60
     hooks_enabled: bool = True
+    templates_dir: str = ".cadence/templates"
     print_usage: bool = True
     cost_estimates: bool = True
     progress_jsonl: bool = False
@@ -142,6 +143,7 @@ def load_config(config_dir: Path | None) -> Config:
         "commit_trailer",
         "commit_format",
         "hooks_dir",
+        "templates_dir",
     }
     _INT_FIELDS = {
         "iteration_delay_ms",

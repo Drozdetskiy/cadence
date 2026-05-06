@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import re
 import signal
 import threading
@@ -735,7 +736,13 @@ class TestSubcommandRouting:
     def test_init_calls_run_task_init_mode(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["init", "feat-x"])
         assert result.exit_code == 0
-        mock_run.assert_called_once_with("feat-x", config=None)
+        mock_run.assert_called_once_with("feat-x", config=None, template=None)
+
+    @patch("cadence.cli.run_task_init_mode")
+    def test_init_forwards_template_flag(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["init", "feat-x", "--template", "feature"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with("feat-x", config=None, template="feature")
 
     @patch("cadence.cli._auto_detect_and_run")
     def test_run_no_subcommand_calls_auto_detect(self, mock_auto: MagicMock) -> None:
@@ -3141,6 +3148,367 @@ class TestRunTaskInitMode:
             os.chdir(original_cwd)
 
         assert not (tmp_path / "cdc-tasks" / "scaffold" / "config.yaml").exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_not_found_exits_2_no_side_effects(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode("feat-x", template="missing")
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert 'template "missing" not found' in err
+        assert str(Path(".cadence/templates/missing.txt")) in err
+        mock_svc.create_branch.assert_not_called()
+        assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_pre_fills_init(
+        self,
+        _detect: MagicMock,
+        mock_subproc_run: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        author_proc = MagicMock()
+        author_proc.returncode = 0
+        author_proc.stdout = ""
+        mock_subproc_run.return_value = author_proc
+
+        templates_dir = tmp_path / ".cadence" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text("hello world\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        init_file = tmp_path / "cdc-tasks" / "feat-x" / "init"
+        assert init_file.read_text(encoding="utf-8") == "hello world\n"
+
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_substitutes_variables(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_subproc_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        author_proc = MagicMock()
+        author_proc.returncode = 0
+        author_proc.stdout = "Ada Lovelace\n"
+        mock_subproc_run.return_value = author_proc
+
+        class _FixedDate(datetime.date):
+            @classmethod
+            def today(cls) -> datetime.date:
+                return datetime.date(2026, 5, 6)
+
+        monkeypatch.setattr("cadence.cli.datetime.date", _FixedDate)
+
+        templates_dir = tmp_path / ".cadence" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text(
+            "task: {{task_name}} ({{task_name}})\n"
+            "branch: {{branch}}\n"
+            "date: {{date}}\n"
+            "author: {{author}}\n",
+            encoding="utf-8",
+        )
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
+        assert rendered == (
+            "task: feat-x (feat-x)\nbranch: feat-x\ndate: 2026-05-06\nauthor: Ada Lovelace\n"
+        )
+        mock_subproc_run.assert_called_once()
+        called_args = mock_subproc_run.call_args.args[0]
+        assert called_args == ["git", "config", "user.name"]
+
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_unknown_variable_left_intact(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_subproc_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        author_proc = MagicMock()
+        author_proc.returncode = 0
+        author_proc.stdout = ""
+        mock_subproc_run.return_value = author_proc
+
+        templates_dir = tmp_path / ".cadence" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text(
+            "literal: {{foo}} {{task_name}}\n", encoding="utf-8"
+        )
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
+        assert rendered == "literal: {{foo}} feat-x\n"
+
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_missing_user_name_falls_back_to_empty(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_subproc_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        author_proc = MagicMock()
+        author_proc.returncode = 1
+        author_proc.stdout = ""
+        mock_subproc_run.return_value = author_proc
+
+        templates_dir = tmp_path / ".cadence" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text("by [{{author}}]\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
+        assert rendered == "by []\n"
+
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_subprocess_oserror_falls_back_to_empty_author(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_subproc_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        mock_subproc_run.side_effect = FileNotFoundError("git not found")
+
+        templates_dir = tmp_path / ".cadence" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text("by [{{author}}]\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
+        assert rendered == "by []\n"
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @pytest.mark.parametrize(
+        "bad_name",
+        ["", "../etc/passwd", "..", ".", "-flag", "foo/bar", "a\\b"],
+    )
+    def test_invalid_template_name_exits_2_no_side_effects(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        bad_name: str,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks", templates_dir=".cadence/templates"
+        )
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode("feat-x", template=bad_name)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        assert "invalid template name" in capsys.readouterr().err
+        mock_svc.create_branch.assert_not_called()
+        assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
+
+    @patch("cadence.cli.subprocess.run")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_template_honors_custom_templates_dir(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_subproc_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", templates_dir="custom/templates")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        author_proc = MagicMock()
+        author_proc.returncode = 0
+        author_proc.stdout = ""
+        mock_subproc_run.return_value = author_proc
+
+        templates_dir = tmp_path / "custom" / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "feature.txt").write_text("from custom dir\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode("feat-x", template="feature")
+        finally:
+            os.chdir(original_cwd)
+
+        rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
+        assert rendered == "from custom dir\n"
 
 
 class TestRunAutoDetect:

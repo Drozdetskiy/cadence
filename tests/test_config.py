@@ -54,6 +54,7 @@ class TestConfigDefaults:
         assert cfg.hooks_dir == ".cadence/hooks"
         assert cfg.hooks_timeout_seconds == 60
         assert cfg.hooks_enabled is True
+        assert cfg.templates_dir == ".cadence/templates"
         assert cfg.print_usage is True
         assert cfg.cost_estimates is True
         assert cfg.progress_jsonl is False
@@ -199,6 +200,12 @@ class TestLoadConfig:
         assert cfg.hooks_dir == "custom/path"
         assert cfg.hooks_timeout_seconds == 30
         assert cfg.hooks_enabled is False
+
+    def test_load_templates_dir(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("templates_dir: custom/templates\n")
+        cfg = load_config(tmp_path)
+        assert cfg.templates_dir == "custom/templates"
 
     def test_load_running_threshold_minutes(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

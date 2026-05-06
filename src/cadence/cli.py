@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import datetime
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -51,6 +53,7 @@ from cadence.processor.signals import parse_squash_commit_message
 from cadence.progress.colors import Colors
 from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
 from cadence.status import Mode, PhaseHolder
+from cadence.templates import load_template, render_template
 from cadence.usage import (
     UsageStats,
     estimate_cost,
@@ -1390,9 +1393,20 @@ def run_report_test_cases_mode(
         log.close(success=run_success)
 
 
-def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
+def run_task_init_mode(
+    task_name: str,
+    *,
+    config: Path | None = None,
+    template: str | None = None,
+) -> None:
     if not task_name or "/" in task_name or "\\" in task_name or task_name.startswith((".", "-")):
         typer.echo(f"error: invalid task name: {task_name!r}", err=True)
+        raise SystemExit(2)
+
+    if template is not None and (
+        not template or "/" in template or "\\" in template or template.startswith((".", "-"))
+    ):
+        typer.echo(f"error: invalid template name: {template!r}", err=True)
         raise SystemExit(2)
 
     local_dir = detect_local_dir()
@@ -1427,6 +1441,35 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
         typer.echo(f"error: branch already exists: {task_name}", err=True)
         raise SystemExit(2)
 
+    init_content: str | None = None
+    if template is not None:
+        try:
+            template_text = load_template(Path(cfg.templates_dir), template)
+        except FileNotFoundError as exc:
+            resolved = getattr(exc, "path", None) or (Path(cfg.templates_dir) / f"{template}.txt")
+            typer.echo(
+                f'error: template "{template}" not found at {resolved}',
+                err=True,
+            )
+            raise SystemExit(2) from None
+        try:
+            author_proc = subprocess.run(
+                ["git", "config", "user.name"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            author = author_proc.stdout.strip() if author_proc.returncode == 0 else ""
+        except OSError:
+            author = ""
+        context = {
+            "task_name": task_name,
+            "branch": task_name,
+            "date": datetime.date.today().strftime("%Y-%m-%d"),
+            "author": author,
+        }
+        init_content = render_template(template_text, context)
+
     try:
         git_svc.create_branch(task_name)
     except RuntimeError as exc:
@@ -1435,7 +1478,10 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
 
     task_dir.mkdir(parents=True, exist_ok=False)
     init_file = task_dir / "init"
-    init_file.touch()
+    if init_content is None:
+        init_file.touch()
+    else:
+        init_file.write_text(init_content, encoding="utf-8")
 
     typer.echo(f"created branch: {task_name}")
     typer.echo(f"created directory: {task_dir}")
@@ -2045,6 +2091,11 @@ _IMPORT_PATH_OPTION: Path | None = typer.Option(
     "--import",
     help="Path to an external brief to fold into the plan prompt",
 )
+_TEMPLATE_OPTION: str | None = typer.Option(
+    None,
+    "--template",
+    help="Pre-fill init from .cadence/templates/<name>.txt",
+)
 
 
 @app.callback()
@@ -2058,9 +2109,13 @@ def app_callback(
 
 
 @app.command("init", help="Scaffold a new task: branch + tasks_root/<name>/init [+ config.yaml]")
-def cmd_init(ctx: typer.Context, task_name: str = _TASK_NAME_ARG) -> None:
+def cmd_init(
+    ctx: typer.Context,
+    task_name: str = _TASK_NAME_ARG,
+    template: str | None = _TEMPLATE_OPTION,
+) -> None:
     opts = _ctx_opts(ctx)
-    run_task_init_mode(task_name, config=opts.config)
+    run_task_init_mode(task_name, config=opts.config, template=template)
 
 
 @run_app.callback(invoke_without_command=True)
