@@ -13,6 +13,10 @@ from cadence.status import (
     SignalPlanDraft,
     SignalPlanReady,
     SignalQuestion,
+    SignalReportBegin,
+    SignalReportDone,
+    SignalReportEnd,
+    SignalReportFailed,
     SignalReviewDone,
 )
 
@@ -28,6 +32,10 @@ _QUESTION_RE = _payload_regex(SignalQuestion)
 _PLAN_DRAFT_RE = _payload_regex(SignalPlanDraft)
 _COMMIT_MSG_RE = re.compile(
     rf"{re.escape(SignalCommitMsgBegin)}\s*(.*?)\s*{re.escape(SignalCommitMsgEnd)}",
+    re.DOTALL,
+)
+_REPORT_BODY_RE = re.compile(
+    rf"{re.escape(SignalReportBegin)}\s*(.*?)\s*{re.escape(SignalReportEnd)}",
     re.DOTALL,
 )
 
@@ -84,6 +92,17 @@ def parse_squash_commit_message(text: str) -> str | None:
     return None
 
 
+def parse_report_body(text: str) -> str | None:
+    if SignalReportBegin not in text or SignalReportEnd not in text:
+        return None
+    matches = list(_REPORT_BODY_RE.finditer(text))
+    for m in reversed(matches):
+        body = m.group(1).strip()
+        if body:
+            return body
+    return None
+
+
 def is_plan_ready(signal: str) -> bool:
     return signal == SignalPlanReady
 
@@ -98,3 +117,11 @@ def is_task_failed(signal: str) -> bool:
 
 def is_all_tasks_done(signal: str) -> bool:
     return signal == SignalCompleted
+
+
+def is_report_done(signal: str) -> bool:
+    return signal == SignalReportDone
+
+
+def is_report_failed(signal: str) -> bool:
+    return signal == SignalReportFailed

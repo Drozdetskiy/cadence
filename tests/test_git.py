@@ -283,6 +283,68 @@ class TestExternalBackendCreateBranchFrom:
         assert "no-such-base" in str(excinfo.value)
 
 
+class TestExternalBackendWorktrees:
+    def test_worktree_add_creates_branch_and_directory(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "repo")
+        os.makedirs(path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        be = ExternalBackend(path)
+        wt = tmp_path / "wt-feature"
+        be.worktree_add(str(wt), "feature", "main")
+        assert wt.is_dir()
+        assert (wt / "a.txt").exists()
+        assert be.branch_exists("feature")
+
+    def test_worktree_remove_keeps_branch(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "repo")
+        os.makedirs(path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        be = ExternalBackend(path)
+        wt = tmp_path / "wt-x"
+        be.worktree_add(str(wt), "feature-x", "main")
+        assert wt.is_dir()
+        be.worktree_remove(str(wt))
+        assert not wt.exists()
+        assert be.branch_exists("feature-x")
+
+    def test_worktree_exists_detects_entry(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "repo")
+        os.makedirs(path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        be = ExternalBackend(path)
+        wt = tmp_path / "wt-here"
+        assert be.worktree_exists(str(wt)) is False
+        be.worktree_add(str(wt), "feature-here", "main")
+        assert be.worktree_exists(str(wt)) is True
+        unrelated = tmp_path / "wt-other"
+        assert be.worktree_exists(str(unrelated)) is False
+
+    def test_worktree_add_fails_when_branch_exists(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "repo")
+        os.makedirs(path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        _git(path, "branch", "feature-dup")
+        be = ExternalBackend(path)
+        wt = tmp_path / "wt-dup"
+        with pytest.raises(RuntimeError):
+            be.worktree_add(str(wt), "feature-dup", "main")
+
+    def test_worktree_add_unknown_base_raises(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "repo")
+        os.makedirs(path)
+        _init_repo(path, branch="main")
+        _commit(path, filename="a.txt", content="a")
+        be = ExternalBackend(path)
+        wt = tmp_path / "wt-bad"
+        with pytest.raises(RuntimeError) as excinfo:
+            be.worktree_add(str(wt), "feature", "no-such-base")
+        assert "no-such-base" in str(excinfo.value)
+
+
 class TestExternalBackendDiffFingerprint:
     def test_clean(self, tmp_path: Path) -> None:
         path = str(tmp_path)

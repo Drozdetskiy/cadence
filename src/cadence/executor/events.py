@@ -48,8 +48,19 @@ class ResultPayload:
 
 
 @dataclass
+class Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+
+@dataclass
 class ResultEvent:
     result: ResultPayload | str | None = None
+    usage: Usage | None = None
+    session_id: str = ""
+    model: str = ""
 
 
 ClaudeEvent = AssistantEvent | ContentBlockDeltaEvent | ContentBlockStartEvent | ResultEvent
@@ -100,14 +111,48 @@ def _parse_content_block_start(raw: dict[str, object]) -> ContentBlockStartEvent
     return ContentBlockStartEvent(content_block=cb)
 
 
+def _coerce_int(v: object) -> int:
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _parse_usage(raw: object) -> Usage | None:
+    if not isinstance(raw, dict):
+        return None
+    return Usage(
+        input_tokens=_coerce_int(raw.get("input_tokens", 0)),
+        output_tokens=_coerce_int(raw.get("output_tokens", 0)),
+        cache_read_tokens=_coerce_int(raw.get("cache_read_input_tokens", 0)),
+        cache_creation_tokens=_coerce_int(raw.get("cache_creation_input_tokens", 0)),
+    )
+
+
 def _parse_result(raw: dict[str, object]) -> ResultEvent:
     result_raw = raw.get("result")
+    usage = _parse_usage(raw.get("usage"))
+    session_raw = raw.get("session_id")
+    session_id = session_raw if isinstance(session_raw, str) else ""
+    model_raw = raw.get("model")
+    model = model_raw if isinstance(model_raw, str) else ""
     if isinstance(result_raw, str):
-        return ResultEvent(result=result_raw)
+        return ResultEvent(result=result_raw, usage=usage, session_id=session_id, model=model)
     if isinstance(result_raw, dict):
         out = result_raw.get("output")
-        return ResultEvent(result=ResultPayload(output=out if isinstance(out, str) else ""))
-    return ResultEvent(result=None)
+        return ResultEvent(
+            result=ResultPayload(output=out if isinstance(out, str) else ""),
+            usage=usage,
+            session_id=session_id,
+            model=model,
+        )
+    return ResultEvent(result=None, usage=usage, session_id=session_id, model=model)
 
 
 def parse_event(raw: object) -> ClaudeEvent | None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import re
 import sys
@@ -24,6 +26,8 @@ class ProgressLoggerConfig:
     mode: Mode = Mode.PLAN
     plan_description: str = ""
     no_color: bool = False
+    quiet: bool = False
+    progress_jsonl: bool = False
 
 
 _DASHES = "-" * 60
@@ -117,6 +121,38 @@ class _ProgressFile:
         self.write("")
 
 
+class _JsonlFile:
+    """Append-only JSON-Lines sink that mirrors the lifecycle of `_ProgressFile`."""
+
+    def __init__(self, cfg: ProgressLoggerConfig) -> None:
+        if not cfg.progress_path.endswith(".txt"):
+            raise ValueError(
+                f"progress_path must end with .txt to derive .jsonl path, got: {cfg.progress_path}"
+            )
+        jsonl_path = cfg.progress_path[: -len(".txt")] + ".jsonl"
+        progress_dir = os.path.dirname(jsonl_path)
+        if progress_dir:
+            os.makedirs(progress_dir, mode=0o750, exist_ok=True)
+        self._path = os.path.abspath(jsonl_path)
+        self._file: IO[str] = open(self._path, "a", encoding="utf-8")  # noqa: SIM115
+        try:
+            os.chmod(self._path, 0o600)
+        except Exception:
+            self._file.close()
+            raise
+
+    @property
+    def path(self) -> str:
+        return self._path
+
+    def write_line(self, payload: dict[str, object]) -> None:
+        self._file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+
 class _PartialLineBuffer:
     """Tracks whether stdout is at line-start for correct timestamp placement."""
 
@@ -145,9 +181,18 @@ class Logger:
         self._holder = holder
         self._start_time = datetime.now(tz=UTC)
         self._no_color = cfg.no_color
+        self._quiet = cfg.quiet
         self._console = Console(file=sys.stdout, no_color=cfg.no_color, highlight=False)
         self._buffer = _PartialLineBuffer()
         self._file = _ProgressFile(cfg)
+        self._jsonl: _JsonlFile | None = None
+        try:
+            if cfg.progress_jsonl:
+                self._jsonl = _JsonlFile(cfg)
+        except Exception:
+            self._file.close()
+            raise
+        self._jsonl_broken = False
 
     @property
     def path(self) -> str:
@@ -156,6 +201,8 @@ class Logger:
     def _emit(self, prefix: str, msg: str, style: Style) -> None:
         ts = _timestamp()
         self._file.write(f"{ts} {prefix}{msg}")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         text = Text()
         text.append(ts, style=self._colors.timestamp())
@@ -170,6 +217,8 @@ class Logger:
     def print_section(self, section: Section) -> None:
         ts = _timestamp()
         self._file.write(f"\n{ts} --- {section.label} ---\n")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         text = Text()
         text.append("\n")
@@ -194,6 +243,8 @@ class Logger:
             if not line:
                 continue
             self._file.write(f"{ts} {line}")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         style = self._colors.for_phase(self._holder.get())
         for line in text.rstrip("\n").split("\n"):
@@ -214,12 +265,25 @@ class Logger:
         ts = _timestamp()
         self._file.write(f"{ts} ANSWER: {answer}")
 
+    def log_event(self, event: object) -> None:
+        if self._jsonl is None:
+            return
+        try:
+            payload = event.to_jsonl_dict()  # type: ignore[attr-defined]
+            self._jsonl.write_line(payload)
+        except Exception as exc:
+            if not self._jsonl_broken:
+                self._jsonl_broken = True
+                self.warn("progress jsonl write failed: %s", exc)
+
     def log_claude_output(self, text: str) -> None:
         if not text:
             return
         ts = _timestamp()
         for line in text.rstrip("\n").split("\n"):
             self._file.write(f"{ts} {line}")
+        if self._quiet:
+            return
         parts = text.split("\n")
         for i, part in enumerate(parts):
             if self._buffer.at_line_start and part:
@@ -251,4 +315,9 @@ class Logger:
             else:
                 self._file.write(f"Failed: {now} ({elapsed})")
         finally:
-            self._file.close()
+            try:
+                self._file.close()
+            finally:
+                if self._jsonl is not None:
+                    with contextlib.suppress(Exception):
+                        self._jsonl.close()

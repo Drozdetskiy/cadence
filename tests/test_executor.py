@@ -22,13 +22,15 @@ from cadence.executor.claude_executor import (
     filter_env,
     match_pattern,
 )
-from cadence.executor.events import parse_event
+from cadence.executor.events import Usage, parse_event
 from cadence.executor.process_group import ProcessGroupCleanup
 from cadence.processor.signals import parse_question_payload
 from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
+    SignalReportDone,
+    SignalReportFailed,
     SignalReviewDone,
 )
 
@@ -45,6 +47,12 @@ class TestDetectSignal:
 
     def test_plan_ready(self) -> None:
         assert detect_signal("<<<CADENCE:PLAN_READY>>>") == SignalPlanReady
+
+    def test_report_done(self) -> None:
+        assert detect_signal("body <<<CADENCE:REPORT_DONE>>>") == SignalReportDone
+
+    def test_report_failed(self) -> None:
+        assert detect_signal("<<<CADENCE:REPORT_FAILED>>>") == SignalReportFailed
 
     def test_no_signal(self) -> None:
         assert detect_signal("just some text without any signals") == ""
@@ -162,8 +170,12 @@ class MockCommandRunner:
     def __init__(self, lines: list[str], exit_code: int = 0) -> None:
         self._lines = lines
         self._exit_code = exit_code
+        self.last_cwd: str | None = None
 
-    def run(self, name: str, *args: str) -> tuple[IO[str], Callable[[], int]]:
+    def run(
+        self, name: str, *args: str, cwd: str | None = None
+    ) -> tuple[IO[str], Callable[[], int]]:
+        self.last_cwd = cwd
         content = "\n".join(self._lines) + "\n" if self._lines else ""
         stream = io.StringIO(content)
         return stream, lambda: self._exit_code
@@ -881,6 +893,177 @@ class TestResult:
         assert r.signal == ""
         assert r.error is None
         assert r.idle_timed_out is False
+        assert r.usage is None
+        assert r.session_id == ""
+        assert r.model == ""
+
+
+class TestClaudeExecutorUsageCarry:
+    def test_full_usage_session_and_model_propagated(self) -> None:
+        lines = [
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": {"output": "summary"},
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "cache_read_input_tokens": 200,
+                        "cache_creation_input_tokens": 10,
+                    },
+                    "session_id": "sess-abc",
+                    "model": "claude-opus-4-7",
+                }
+            ),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(cmd_runner=runner)
+        result = executor.run("prompt")
+        assert result.usage == Usage(
+            input_tokens=100,
+            output_tokens=50,
+            cache_read_tokens=200,
+            cache_creation_tokens=10,
+        )
+        assert result.session_id == "sess-abc"
+        assert result.model == "claude-opus-4-7"
+
+    def test_result_without_usage_leaves_usage_none(self) -> None:
+        lines = [
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": {"output": "summary"},
+                    "session_id": "sess-xyz",
+                    "model": "claude-haiku-4-5",
+                }
+            ),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(cmd_runner=runner)
+        result = executor.run("prompt")
+        assert result.usage is None
+        assert result.session_id == "sess-xyz"
+        assert result.model == "claude-haiku-4-5"
+
+    def test_two_result_events_last_wins(self) -> None:
+        lines = [
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": {"output": "first"},
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                    "session_id": "first-sess",
+                    "model": "claude-haiku-4-5",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "result": {"output": "second"},
+                    "usage": {
+                        "input_tokens": 999,
+                        "output_tokens": 888,
+                        "cache_read_input_tokens": 7,
+                        "cache_creation_input_tokens": 3,
+                    },
+                    "session_id": "second-sess",
+                    "model": "claude-opus-4-7",
+                }
+            ),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(cmd_runner=runner)
+        result = executor.run("prompt")
+        assert result.usage == Usage(
+            input_tokens=999,
+            output_tokens=888,
+            cache_read_tokens=7,
+            cache_creation_tokens=3,
+        )
+        assert result.session_id == "second-sess"
+        assert result.model == "claude-opus-4-7"
+
+    def test_no_result_event_keeps_defaults(self) -> None:
+        lines = [
+            json.dumps(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "hello"},
+                }
+            ),
+        ]
+        runner = MockCommandRunner(lines)
+        executor = ClaudeExecutor(cmd_runner=runner)
+        result = executor.run("prompt")
+        assert result.usage is None
+        assert result.session_id == ""
+        assert result.model == ""
+        assert result.output == "hello"
+
+
+class TestClaudeExecutorCwd:
+    def test_cwd_forwarded_to_subprocess_popen(self, tmp_path: object) -> None:
+        from unittest.mock import MagicMock
+
+        from cadence.executor import claude_executor as ce
+
+        with (
+            patch.object(ce.subprocess, "Popen") as mock_popen,
+            patch.object(ce, "ProcessGroupCleanup") as mock_cleanup_cls,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.stdout = io.StringIO("")
+            mock_popen.return_value = mock_proc
+
+            mock_cleanup = MagicMock()
+            mock_cleanup.wait.return_value = 0
+            mock_cleanup_cls.return_value = mock_cleanup
+
+            executor = ClaudeExecutor(cwd="/tmp/some-worktree")
+            executor.run("prompt")
+
+            assert mock_popen.call_count == 1
+            kwargs = mock_popen.call_args.kwargs
+            assert kwargs.get("cwd") == "/tmp/some-worktree"
+
+    def test_cwd_kwarg_omitted_when_not_set(self) -> None:
+        from unittest.mock import MagicMock
+
+        from cadence.executor import claude_executor as ce
+
+        with (
+            patch.object(ce.subprocess, "Popen") as mock_popen,
+            patch.object(ce, "ProcessGroupCleanup") as mock_cleanup_cls,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.stdout = io.StringIO("")
+            mock_popen.return_value = mock_proc
+
+            mock_cleanup = MagicMock()
+            mock_cleanup.wait.return_value = 0
+            mock_cleanup_cls.return_value = mock_cleanup
+
+            executor = ClaudeExecutor()
+            executor.run("prompt")
+
+            assert mock_popen.call_count == 1
+            kwargs = mock_popen.call_args.kwargs
+            assert "cwd" not in kwargs
+
+    def test_cwd_forwarded_to_cmd_runner(self) -> None:
+        runner = MockCommandRunner([])
+        executor = ClaudeExecutor(cmd_runner=runner, cwd="/tmp/worktree-x")
+        executor.run("prompt")
+        assert runner.last_cwd == "/tmp/worktree-x"
+
+    def test_cwd_not_forwarded_to_cmd_runner_when_unset(self) -> None:
+        runner = MockCommandRunner([])
+        executor = ClaudeExecutor(cmd_runner=runner)
+        executor.run("prompt")
+        assert runner.last_cwd is None
 
 
 class TestClaudeExecutorCancel:
