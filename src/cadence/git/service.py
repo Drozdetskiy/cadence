@@ -86,6 +86,15 @@ class Service:
     def branch_exists(self, name: str) -> bool:
         return self._repo.branch_exists(name)
 
+    def worktree_add(self, path: str, branch: str, base: str) -> None:
+        self._repo.worktree_add(path, branch, base)
+
+    def worktree_remove(self, path: str) -> None:
+        self._repo.worktree_remove(path)
+
+    def worktree_exists(self, path: str) -> bool:
+        return self._repo.worktree_exists(path)
+
     def create_branch_for_plan(self, plan_file: str, default_branch: str) -> None:
         resolved_plan = self._resolve_filesystem_case(plan_file)
         branch = self._prepare_plan_branch(resolved_plan, default_branch)

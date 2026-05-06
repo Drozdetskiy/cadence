@@ -256,6 +256,32 @@ class ExternalBackend:
                 continue
         return stats
 
+    def worktree_add(self, path: str, branch: str, base: str) -> None:
+        resolved = self._resolve_ref(base)
+        if not resolved:
+            raise RuntimeError(f"git base ref does not resolve: {base}")
+        abs_path = str(Path(path).resolve())
+        self._run("worktree", "add", abs_path, "-b", branch, resolved)
+
+    def worktree_remove(self, path: str) -> None:
+        abs_path = str(Path(path).resolve())
+        self._run("worktree", "remove", "--force", abs_path)
+
+    def worktree_exists(self, path: str) -> bool:
+        target = os.path.realpath(path)
+        code, stdout, _ = self._run_with_status("worktree", "list", "--porcelain")
+        if code != 0:
+            return False
+        for line in stdout.splitlines():
+            if not line.startswith("worktree "):
+                continue
+            entry = line[len("worktree ") :].strip()
+            if not entry:
+                continue
+            if os.path.realpath(entry) == target:
+                return True
+        return False
+
     def _resolve_ref(self, branch_name: str) -> str:
         if not branch_name:
             return ""

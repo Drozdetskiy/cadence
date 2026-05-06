@@ -5,6 +5,7 @@ import io
 import pytest
 
 from cadence.input import (
+    ParallelAbortCollector,
     TerminalCollector,
     ask_yes_no,
     read_line_with_context,
@@ -98,3 +99,18 @@ class TestAskYesNo:
     def test_whitespace_trimmed(self) -> None:
         answer, _ = self._run("  y  \n")
         assert answer is True
+
+
+class TestParallelAbortCollector:
+    def test_ask_question_raises_with_guidance(self) -> None:
+        collector = ParallelAbortCollector()
+        with pytest.raises(RuntimeError) as excinfo:
+            collector.ask_question("Pick one:", ["Alpha", "Beta"])
+        message = str(excinfo.value)
+        assert "--parallel" in message
+        assert "cadence run plan" in message
+
+    def test_ask_question_raises_even_with_empty_options(self) -> None:
+        collector = ParallelAbortCollector()
+        with pytest.raises(RuntimeError):
+            collector.ask_question("Pick one:", [])

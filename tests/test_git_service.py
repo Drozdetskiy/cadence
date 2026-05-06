@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -726,3 +727,46 @@ class TestServiceDelegation:
         svc = Service(path, _Log())
         assert svc.branch_exists("main") is True
         assert svc.branch_exists("nope") is False
+
+
+class TestServiceWorktreePassThroughs:
+    def _service_with_mock_backend(self, tmp_path: Path) -> tuple[Service, MagicMock]:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        svc = Service(str(tmp_path), _Log())
+        mock = MagicMock()
+        svc._repo = mock
+        return svc, mock
+
+    def test_worktree_add_forwards(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        svc.worktree_add("/some/path", "feature", "main")
+        mock.worktree_add.assert_called_once_with("/some/path", "feature", "main")
+
+    def test_worktree_add_propagates_error(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_add.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"):
+            svc.worktree_add("/p", "b", "main")
+
+    def test_worktree_remove_forwards(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        svc.worktree_remove("/some/path")
+        mock.worktree_remove.assert_called_once_with("/some/path")
+
+    def test_worktree_remove_propagates_error(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_remove.side_effect = RuntimeError("rm failed")
+        with pytest.raises(RuntimeError, match="rm failed"):
+            svc.worktree_remove("/p")
+
+    def test_worktree_exists_forwards_true(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_exists.return_value = True
+        assert svc.worktree_exists("/p") is True
+        mock.worktree_exists.assert_called_once_with("/p")
+
+    def test_worktree_exists_forwards_false(self, tmp_path: Path) -> None:
+        svc, mock = self._service_with_mock_backend(tmp_path)
+        mock.worktree_exists.return_value = False
+        assert svc.worktree_exists("/p") is False

@@ -24,6 +24,7 @@ class ProgressLoggerConfig:
     mode: Mode = Mode.PLAN
     plan_description: str = ""
     no_color: bool = False
+    quiet: bool = False
 
 
 _DASHES = "-" * 60
@@ -145,6 +146,7 @@ class Logger:
         self._holder = holder
         self._start_time = datetime.now(tz=UTC)
         self._no_color = cfg.no_color
+        self._quiet = cfg.quiet
         self._console = Console(file=sys.stdout, no_color=cfg.no_color, highlight=False)
         self._buffer = _PartialLineBuffer()
         self._file = _ProgressFile(cfg)
@@ -156,6 +158,8 @@ class Logger:
     def _emit(self, prefix: str, msg: str, style: Style) -> None:
         ts = _timestamp()
         self._file.write(f"{ts} {prefix}{msg}")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         text = Text()
         text.append(ts, style=self._colors.timestamp())
@@ -170,6 +174,8 @@ class Logger:
     def print_section(self, section: Section) -> None:
         ts = _timestamp()
         self._file.write(f"\n{ts} --- {section.label} ---\n")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         text = Text()
         text.append("\n")
@@ -194,6 +200,8 @@ class Logger:
             if not line:
                 continue
             self._file.write(f"{ts} {line}")
+        if self._quiet:
+            return
         self._buffer.ensure_newline(sys.stdout)
         style = self._colors.for_phase(self._holder.get())
         for line in text.rstrip("\n").split("\n"):
@@ -220,6 +228,8 @@ class Logger:
         ts = _timestamp()
         for line in text.rstrip("\n").split("\n"):
             self._file.write(f"{ts} {line}")
+        if self._quiet:
+            return
         parts = text.split("\n")
         for i, part in enumerate(parts):
             if self._buffer.at_line_start and part:

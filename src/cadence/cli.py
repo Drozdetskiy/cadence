@@ -24,10 +24,11 @@ from cadence.config import (
 )
 from cadence.executor.claude_executor import ClaudeExecutor
 from cadence.git import DiffStats, Service
-from cadence.input import TerminalCollector, ask_yes_no
+from cadence.input import ParallelAbortCollector, TerminalCollector, ask_yes_no
 from cadence.processor.prompts import build_squash_commit_prompt
 from cadence.processor.runner import (
     Dependencies,
+    InputCollector,
     RunContext,
     Runner,
     UserAbortedError,
@@ -125,6 +126,18 @@ def _parse_chain_file(path: Path) -> list[str]:
         names.append(line)
     if not names:
         typer.echo("error: chain file is empty", err=True)
+        raise SystemExit(2)
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for n in names:
+        if n in seen and n not in duplicates:
+            duplicates.append(n)
+        seen.add(n)
+    if duplicates:
+        typer.echo(
+            f"error: duplicate task names in chain file: {', '.join(duplicates)}",
+            err=True,
+        )
         raise SystemExit(2)
     return names
 
@@ -259,6 +272,8 @@ def _build_logger(
     branch: str,
     colors: Colors,
     holder: PhaseHolder,
+    *,
+    quiet: bool = False,
 ) -> Logger:
     logger_cfg = ProgressLoggerConfig(
         progress_path=progress_path,
@@ -266,6 +281,7 @@ def _build_logger(
         plan_description=plan_description,
         mode=mode,
         branch=branch,
+        quiet=quiet,
     )
     try:
         return Logger(logger_cfg, colors, holder)
@@ -280,6 +296,9 @@ ClaudeExecutorFactory = Callable[[Logger, str], ClaudeExecutor]
 def _setup_runtime(
     config_arg: Path | None,
     anchor: Path | None,
+    *,
+    repo_path: str = ".",
+    claude_cwd: str | None = None,
 ) -> tuple[
     Config,
     PhaseHolder,
@@ -296,7 +315,7 @@ def _setup_runtime(
     check_claude_dep(cfg)
 
     try:
-        git_svc = Service(path=".", log=_StderrLogger())
+        git_svc = Service(path=repo_path, log=_StderrLogger())
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
@@ -321,6 +340,7 @@ def _setup_runtime(
             idle_timeout=idle_timeout,
             activity_handler=activity_handler,
             output_handler=output_handler,
+            cwd=claude_cwd,
         )
 
     return cfg, holder, colors, git_svc, factory, cfg.default_branch, local_dir
@@ -333,35 +353,56 @@ def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     )
 
 
-def run_plan_mode(plan_file: Path, *, config: Path | None = None) -> None:
+def run_plan_mode(
+    plan_file: Path,
+    *,
+    config: Path | None = None,
+    repo_path: str | None = None,
+    input_collector: InputCollector | None = None,
+) -> None:
     content = _read_plan_file(plan_file)
 
     cfg, holder, colors, _git_svc, factory, default_branch, local_dir = _setup_runtime(
-        config, plan_file
+        config,
+        plan_file,
+        repo_path=repo_path if repo_path is not None else ".",
+        claude_cwd=repo_path,
     )
 
-    plan_file_rel = to_rel_path(plan_file)
+    plan_file_str = str(plan_file.resolve()) if repo_path is not None else to_rel_path(plan_file)
     try:
         progress_path = compute_progress_path(
             Mode.PLAN,
-            plan_file=plan_file_rel,
+            plan_file=plan_file_str,
             tasks_root=cfg.tasks_root,
             default_branch=default_branch,
         )
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
-    log = _build_logger(progress_path, plan_file_rel, content, Mode.PLAN, "", colors, holder)
+    log = _build_logger(
+        progress_path,
+        plan_file_str,
+        content,
+        Mode.PLAN,
+        "",
+        colors,
+        holder,
+        quiet=repo_path is not None,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: plan")
-    log.print("plan file: %s", plan_file_rel)
+    log.print("plan file: %s", plan_file_str)
     log.print("progress: %s", log.path)
 
-    plan_path = derive_plan_path(plan_file, cfg.init_prompt_name)
+    if repo_path is not None:
+        plan_path = derive_plan_path(plan_file.resolve(), cfg.init_prompt_name)
+    else:
+        plan_path = derive_plan_path(plan_file, cfg.init_prompt_name)
     ctx = RunContext(
         mode=Mode.PLAN,
-        plan_file=plan_file_rel,
+        plan_file=plan_file_str,
         plan_description=content,
         progress_path=log.path,
         default_branch=default_branch,
@@ -371,7 +412,7 @@ def run_plan_mode(plan_file: Path, *, config: Path | None = None) -> None:
 
     deps = Dependencies(
         executor=factory(log, cfg.plan_model),
-        input_collector=TerminalCollector(),
+        input_collector=input_collector if input_collector is not None else TerminalCollector(),
         logger=log,
         holder=holder,
     )
@@ -380,7 +421,7 @@ def run_plan_mode(plan_file: Path, *, config: Path | None = None) -> None:
     try:
         runner = Runner(ctx, cfg, deps)
         run_success = runner.run()
-        if run_success:
+        if run_success and repo_path is None:
             typer.echo(f"run: cadence task {plan_path}")
     except KeyboardInterrupt:
         log.print("interrupted by user")
@@ -398,6 +439,8 @@ def run_plan_mode(plan_file: Path, *, config: Path | None = None) -> None:
 def _install_sigquit(break_event: threading.Event) -> None:
     sigquit = getattr(signal, "SIGQUIT", None)
     if sigquit is None:
+        return
+    if threading.current_thread() is not threading.main_thread():
         return
 
     def handler(signum: int, frame: object) -> None:
@@ -420,13 +463,21 @@ def _make_pause_handler(log: Logger) -> Callable[[], bool]:
     return pause
 
 
-def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
+def run_task_mode(
+    task_file: Path,
+    *,
+    config: Path | None = None,
+    repo_path: str | None = None,
+) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
         raise SystemExit(2)
 
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
-        config, task_file
+        config,
+        task_file,
+        repo_path=repo_path if repo_path is not None else ".",
+        claude_cwd=repo_path,
     )
 
     git_svc.set_commit_trailer(cfg.commit_trailer)
@@ -439,7 +490,7 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
 
-    plan_path_str = to_rel_path(task_file)
+    plan_path_str = str(task_file.resolve()) if repo_path is not None else to_rel_path(task_file)
     try:
         git_svc.create_branch_for_plan(plan_path_str, default_branch)
     except RuntimeError as exc:
@@ -459,7 +510,16 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
-    log = _build_logger(progress_path, plan_path_str, "", Mode.FULL, branch, colors, holder)
+    log = _build_logger(
+        progress_path,
+        plan_path_str,
+        "",
+        Mode.FULL,
+        branch,
+        colors,
+        holder,
+        quiet=repo_path is not None,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: full")
@@ -506,7 +566,8 @@ def run_task_mode(task_file: Path, *, config: Path | None = None) -> None:
                 git_svc.mark_plan_completed(plan_path_str)
             except (RuntimeError, OSError) as exc:
                 log.warn("could not mark plan completed: %s", exc)
-            display_stats(stats, log.elapsed(), branch)
+            if repo_path is None:
+                display_stats(stats, log.elapsed(), branch)
     except KeyboardInterrupt:
         log.print("interrupted by user")
         return
@@ -601,9 +662,16 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         log.close(success=run_success)
 
 
-def run_squash_mode(*, config: Path | None = None) -> None:
+def run_squash_mode(
+    *,
+    config: Path | None = None,
+    repo_path: str | None = None,
+) -> None:
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
-        config, anchor=None
+        config,
+        anchor=None,
+        repo_path=repo_path if repo_path is not None else ".",
+        claude_cwd=repo_path,
     )
 
     git_svc.set_commit_trailer(cfg.commit_trailer)
@@ -647,7 +715,8 @@ def run_squash_mode(*, config: Path | None = None) -> None:
         typer.echo(f"error: no commits ahead of {default_branch}", err=True)
         raise SystemExit(2)
     if ahead == 1:
-        typer.echo("single commit already; nothing to squash")
+        if repo_path is None:
+            typer.echo("single commit already; nothing to squash")
         return
 
     try:
@@ -661,7 +730,16 @@ def run_squash_mode(*, config: Path | None = None) -> None:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
 
-    log = _build_logger(progress_path, "", "", Mode.SQUASH, branch, colors, holder)
+    log = _build_logger(
+        progress_path,
+        "",
+        "",
+        Mode.SQUASH,
+        branch,
+        colors,
+        holder,
+        quiet=repo_path is not None,
+    )
 
     log.print("cadence %s", resolve_version())
     log.print("mode: squash")
@@ -701,7 +779,8 @@ def run_squash_mode(*, config: Path | None = None) -> None:
             log.error("squash failed: %s", exc)
             raise SystemExit(1) from None
         stats = git_svc.diff_stats(default_branch)
-        display_stats(stats, log.elapsed(), branch)
+        if repo_path is None:
+            display_stats(stats, log.elapsed(), branch)
         run_success = True
     except KeyboardInterrupt:
         log.print("interrupted by user")
@@ -777,13 +856,17 @@ def run_task_init_mode(task_name: str, *, config: Path | None = None) -> None:
     typer.echo("next: cadence run")
 
 
-def _resolve_current_task_dir(config: Path | None) -> tuple[Config, str, Path]:
+def _resolve_current_task_dir(
+    config: Path | None,
+    *,
+    repo_path: str | None = None,
+) -> tuple[Config, str, Path]:
     local_dir = detect_local_dir()
     cfg = load_config(local_dir)
     _apply_yaml_overrides(cfg, config, anchor=None)
 
     try:
-        git_svc = Service(path=".", log=_StderrLogger())
+        git_svc = Service(path=repo_path or ".", log=_StderrLogger())
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
@@ -831,8 +914,13 @@ def _auto_detect_and_run(*, config: Path | None) -> None:
     run_plan_mode(init_file, config=config)
 
 
-def _run_plan_on_current_branch(*, config: Path | None) -> None:
-    cfg, _branch, task_dir = _resolve_current_task_dir(config)
+def _run_plan_on_current_branch(
+    *,
+    config: Path | None,
+    repo_path: str | None = None,
+    input_collector: InputCollector | None = None,
+) -> None:
+    cfg, _branch, task_dir = _resolve_current_task_dir(config, repo_path=repo_path)
 
     init_file = task_dir / cfg.init_prompt_name
     if not init_file.is_file():
@@ -843,18 +931,27 @@ def _run_plan_on_current_branch(*, config: Path | None) -> None:
         typer.echo(f"error: init file is empty: {init_file}", err=True)
         raise SystemExit(2)
 
-    run_plan_mode(init_file, config=config)
+    run_plan_mode(
+        init_file,
+        config=config,
+        repo_path=repo_path,
+        input_collector=input_collector,
+    )
 
 
-def _run_task_on_current_branch(*, config: Path | None) -> None:
-    _cfg, _branch, task_dir = _resolve_current_task_dir(config)
+def _run_task_on_current_branch(
+    *,
+    config: Path | None,
+    repo_path: str | None = None,
+) -> None:
+    _cfg, _branch, task_dir = _resolve_current_task_dir(config, repo_path=repo_path)
 
     plan_file = task_dir / "plan"
     if not plan_file.is_file():
         typer.echo(f"error: plan file not found: {plan_file}", err=True)
         raise SystemExit(2)
 
-    run_task_mode(plan_file, config=config)
+    run_task_mode(plan_file, config=config, repo_path=repo_path)
 
 
 def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
@@ -924,6 +1021,224 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
             raise SystemExit(1) from None
 
     typer.echo(f"chain complete: {total} task(s)")
+
+
+@dataclass(frozen=True)
+class _ParallelTaskResult:
+    name: str
+    status: str
+    phase: str = ""
+    elapsed: str = ""
+    error: str = ""
+
+
+def _format_elapsed(seconds: float) -> str:
+    s = int(seconds)
+    h = s // 3600
+    m = (s % 3600) // 60
+    sec = s % 60
+    return f"{h}h {m}m {sec}s"
+
+
+_chain_print_lock = threading.Lock()
+
+
+def _chain_echo(msg: str, *, err: bool = False) -> None:
+    with _chain_print_lock:
+        typer.echo(msg, err=err)
+
+
+def _run_parallel_worker(
+    name: str,
+    *,
+    worktree_path: str,
+    task_default: str,
+    config: Path | None,
+    git_svc: Service,
+    tasks_root: str,
+    stop_event: threading.Event,
+) -> _ParallelTaskResult:
+    if stop_event.is_set():
+        return _ParallelTaskResult(name=name, status="cancelled")
+
+    start = time.monotonic()
+    _chain_echo(f"[chain] {name}: started")
+
+    def progress_for(phase: str) -> str:
+        suffix = {
+            "plan": "progress-plan.txt",
+            "task": "progress-task.txt",
+            "squash": "progress-squash.txt",
+        }[phase]
+        return str(Path(tasks_root) / sanitize_plan_name(name) / suffix)
+
+    def fail(phase: str, exc: BaseException) -> _ParallelTaskResult:
+        stop_event.set()
+        elapsed = _format_elapsed(time.monotonic() - start)
+        if isinstance(exc, SystemExit):
+            cause = exc.__cause__
+            detail = str(cause) if cause is not None else ""
+        else:
+            detail = str(exc)
+        msg = f"[chain] {name}: failed at {phase} ({elapsed}) — see {progress_for(phase)}"
+        if detail:
+            msg += f": {detail}"
+        _chain_echo(msg)
+        return _ParallelTaskResult(
+            name=name, status="failed", phase=phase, elapsed=elapsed, error=detail or str(exc)
+        )
+
+    try:
+        git_svc.worktree_add(worktree_path, name, task_default)
+    except RuntimeError as exc:
+        stop_event.set()
+        elapsed = _format_elapsed(time.monotonic() - start)
+        _chain_echo(f"[chain] {name}: failed at worktree_add ({elapsed}): {exc}")
+        return _ParallelTaskResult(
+            name=name, status="failed", phase="worktree_add", elapsed=elapsed, error=str(exc)
+        )
+
+    try:
+        _run_plan_on_current_branch(
+            config=config,
+            repo_path=worktree_path,
+            input_collector=ParallelAbortCollector(),
+        )
+    except BaseException as exc:
+        return fail("plan", exc)
+
+    try:
+        _run_task_on_current_branch(config=config, repo_path=worktree_path)
+    except BaseException as exc:
+        return fail("task", exc)
+
+    try:
+        run_squash_mode(config=config, repo_path=worktree_path)
+    except BaseException as exc:
+        return fail("squash", exc)
+
+    elapsed = _format_elapsed(time.monotonic() - start)
+    try:
+        git_svc.worktree_remove(worktree_path)
+    except RuntimeError as rm_exc:
+        _chain_echo(f"[chain] {name}: warn: worktree remove failed: {rm_exc}", err=True)
+    _chain_echo(f"[chain] {name}: completed ({elapsed})")
+    return _ParallelTaskResult(name=name, status="ok", elapsed=elapsed)
+
+
+def run_chain_parallel(
+    chain_file: Path,
+    *,
+    parallel: int,
+    config: Path | None = None,
+) -> None:
+    from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+
+    cfg, _holder, _colors, git_svc, _factory, default_branch, _local_dir = _setup_runtime(
+        config, anchor=None
+    )
+
+    git_svc.set_commit_trailer(cfg.commit_trailer)
+
+    try:
+        git_svc.ensure_has_commits(
+            lambda: ask_yes_no("repository has no commits. create an initial commit?")
+        )
+    except RuntimeError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(1) from None
+
+    if git_svc.is_dirty():
+        typer.echo("error: uncommitted changes present", err=True)
+        raise SystemExit(2)
+    if git_svc.current_branch() == "":
+        typer.echo("error: cannot chain from a detached HEAD", err=True)
+        raise SystemExit(2)
+
+    names = _parse_chain_file(chain_file)
+
+    warnings = _validate_chain_tasks(cfg.tasks_root, names)
+    if warnings:
+        for w in warnings:
+            typer.echo(f"warn: {w}", err=True)
+        raise SystemExit(2)
+
+    repo_root = Path(git_svc.root())
+    worktree_root = repo_root / ".cadence" / "worktrees"
+    worktree_paths = {name: str(worktree_root / name) for name in names}
+
+    collisions: list[str] = []
+    for name in names:
+        wt = Path(worktree_paths[name])
+        if wt.exists() or git_svc.worktree_exists(str(wt)):
+            collisions.append(f"worktree path already exists: {wt}")
+        if git_svc.branch_exists(name):
+            collisions.append(f"branch already exists: {name}")
+    if collisions:
+        for c in collisions:
+            typer.echo(f"error: {c}", err=True)
+        raise SystemExit(2)
+
+    task_defaults = {
+        name: _resolve_chain_default_branch(cfg.tasks_root, name, default_branch) for name in names
+    }
+
+    total = len(names)
+    _chain_echo(f"[chain] starting {total} parallel tasks: {', '.join(names)}")
+
+    stop_event = threading.Event()
+    results: dict[str, _ParallelTaskResult] = {}
+
+    pool = ThreadPoolExecutor(max_workers=parallel)
+    futures: dict[Future[_ParallelTaskResult], str] = {}
+    for name in names:
+        fut = pool.submit(
+            _run_parallel_worker,
+            name,
+            worktree_path=worktree_paths[name],
+            task_default=task_defaults[name],
+            config=config,
+            git_svc=git_svc,
+            tasks_root=cfg.tasks_root,
+            stop_event=stop_event,
+        )
+        futures[fut] = name
+
+    try:
+        for fut in as_completed(list(futures)):
+            name = futures[fut]
+            if fut.cancelled():
+                results[name] = _ParallelTaskResult(name=name, status="cancelled")
+                continue
+            try:
+                result = fut.result()
+            except BaseException as exc:
+                stop_event.set()
+                _chain_echo(f"[chain] {name}: failed: {exc}", err=True)
+                result = _ParallelTaskResult(name=name, status="failed", error=str(exc))
+            results[name] = result
+            if result.status == "failed":
+                for f in list(futures):
+                    if not f.done() and not f.running():
+                        f.cancel()
+    finally:
+        pool.shutdown(wait=True)
+
+    for fut, name in futures.items():
+        if name not in results:
+            if fut.cancelled():
+                results[name] = _ParallelTaskResult(name=name, status="cancelled")
+            elif fut.done():
+                try:
+                    results[name] = fut.result()
+                except BaseException as exc:
+                    results[name] = _ParallelTaskResult(name=name, status="failed", error=str(exc))
+
+    succeeded = sum(1 for r in results.values() if r.status == "ok")
+    _chain_echo(f"[chain] complete: {succeeded}/{total} succeeded")
+
+    if any(r.status == "failed" for r in results.values()):
+        raise SystemExit(1)
 
 
 class _StderrLogger:
@@ -1046,8 +1361,25 @@ def cmd_squash(ctx: typer.Context) -> None:
     run_squash_mode(config=opts.config)
 
 
+_PARALLEL_OPTION: int = typer.Option(
+    1,
+    "--parallel",
+    help="Run up to N tasks concurrently in isolated git worktrees (default 1 = sequential)",
+)
+
+
 @app.command("chain", help="Run a sequence of tasks listed in a file (one task name per line)")
-def cmd_chain(ctx: typer.Context, path: Path = _PATH_ARG) -> None:
+def cmd_chain(
+    ctx: typer.Context,
+    path: Path = _PATH_ARG,
+    parallel: int = _PARALLEL_OPTION,
+) -> None:
     opts = _ctx_opts(ctx)
     _arm_sigint()
-    run_chain_mode(path, config=opts.config)
+    if parallel < 1:
+        typer.echo("error: --parallel must be >= 1", err=True)
+        raise SystemExit(2)
+    if parallel == 1:
+        run_chain_mode(path, config=opts.config)
+        return
+    run_chain_parallel(path, parallel=parallel, config=opts.config)

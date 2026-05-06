@@ -24,6 +24,7 @@ from cadence.cli import (
     find_existing_plan,
     resolve_version,
     run_chain_mode,
+    run_chain_parallel,
     run_plan_mode,
     run_review_mode,
     run_squash_mode,
@@ -178,6 +179,53 @@ class TestRunPlanMode:
         mock_log.print.assert_any_call("plan is ready")
         mock_echo.assert_any_call(f"run: cadence task {tmp_path / 'plan.md'}")
 
+    @patch("cadence.cli.typer.echo")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_repo_path_suppresses_run_task_hint(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_echo: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal = MagicMock()
+        mock_terminal_cls.return_value = mock_terminal
+
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        f = tmp_path / "prompt.md"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f, repo_path=str(worktree))
+
+        for call in mock_echo.call_args_list:
+            args, _ = call
+            if args and isinstance(args[0], str):
+                assert not args[0].startswith("run: cadence task ")
+
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.load_config")
@@ -260,6 +308,180 @@ class TestRunPlanMode:
 
         mock_log.print.assert_any_call("aborted by user")
         mock_log.close.assert_called_once()
+
+    def test_repo_path_plumbs_to_setup_runtime(self, tmp_path: Path) -> None:
+        f = tmp_path / "init"
+        f.write_text("implement feature X")
+        worktree = str(tmp_path / "wt")
+
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit) as excinfo:
+                run_plan_mode(f, repo_path=worktree)
+            assert excinfo.value.code == 99
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == worktree
+        assert kwargs["claude_cwd"] == worktree
+
+    def test_no_repo_path_passes_dot_and_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "init"
+        f.write_text("implement feature X")
+
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit):
+                run_plan_mode(f)
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == "."
+        assert kwargs["claude_cwd"] is None
+
+    @patch("cadence.cli.Runner")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_injected_input_collector_is_used(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = True
+        mock_runner_cls.return_value = mock_runner
+
+        f = tmp_path / "init"
+        f.write_text("implement feature X")
+
+        sentinel_collector = MagicMock(name="sentinel_collector")
+
+        run_plan_mode(f, input_collector=sentinel_collector)
+
+        deps = mock_runner_cls.call_args.args[2]
+        assert deps.input_collector is sentinel_collector
+        mock_terminal_cls.assert_not_called()
+
+    @patch("cadence.cli.Runner")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_default_input_collector_is_terminal(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = True
+        mock_runner_cls.return_value = mock_runner
+        terminal_instance = MagicMock(name="terminal_instance")
+        mock_terminal_cls.return_value = terminal_instance
+
+        f = tmp_path / "init"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f)
+
+        mock_terminal_cls.assert_called_once_with()
+        deps = mock_runner_cls.call_args.args[2]
+        assert deps.input_collector is terminal_instance
+
+    @patch("cadence.cli.Runner")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.compute_progress_path")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_repo_path_resolves_plan_file_to_absolute(
+        self,
+        _svc: MagicMock,
+        mock_logger_cls: MagicMock,
+        mock_progress: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import os as _os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+        mock_log = MagicMock()
+        absolute_progress = str(tmp_path / "abs-progress.txt")
+        mock_log.path = absolute_progress
+        mock_logger_cls.return_value = mock_log
+
+        captured_progress: list[str] = []
+
+        def progress_side_effect(_mode: object, **kwargs: object) -> str:
+            pf = kwargs.get("plan_file")
+            assert isinstance(pf, str)
+            assert _os.path.isabs(pf)
+            assert str(tmp_path) in pf
+            result = _os.path.join(_os.path.dirname(pf), "progress-plan.txt")
+            captured_progress.append(result)
+            return result
+
+        mock_progress.side_effect = progress_side_effect
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = True
+        mock_runner_cls.return_value = mock_runner
+
+        worktree_dir = tmp_path / "wt"
+        worktree_dir.mkdir()
+        plan_dir = tmp_path / "main-repo" / "cdc-tasks" / "feat"
+        plan_dir.mkdir(parents=True)
+        plan_file = plan_dir / "init"
+        plan_file.write_text("implement X")
+
+        monkeypatch.chdir(tmp_path / "main-repo")
+
+        run_plan_mode(plan_file, repo_path=str(worktree_dir))
+
+        assert captured_progress
+        assert _os.path.isabs(captured_progress[0])
+        assert str(tmp_path) in captured_progress[0]
 
 
 class TestSubcommandRouting:
@@ -659,6 +881,103 @@ class TestRunTaskMode:
         )
         mock_log.close.assert_called_once()
 
+    def test_repo_path_plumbs_to_setup_runtime(self, tmp_path: Path) -> None:
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
+        worktree = str(tmp_path / "wt")
+
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_mode(f, repo_path=worktree)
+            assert excinfo.value.code == 99
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == worktree
+        assert kwargs["claude_cwd"] == worktree
+
+    def test_no_repo_path_passes_dot_and_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
+
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit):
+                run_task_mode(f)
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == "."
+        assert kwargs["claude_cwd"] is None
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.Runner")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.compute_progress_path")
+    @patch("cadence.cli.Logger")
+    def test_repo_path_resolves_plan_file_to_absolute(
+        self,
+        mock_logger_cls: MagicMock,
+        mock_progress: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_runner_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import os as _os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0)
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "abs-progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        captured_plan_files: list[str] = []
+
+        def progress_side_effect(_mode: object, **kwargs: object) -> str:
+            pf = kwargs.get("plan_file")
+            assert isinstance(pf, str)
+            captured_plan_files.append(pf)
+            return _os.path.join(_os.path.dirname(pf) or ".", "progress-task.txt")
+
+        mock_progress.side_effect = progress_side_effect
+
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = True
+        mock_runner_cls.return_value = mock_runner
+
+        worktree_dir = tmp_path / "wt"
+        worktree_dir.mkdir()
+        plan_dir = tmp_path / "main-repo" / "cdc-tasks" / "feat"
+        plan_dir.mkdir(parents=True)
+        plan_file = plan_dir / "plan"
+        plan_file.write_text("# plan\n")
+
+        monkeypatch.chdir(tmp_path / "main-repo")
+
+        run_task_mode(plan_file, repo_path=str(worktree_dir))
+
+        assert captured_plan_files
+        assert _os.path.isabs(captured_plan_files[0])
+        assert str(tmp_path) in captured_plan_files[0]
+
 
 class TestInstallSigquit:
     def test_install_sigquit_sets_event_when_signal_fires(self) -> None:
@@ -757,6 +1076,94 @@ class TestSetupRuntime:
             _setup_runtime(None, None)
         assert excinfo.value.code == 1
         assert "not a repo" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_default_repo_path_is_dot(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        mock_service_cls: MagicMock,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        _setup_runtime(None, None)
+
+        assert mock_service_cls.call_args.kwargs.get("path") == "."
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_repo_path_passed_to_service(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+        worktree = str(tmp_path / "wt")
+
+        _setup_runtime(None, None, repo_path=worktree, claude_cwd=worktree)
+
+        assert mock_service_cls.call_args.kwargs["path"] == worktree
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_factory_passes_claude_cwd(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        _svc: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+        worktree = str(tmp_path / "wt")
+
+        _, _, _, _, factory, _, _ = _setup_runtime(
+            None, None, repo_path=worktree, claude_cwd=worktree
+        )
+        factory(MagicMock(), "opus")
+
+        assert mock_executor_cls.call_args.kwargs.get("cwd") == worktree
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_factory_default_claude_cwd_is_none(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        _svc: MagicMock,
+        mock_executor_cls: MagicMock,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+
+        _, _, _, _, factory, _, _ = _setup_runtime(None, None)
+        factory(MagicMock(), "opus")
+
+        assert mock_executor_cls.call_args.kwargs.get("cwd") is None
 
 
 class TestFindExistingPlan:
@@ -3066,7 +3473,7 @@ class TestRunPlanSubcommand:
         mock_run_plan.assert_called_once()
         args, kwargs = mock_run_plan.call_args
         assert args[0] == Path("cdc-tasks/feat-x/init")
-        assert kwargs == {"config": None}
+        assert kwargs == {"config": None, "repo_path": None, "input_collector": None}
 
 
 class TestRunTaskSubcommand:
@@ -3163,7 +3570,7 @@ class TestRunTaskSubcommand:
         mock_run_task.assert_called_once()
         args, kwargs = mock_run_task.call_args
         assert args[0] == Path("cdc-tasks/feat-x/plan")
-        assert kwargs == {"config": None}
+        assert kwargs == {"config": None, "repo_path": None}
 
 
 class TestRunSquashMode:
@@ -3422,6 +3829,47 @@ class TestRunSquashMode:
 
         out = capsys.readouterr().out
         assert "single commit already" in out
+        mock_executor_cls.assert_not_called()
+        mock_svc.squash_commits.assert_not_called()
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_one_commit_ahead_is_silent_in_repo_path_mode(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = self._setup_mock_service(commits_ahead=1)
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_squash_mode(repo_path=str(worktree))
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "single commit already" not in out
         mock_executor_cls.assert_not_called()
         mock_svc.squash_commits.assert_not_called()
 
@@ -3883,6 +4331,30 @@ class TestRunSquashMode:
         mock_log.error.assert_called()
         mock_log.close.assert_called_once_with(success=False)
 
+    def test_repo_path_plumbs_to_setup_runtime(self, tmp_path: Path) -> None:
+        worktree = str(tmp_path / "wt")
+
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode(repo_path=worktree)
+            assert excinfo.value.code == 99
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == worktree
+        assert kwargs["claude_cwd"] == worktree
+        assert kwargs["anchor"] is None
+
+    def test_no_repo_path_passes_dot_and_none(self) -> None:
+        with patch("cadence.cli._setup_runtime") as mock_setup:
+            mock_setup.side_effect = SystemExit(99)
+            with pytest.raises(SystemExit):
+                run_squash_mode()
+
+        kwargs = mock_setup.call_args.kwargs
+        assert kwargs["repo_path"] == "."
+        assert kwargs["claude_cwd"] is None
+
 
 class TestParseChainFile:
     def test_missing_file_exits(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -3928,6 +4400,17 @@ class TestParseChainFile:
         err = capsys.readouterr().err
         assert "invalid task name in chain file" in err
         assert name in err
+
+    def test_duplicate_names_exit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        chain = tmp_path / "chain.txt"
+        chain.write_text("task-a\ntask-b\ntask-a\ntask-b\ntask-c\n")
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(chain)
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "duplicate task names in chain file" in err
+        assert "task-a" in err
+        assert "task-b" in err
 
 
 class TestValidateChainTasks:
@@ -4597,3 +5080,696 @@ class TestRunChainMode:
         err = capsys.readouterr().err
         assert "chain interrupted at task 2/3: b" in err
         assert "chain failed at task 2/3" not in err
+
+
+class TestRunChainParallel:
+    def _make_setup_patch(
+        self,
+        mock_setup: MagicMock,
+        mock_svc: MagicMock,
+        default_branch: str = "main",
+        tasks_root: str = "cdc-tasks",
+    ) -> None:
+        from cadence.config import Config
+
+        cfg = Config(tasks_root=tasks_root, default_branch=default_branch)
+        mock_setup.return_value = (
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            mock_svc,
+            MagicMock(),
+            default_branch,
+            None,
+        )
+
+    def _make_svc(self, tmp_path: Path) -> MagicMock:
+        svc = MagicMock()
+        svc.is_dirty.return_value = False
+        svc.current_branch.return_value = "main"
+        svc.branch_exists.return_value = False
+        svc.worktree_exists.return_value = False
+        svc.root.return_value = str(tmp_path)
+        return svc
+
+    @patch("cadence.cli.run_chain_parallel")
+    @patch("cadence.cli.run_chain_mode")
+    def test_parallel_one_routes_to_sequential(
+        self,
+        mock_seq: MagicMock,
+        mock_par: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from typer.testing import CliRunner
+
+        f = tmp_path / "chain.txt"
+        f.write_text("a\n")
+        result = CliRunner().invoke(app, ["chain", str(f), "--parallel", "1"])
+        assert result.exit_code == 0
+        mock_seq.assert_called_once_with(f, config=None)
+        mock_par.assert_not_called()
+
+    @patch("cadence.cli.run_chain_parallel")
+    @patch("cadence.cli.run_chain_mode")
+    def test_parallel_default_routes_to_sequential(
+        self,
+        mock_seq: MagicMock,
+        mock_par: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from typer.testing import CliRunner
+
+        f = tmp_path / "chain.txt"
+        f.write_text("a\n")
+        result = CliRunner().invoke(app, ["chain", str(f)])
+        assert result.exit_code == 0
+        mock_seq.assert_called_once_with(f, config=None)
+        mock_par.assert_not_called()
+
+    @patch("cadence.cli.run_chain_parallel")
+    @patch("cadence.cli.run_chain_mode")
+    def test_parallel_zero_exits_2(
+        self,
+        mock_seq: MagicMock,
+        mock_par: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from typer.testing import CliRunner
+
+        f = tmp_path / "chain.txt"
+        f.write_text("a\n")
+        result = CliRunner().invoke(app, ["chain", str(f), "--parallel", "0"])
+        assert result.exit_code == 2
+        assert "--parallel must be >= 1" in result.output
+        mock_seq.assert_not_called()
+        mock_par.assert_not_called()
+
+    @patch("cadence.cli.run_chain_parallel")
+    @patch("cadence.cli.run_chain_mode")
+    def test_parallel_n_routes_to_parallel(
+        self,
+        mock_seq: MagicMock,
+        mock_par: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from typer.testing import CliRunner
+
+        f = tmp_path / "chain.txt"
+        f.write_text("a\nb\n")
+        result = CliRunner().invoke(app, ["chain", str(f), "--parallel", "3"])
+        assert result.exit_code == 0
+        mock_par.assert_called_once_with(f, parallel=3, config=None)
+        mock_seq.assert_not_called()
+
+    def test_chain_help_lists_parallel(self) -> None:
+        from typer.testing import CliRunner
+
+        result = CliRunner().invoke(app, ["chain", "--help"])
+        assert result.exit_code == 0
+        assert "--parallel" in result.output
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_happy_path_three_workers(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("alpha", "beta", "gamma"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\ngamma\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_parallel(chain, parallel=3)
+        finally:
+            os.chdir(original_cwd)
+
+        assert mock_plan.call_count == 3
+        assert mock_task.call_count == 3
+        assert mock_squash.call_count == 3
+        assert svc.worktree_add.call_count == 3
+        assert svc.worktree_remove.call_count == 3
+
+        added_paths = {c.args[0] for c in svc.worktree_add.call_args_list}
+        for name in ("alpha", "beta", "gamma"):
+            assert str(tmp_path / ".cadence" / "worktrees" / name) in added_paths
+
+        out = capsys.readouterr().out
+        assert "[chain] starting 3 parallel tasks" in out
+        for name in ("alpha", "beta", "gamma"):
+            assert f"[chain] {name}: started" in out
+            assert f"[chain] {name}: completed" in out
+        assert "[chain] complete: 3/3 succeeded" in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_fail_fast_cancels_pending(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("a", "b", "c"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\nc\n")
+
+        a_started = threading.Event()
+        a_release = threading.Event()
+        b_failed = threading.Event()
+
+        def plan_side_effect(
+            *,
+            config: Path | None,
+            repo_path: str | None = None,
+            input_collector: Any = None,
+        ) -> None:
+            assert repo_path is not None
+            if repo_path.endswith("/a"):
+                a_started.set()
+                # wait until b has failed so c is queued and can be cancelled
+                a_release.wait(timeout=5.0)
+                return
+            if repo_path.endswith("/b"):
+                a_started.wait(timeout=5.0)
+                b_failed.set()
+                a_release.set()
+                raise SystemExit(1)
+            return
+
+        mock_plan.side_effect = plan_side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert b_failed.is_set()
+
+        added_paths = [c.args[0] for c in svc.worktree_add.call_args_list]
+        added_names = [Path(p).name for p in added_paths]
+        assert "a" in added_names
+        assert "b" in added_names
+        assert "c" not in added_names
+
+        removed_names = [Path(c.args[0]).name for c in svc.worktree_remove.call_args_list]
+        assert removed_names == ["a"]
+
+        out = capsys.readouterr().out
+        assert "[chain] b: failed at plan" in out
+        assert "[chain] complete: 1/3 succeeded" in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_preflight_worktree_path_collision(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("a", "b"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        # Pre-create the worktree directory for "b"
+        (tmp_path / ".cadence" / "worktrees" / "b").mkdir(parents=True)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "worktree path already exists" in err
+        assert "/b" in err
+        svc.worktree_add.assert_not_called()
+        mock_plan.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_preflight_branch_collision(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        svc.branch_exists.side_effect = lambda name: name == "b"
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("a", "b"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "branch already exists: b" in err
+        svc.worktree_add.assert_not_called()
+        mock_plan.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_plan_question_aborts_worker(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.input import ParallelAbortCollector
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        captured: dict[str, Any] = {}
+
+        def plan_side_effect(
+            *,
+            config: Path | None,
+            repo_path: str | None = None,
+            input_collector: Any = None,
+        ) -> None:
+            captured["input_collector"] = input_collector
+            assert isinstance(input_collector, ParallelAbortCollector)
+            input_collector.ask_question("pick one", ["x", "y"])
+
+        mock_plan.side_effect = plan_side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        # worktree was added but NOT removed (failed worktrees are kept)
+        assert svc.worktree_add.call_count == 1
+        svc.worktree_remove.assert_not_called()
+        out = capsys.readouterr().out
+        assert "[chain] alpha: failed at plan" in out
+        assert "--parallel" in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_worker_failure_summary_uses_underlying_cause(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        def plan_side_effect(
+            *,
+            config: Path | None,
+            repo_path: str | None = None,
+            input_collector: Any = None,
+        ) -> None:
+            try:
+                raise RuntimeError("real underlying reason")
+            except RuntimeError as exc:
+                raise SystemExit(1) from exc
+
+        mock_plan.side_effect = plan_side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit):
+                run_chain_parallel(chain, parallel=1)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "real underlying reason" in out
+        assert not out.rstrip().endswith(": 1")
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_failure_progress_path_uses_sanitized_name_for_plan_and_task(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        raw_name = "Foo Bar"
+        sanitized = "foo-bar"
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / raw_name).mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / raw_name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text(f"{raw_name}\n")
+
+        def plan_side_effect(
+            *,
+            config: Path | None,
+            repo_path: str | None = None,
+            input_collector: Any = None,
+        ) -> None:
+            raise SystemExit(1)
+
+        mock_plan.side_effect = plan_side_effect
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit):
+                run_chain_parallel(chain, parallel=1)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        expected = str(Path("cdc-tasks") / sanitized / "progress-plan.txt")
+        assert expected in out
+        assert f"cdc-tasks/{raw_name}/progress-plan.txt" not in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_summary_stdout_only(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("alpha", "beta"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\n")
+
+        # Write fake content to per-task progress files; ensure not surfaced to stdout.
+        (tmp_path / "cdc-tasks" / "alpha" / "progress-task.txt").write_text(
+            "PRIVATE_PROGRESS_LINE\n"
+        )
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "[chain] starting 2 parallel tasks: alpha, beta" in out
+        assert "[chain] alpha: started" in out
+        assert "[chain] beta: started" in out
+        assert "[chain] alpha: completed" in out
+        assert "[chain] beta: completed" in out
+        assert "[chain] complete: 2/2 succeeded" in out
+        assert "PRIVATE_PROGRESS_LINE" not in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_workers_invoked_with_repo_path(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.input import ParallelAbortCollector
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        expected_wt = str(tmp_path / ".cadence" / "worktrees" / "alpha")
+
+        plan_kwargs = mock_plan.call_args.kwargs
+        assert plan_kwargs["repo_path"] == expected_wt
+        assert isinstance(plan_kwargs["input_collector"], ParallelAbortCollector)
+
+        task_kwargs = mock_task.call_args.kwargs
+        assert task_kwargs["repo_path"] == expected_wt
+
+        squash_kwargs = mock_squash.call_args.kwargs
+        assert squash_kwargs["repo_path"] == expected_wt
+
+    def test_install_sigquit_silent_in_worker_thread(self) -> None:
+        from cadence.cli import _install_sigquit
+
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                _install_sigquit(threading.Event())
+            except BaseException as exc:
+                errors.append(exc)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        assert errors == []
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_worktree_add_failure_in_worker_reports_phase(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        svc.worktree_add.side_effect = RuntimeError("locked")
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=1)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert "[chain] alpha: failed at worktree_add" in out
+        assert "locked" in out
+        # plan/task/squash should not have been invoked
+        mock_plan.assert_not_called()
+        mock_task.assert_not_called()
+        mock_squash.assert_not_called()
+        svc.worktree_remove.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_worktree_remove_failure_warns_but_succeeds(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        svc.worktree_remove.side_effect = RuntimeError("rm failed")
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        captured = capsys.readouterr()
+        assert "warn: worktree remove failed: rm failed" in captured.err
+        assert "[chain] alpha: completed" in captured.out
+        assert "[chain] complete: 1/1 succeeded" in captured.out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_unexpected_worker_exception_does_not_skip_summary(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        svc = self._make_svc(tmp_path)
+        svc.worktree_add.side_effect = OSError("disk full")
+        self._make_setup_patch(mock_setup, svc)
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_parallel(chain, parallel=1)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "[chain] alpha: failed" in captured.err
+        assert "disk full" in captured.err
+        assert "[chain] complete: 0/1 succeeded" in captured.out

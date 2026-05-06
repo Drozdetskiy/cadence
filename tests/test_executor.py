@@ -162,8 +162,12 @@ class MockCommandRunner:
     def __init__(self, lines: list[str], exit_code: int = 0) -> None:
         self._lines = lines
         self._exit_code = exit_code
+        self.last_cwd: str | None = None
 
-    def run(self, name: str, *args: str) -> tuple[IO[str], Callable[[], int]]:
+    def run(
+        self, name: str, *args: str, cwd: str | None = None
+    ) -> tuple[IO[str], Callable[[], int]]:
+        self.last_cwd = cwd
         content = "\n".join(self._lines) + "\n" if self._lines else ""
         stream = io.StringIO(content)
         return stream, lambda: self._exit_code
@@ -881,6 +885,70 @@ class TestResult:
         assert r.signal == ""
         assert r.error is None
         assert r.idle_timed_out is False
+
+
+class TestClaudeExecutorCwd:
+    def test_cwd_forwarded_to_subprocess_popen(self, tmp_path: object) -> None:
+        from unittest.mock import MagicMock
+
+        from cadence.executor import claude_executor as ce
+
+        with (
+            patch.object(ce.subprocess, "Popen") as mock_popen,
+            patch.object(ce, "ProcessGroupCleanup") as mock_cleanup_cls,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.stdout = io.StringIO("")
+            mock_popen.return_value = mock_proc
+
+            mock_cleanup = MagicMock()
+            mock_cleanup.wait.return_value = 0
+            mock_cleanup_cls.return_value = mock_cleanup
+
+            executor = ClaudeExecutor(cwd="/tmp/some-worktree")
+            executor.run("prompt")
+
+            assert mock_popen.call_count == 1
+            kwargs = mock_popen.call_args.kwargs
+            assert kwargs.get("cwd") == "/tmp/some-worktree"
+
+    def test_cwd_kwarg_omitted_when_not_set(self) -> None:
+        from unittest.mock import MagicMock
+
+        from cadence.executor import claude_executor as ce
+
+        with (
+            patch.object(ce.subprocess, "Popen") as mock_popen,
+            patch.object(ce, "ProcessGroupCleanup") as mock_cleanup_cls,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.stdin = MagicMock()
+            mock_proc.stdout = io.StringIO("")
+            mock_popen.return_value = mock_proc
+
+            mock_cleanup = MagicMock()
+            mock_cleanup.wait.return_value = 0
+            mock_cleanup_cls.return_value = mock_cleanup
+
+            executor = ClaudeExecutor()
+            executor.run("prompt")
+
+            assert mock_popen.call_count == 1
+            kwargs = mock_popen.call_args.kwargs
+            assert "cwd" not in kwargs
+
+    def test_cwd_forwarded_to_cmd_runner(self) -> None:
+        runner = MockCommandRunner([])
+        executor = ClaudeExecutor(cmd_runner=runner, cwd="/tmp/worktree-x")
+        executor.run("prompt")
+        assert runner.last_cwd == "/tmp/worktree-x"
+
+    def test_cwd_not_forwarded_to_cmd_runner_when_unset(self) -> None:
+        runner = MockCommandRunner([])
+        executor = ClaudeExecutor(cmd_runner=runner)
+        executor.run("prompt")
+        assert runner.last_cwd is None
 
 
 class TestClaudeExecutorCancel:

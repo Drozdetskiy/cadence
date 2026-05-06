@@ -59,7 +59,9 @@ class LimitPatternError(Exception):
 
 
 class CommandRunner(Protocol):
-    def run(self, name: str, *args: str) -> tuple[IO[str], Callable[[], int]]: ...
+    def run(
+        self, name: str, *args: str, cwd: str | None = None
+    ) -> tuple[IO[str], Callable[[], int]]: ...
 
 
 def detect_signal(text: str) -> str:
@@ -148,21 +150,37 @@ def _launch_process(
     cmd: list[str],
     prompt: str,
     cmd_runner: CommandRunner | None,
+    cwd: str | None = None,
 ) -> tuple[_ProcessHandle | None, Exception | None]:
     if cmd_runner is not None:
-        stdout, wait_fn = cmd_runner.run(cmd[0], *cmd[1:])
+        if cwd is not None:
+            stdout, wait_fn = cmd_runner.run(cmd[0], *cmd[1:], cwd=cwd)
+        else:
+            stdout, wait_fn = cmd_runner.run(cmd[0], *cmd[1:])
         return _ProcessHandle(stdout=stdout, wait=wait_fn), None
 
     env = filter_env()
-    process = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-        env=env,
-    )
+    if cwd is not None:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+            env=env,
+            cwd=cwd,
+        )
+    else:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+            env=env,
+        )
     cleanup = ProcessGroupCleanup(process)
 
     try:
@@ -195,6 +213,7 @@ class ClaudeExecutor:
         limit_patterns: list[str] | None = None,
         idle_timeout: float = 0,
         cmd_runner: CommandRunner | None = None,
+        cwd: str | None = None,
     ) -> None:
         self._command = command or "claude"
         self._args = args
@@ -206,11 +225,12 @@ class ClaudeExecutor:
         self._limit_patterns = limit_patterns or []
         self._idle_timeout = idle_timeout
         self._cmd_runner = cmd_runner
+        self._cwd = cwd
         self._active_cleanup: ProcessGroupCleanup | None = None
 
     def run(self, prompt: str) -> Result:
         cmd = self._build_command()
-        handle, launch_err = _launch_process(cmd, prompt, self._cmd_runner)
+        handle, launch_err = _launch_process(cmd, prompt, self._cmd_runner, self._cwd)
         if handle is None:
             return Result(error=launch_err)
 
