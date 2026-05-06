@@ -212,6 +212,79 @@ def _review_goal(plan_file: str, default_branch: str) -> str:
     return f"review of branch vs {default_branch or 'main'}"
 
 
+_CONTEXT_ALLOWED_EXTENSIONS = frozenset({".md", ".txt", ".sql", ".yaml", ".yml", ".json", ".proto"})
+
+
+def load_context_files(
+    local_dir: Path | None,
+    *,
+    max_bytes: int = 200_000,
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    if local_dir is None:
+        return ""
+    ctx_dir = local_dir / "context"
+    if not ctx_dir.is_dir():
+        return ""
+
+    entries: list[Path] = []
+    for entry in sorted(ctx_dir.iterdir(), key=lambda p: p.name):
+        if not entry.is_file():
+            continue
+        if entry.suffix not in _CONTEXT_ALLOWED_EXTENSIONS:
+            continue
+        entries.append(entry)
+
+    if not entries:
+        return ""
+
+    parts: list[str] = []
+    total = 0
+    included = 0
+    for entry in entries:
+        content = entry.read_text(encoding="utf-8", errors="replace")
+        encoded_size = len(content.encode("utf-8"))
+        if total + encoded_size > max_bytes:
+            break
+        total += encoded_size
+        parts.append(f"## {entry.name}\n{content}\n\n")
+        included += 1
+
+    skipped = len(entries) - included
+    if skipped > 0 and warn is not None:
+        warn(f"context: dropped {skipped} file(s) over {max_bytes}-byte limit")
+
+    if not parts:
+        return ""
+    return "# Project context\n\n" + "".join(parts)
+
+
+def _format_public_api_paths(paths: list[str]) -> str:
+    if not paths:
+        return "(infer from project structure)"
+    return "- " + "\n- ".join(paths)
+
+
+def build_report_api_changes_prompt(
+    *,
+    local_dir: Path | None,
+    branch: str,
+    default_branch: str,
+    public_api_paths: list[str],
+    progress_file: str = "",
+    commit_format: str = "",
+    warn: Callable[[str], None] | None = None,
+) -> str:
+    prompt = load_prompt("report_api_changes", local_dir=local_dir)
+    prompt = prompt.replace("{{BRANCH}}", branch)
+    prompt = prompt.replace("{{DEFAULT_BRANCH}}", default_branch or "main")
+    prompt = prompt.replace("{{PROGRESS_FILE}}", progress_file)
+    prompt = prompt.replace("{{PUBLIC_API_PATHS}}", _format_public_api_paths(public_api_paths))
+    prompt = prompt.replace("{{PROJECT_CONTEXT}}", load_context_files(local_dir, warn=warn))
+    prompt = append_commit_format_instruction(prompt, commit_format)
+    return prompt
+
+
 def build_squash_commit_prompt(
     *,
     local_dir: Path | None = None,
@@ -277,12 +350,14 @@ __all__ = [
     "append_commit_format_instruction",
     "append_commit_trailer_instruction",
     "build_plan_prompt",
+    "build_report_api_changes_prompt",
     "build_review_first_prompt",
     "build_review_second_prompt",
     "build_squash_commit_prompt",
     "build_task_prompt",
     "expand_agent_references",
     "format_agent_expansion",
+    "load_context_files",
     "load_prompt",
     "normalize_crlf",
     "replace_base_variables",

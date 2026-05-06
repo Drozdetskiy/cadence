@@ -29,6 +29,8 @@ from cadence.status import (
     SignalPlanDraft,
     SignalPlanReady,
     SignalQuestion,
+    SignalReportDone,
+    SignalReportFailed,
     SignalReviewDone,
 )
 
@@ -72,6 +74,8 @@ def detect_signal(text: str) -> str:
         SignalPlanReady,
         SignalQuestion,
         SignalPlanDraft,
+        SignalReportFailed,
+        SignalReportDone,
     ):
         if sig in text:
             return sig

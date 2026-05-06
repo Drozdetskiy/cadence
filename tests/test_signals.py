@@ -3,16 +3,21 @@ from __future__ import annotations
 from cadence.processor.signals import (
     is_all_tasks_done,
     is_plan_ready,
+    is_report_done,
+    is_report_failed,
     is_review_done,
     is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
+    parse_report_body,
     parse_squash_commit_message,
 )
 from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
+    SignalReportDone,
+    SignalReportFailed,
     SignalReviewDone,
 )
 
@@ -220,3 +225,79 @@ class TestParseSquashCommitMessage:
         )
         result = parse_squash_commit_message(output)
         assert result == "branch.\n\nAdded: a."
+
+
+class TestParseReportBody:
+    def test_valid_body(self) -> None:
+        body = "# API changes: feat vs main\n\n## Added\n- foo - new endpoint - abc123"
+        output = f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>"
+        result = parse_report_body(output)
+        assert result == body
+
+    def test_body_surrounded_by_prose(self) -> None:
+        output = (
+            "Here is the report:\n"
+            "<<<CADENCE:REPORT_BEGIN>>>\n"
+            "# API changes: x vs main\n"
+            "<<<CADENCE:REPORT_END>>>\n"
+            "Done."
+        )
+        result = parse_report_body(output)
+        assert result == "# API changes: x vs main"
+
+    def test_missing_begin_marker(self) -> None:
+        output = "# API changes\n<<<CADENCE:REPORT_END>>>"
+        assert parse_report_body(output) is None
+
+    def test_missing_end_marker(self) -> None:
+        output = "<<<CADENCE:REPORT_BEGIN>>>\n# API changes"
+        assert parse_report_body(output) is None
+
+    def test_no_markers(self) -> None:
+        assert parse_report_body("just some text") is None
+
+    def test_empty_body(self) -> None:
+        output = "<<<CADENCE:REPORT_BEGIN>>>\n   \n<<<CADENCE:REPORT_END>>>"
+        assert parse_report_body(output) is None
+
+    def test_takes_last_non_empty_when_multiple_pairs(self) -> None:
+        output = (
+            "<<<CADENCE:REPORT_BEGIN>>>\n"
+            "<placeholder>\n"
+            "<<<CADENCE:REPORT_END>>>\n"
+            "Real:\n"
+            "<<<CADENCE:REPORT_BEGIN>>>\n"
+            "# real report\n"
+            "<<<CADENCE:REPORT_END>>>"
+        )
+        result = parse_report_body(output)
+        assert result == "# real report"
+
+    def test_multiline_body_preserved(self) -> None:
+        body = "# API changes: x vs main\n\n## Added\n- a\n\n## Removed\n- b"
+        output = f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>"
+        assert parse_report_body(output) == body
+
+
+class TestIsReportDone:
+    def test_report_done(self) -> None:
+        assert is_report_done(SignalReportDone) is True
+
+    def test_not_report_done(self) -> None:
+        assert is_report_done(SignalReportFailed) is False
+        assert is_report_done(SignalCompleted) is False
+
+    def test_empty(self) -> None:
+        assert is_report_done("") is False
+
+
+class TestIsReportFailed:
+    def test_report_failed(self) -> None:
+        assert is_report_failed(SignalReportFailed) is True
+
+    def test_not_report_failed(self) -> None:
+        assert is_report_failed(SignalReportDone) is False
+        assert is_report_failed(SignalFailed) is False
+
+    def test_empty(self) -> None:
+        assert is_report_failed("") is False

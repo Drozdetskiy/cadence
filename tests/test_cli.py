@@ -19,6 +19,8 @@ from cadence.cli import (
     _validate_chain_tasks,
     app,
     check_claude_dep,
+    compute_progress_path,
+    compute_report_path,
     derive_plan_path,
     display_stats,
     find_existing_plan,
@@ -26,6 +28,7 @@ from cadence.cli import (
     run_chain_mode,
     run_chain_parallel,
     run_plan_mode,
+    run_report_api_changes_mode,
     run_review_mode,
     run_squash_mode,
     run_task_init_mode,
@@ -35,7 +38,13 @@ from cadence.cli import (
 from cadence.executor.claude_executor import Result
 from cadence.git import DiffStats
 from cadence.processor.runner import UserAbortedError
-from cadence.status import SignalCompleted, SignalPlanReady, SignalReviewDone
+from cadence.status import (
+    Mode,
+    SignalCompleted,
+    SignalPlanReady,
+    SignalReportDone,
+    SignalReviewDone,
+)
 
 
 class TestResolveVersion:
@@ -5773,3 +5782,880 @@ class TestRunChainParallel:
         assert "[chain] alpha: failed" in captured.err
         assert "disk full" in captured.err
         assert "[chain] complete: 0/1 succeeded" in captured.out
+
+
+class TestComputeReportPath:
+    def test_basic(self) -> None:
+        assert (
+            compute_report_path("api-changes", branch="feat-x", tasks_root="cdc-tasks")
+            == "cdc-tasks/feat-x/report-api-changes.md"
+        )
+
+    def test_sanitizes_branch(self) -> None:
+        assert (
+            compute_report_path("api-changes", branch="feat/foo", tasks_root="cdc-tasks")
+            == "cdc-tasks/feat-foo/report-api-changes.md"
+        )
+
+    def test_empty_branch_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_report_path("api-changes", branch="", tasks_root="cdc-tasks")
+
+    def test_empty_report_type_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_report_path("", branch="feat-x", tasks_root="cdc-tasks")
+
+
+class TestComputeProgressPathReportMode:
+    def test_returns_report_progress_path(self) -> None:
+        path = compute_progress_path(
+            Mode.REPORT,
+            branch="feat-x",
+            tasks_root="cdc-tasks",
+            report_type="api-changes",
+        )
+        assert path == "cdc-tasks/feat-x/progress-report-api-changes.txt"
+
+    def test_missing_report_type_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_progress_path(Mode.REPORT, branch="feat-x", tasks_root="cdc-tasks")
+
+    def test_missing_branch_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            compute_progress_path(Mode.REPORT, tasks_root="cdc-tasks", report_type="api-changes")
+
+
+class TestReportApiChangesCli:
+    @staticmethod
+    def _runner() -> Any:
+        from typer.testing import CliRunner
+
+        return CliRunner()
+
+    def test_help_lists_options(self) -> None:
+        result = self._runner().invoke(app, ["report", "api-changes", "--help"])
+        assert result.exit_code == 0
+        assert "--base" in result.output
+        assert "--stdout-only" in result.output
+
+    def test_report_no_subcommand_shows_help(self) -> None:
+        result = self._runner().invoke(app, ["report"])
+        assert result.exit_code == 2
+
+    def test_report_api_changes_shows_in_root_help(self) -> None:
+        import re
+
+        result = self._runner().invoke(app, ["--help"])
+        assert result.exit_code == 0
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "report" in plain
+
+    @patch("cadence.cli.run_report_api_changes_mode")
+    def test_default_call(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["report", "api-changes"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(base=None, stdout_only=False, config=None)
+
+    @patch("cadence.cli.run_report_api_changes_mode")
+    def test_with_base(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["report", "api-changes", "--base", "develop"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(base="develop", stdout_only=False, config=None)
+
+    @patch("cadence.cli.run_report_api_changes_mode")
+    def test_with_stdout_only(self, mock_run: MagicMock) -> None:
+        result = self._runner().invoke(app, ["report", "api-changes", "--stdout-only"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(base=None, stdout_only=True, config=None)
+
+    @patch("cadence.cli.run_report_api_changes_mode")
+    def test_global_config_propagates(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        cfg = tmp_path / "override.yaml"
+        cfg.write_text("default_branch: main\n")
+        result = self._runner().invoke(app, ["--config", str(cfg), "report", "api-changes"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once_with(base=None, stdout_only=False, config=cfg)
+
+
+class TestRunReportApiChangesMode:
+    @staticmethod
+    def _setup_mock_service(
+        *,
+        branch: str = "feat-x",
+        is_default: bool = False,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.current_branch.return_value = branch
+        svc.is_default_branch.return_value = is_default
+        return svc
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_detached_head_exits_2(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config()
+        mock_service_cls.return_value = self._setup_mock_service(branch="")
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_report_api_changes_mode()
+        assert excinfo.value.code == 2
+        assert "detached HEAD" in capsys.readouterr().err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_default_branch_exits_2(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service(branch="main", is_default=True)
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_report_api_changes_mode()
+        assert excinfo.value.code == 2
+        assert "default branch main" in capsys.readouterr().err
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_happy_path_writes_report_path_message(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "wrote: cdc-tasks/feat-x/report-api-changes.md" in out
+
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["base"] == "main"
+        assert kwargs["stdout_only"] is False
+        assert kwargs["branch"] == "feat-x"
+        assert kwargs["default_branch"] == "main"
+        assert kwargs["report_path"] == os.path.join("cdc-tasks", "feat-x", "report-api-changes.md")
+        assert mock_run_report.call_args.args == ("api-changes",)
+        mock_log.close.assert_called_once_with(success=True)
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_stdout_only_skips_wrote_message(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode(stdout_only=True)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "wrote:" not in out
+
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["stdout_only"] is True
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_base_overrides_default_branch(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode(base="develop")
+        finally:
+            os.chdir(original_cwd)
+
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["base"] == "develop"
+        assert kwargs["default_branch"] == "develop"
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_runtime_error_exits_1_and_log_close_failure(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.side_effect = RuntimeError("report body not found between markers")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        mock_log.error.assert_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_keyboard_interrupt_returns_cleanly(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.side_effect = KeyboardInterrupt
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_per_task_yaml_overrides_default_branch(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("default_branch: parent-branch\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["base"] == "parent-branch"
+        assert kwargs["default_branch"] == "parent-branch"
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_invalid_per_task_yaml_exits_1(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("not-a-mapping\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        err = capsys.readouterr().err
+        assert "top-level must be a mapping" in err
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_explicit_base_overrides_per_task_yaml(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "config.yaml").write_text("default_branch: parent-branch\n", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode(base="staging")
+        finally:
+            os.chdir(original_cwd)
+
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["base"] == "staging"
+        assert kwargs["default_branch"] == "staging"
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_uses_review_model_when_report_model_unset(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            review_model="claude-review-model",
+            report_api_changes_model="",
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        ctor_kwargs = mock_executor_cls.call_args.kwargs
+        assert ctor_kwargs["model"] == "claude-review-model"
+
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_uses_report_model_when_set(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            review_model="claude-review-model",
+            report_api_changes_model="claude-report-model",
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        ctor_kwargs = mock_executor_cls.call_args.kwargs
+        assert ctor_kwargs["model"] == "claude-report-model"
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_end_to_end_writes_file_via_real_run_report(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main\n\n## Added\n- /users (abc1234)"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=executor_output, signal=SignalReportDone)
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        report_file = tmp_path / "cdc-tasks" / "feat-x" / "report-api-changes.md"
+        assert report_file.is_file()
+        assert report_file.read_text(encoding="utf-8") == body
+
+        out = capsys.readouterr().out
+        assert body in out
+        assert "wrote: cdc-tasks/feat-x/report-api-changes.md" in out
+        mock_log.close.assert_called_once_with(success=True)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_stdout_only_does_not_create_file(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main\n\n## Added\n- /users (abc1234)"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=executor_output, signal=SignalReportDone)
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode(stdout_only=True)
+        finally:
+            os.chdir(original_cwd)
+
+        report_file = tmp_path / "cdc-tasks" / "feat-x" / "report-api-changes.md"
+        assert not report_file.exists()
+
+        out = capsys.readouterr().out
+        assert body in out
+        assert "wrote:" not in out
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_prompt_includes_project_context_files(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        cadence_dir = tmp_path / ".cadence"
+        context_dir = cadence_dir / "context"
+        context_dir.mkdir(parents=True)
+        sentinel = "OPENAPI_SENTINEL_TOKEN"
+        (context_dir / "openapi.yaml").write_text(f"openapi: 3.0\n# {sentinel}\n", encoding="utf-8")
+
+        mock_detect.return_value = cadence_dir
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=executor_output, signal=SignalReportDone)
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        prompt = mock_executor.run.call_args.args[0]
+        assert sentinel in prompt
+        assert "## openapi.yaml" in prompt
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_prompt_includes_public_api_paths_when_set(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            public_api_paths=["src/api", "src/handlers"],
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=executor_output, signal=SignalReportDone)
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        prompt = mock_executor.run.call_args.args[0]
+        assert "src/api" in prompt
+        assert "src/handlers" in prompt
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_prompt_uses_inference_when_paths_empty(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=executor_output, signal=SignalReportDone)
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        prompt = mock_executor.run.call_args.args[0]
+        assert "infer from project structure" in prompt

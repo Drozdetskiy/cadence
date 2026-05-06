@@ -204,11 +204,15 @@ class ExternalBackend:
         except ValueError:
             return 0
 
-    def diff_against(self, ref: str) -> str:
+    def diff_against(self, ref: str, *, paths: list[str] | None = None) -> str:
         resolved = self._resolve_ref(ref)
         if not resolved:
             return ""
-        code, stdout, _ = self._run_with_status("diff", f"{resolved}...HEAD")
+        args = ["diff", f"{resolved}...HEAD"]
+        if paths:
+            args.append("--")
+            args.extend(paths)
+        code, stdout, _ = self._run_with_status(*args)
         if code != 0:
             return ""
         return stdout

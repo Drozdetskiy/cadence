@@ -61,6 +61,9 @@ class Service:
     def diff_stats(self, base_branch: str) -> DiffStats:
         return self._repo.diff_stats(base_branch)
 
+    def diff_against(self, base: str, *, paths: list[str] | None = None) -> str:
+        return self._repo.diff_against(base, paths=paths)
+
     def is_default_branch(self, default_branch: str) -> bool:
         current = self._repo.current_branch()
         if not current:

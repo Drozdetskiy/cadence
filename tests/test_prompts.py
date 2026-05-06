@@ -8,12 +8,14 @@ from cadence.processor.prompts import (
     COMMIT_FORMAT_SENTINEL,
     append_commit_format_instruction,
     build_plan_prompt,
+    build_report_api_changes_prompt,
     build_review_first_prompt,
     build_review_second_prompt,
     build_squash_commit_prompt,
     build_task_prompt,
     expand_agent_references,
     format_agent_expansion,
+    load_context_files,
     load_prompt,
     replace_prompt_variables,
 )
@@ -48,6 +50,7 @@ class TestLoadTaskPrompt:
             "review_first",
             "review_second",
             "squash_commit",
+            "report_api_changes",
         ],
     )
     def test_all_shipped_prompts_load(self, name: str) -> None:
@@ -728,6 +731,254 @@ class TestBuildSquashCommitPrompt:
             local_dir=tmp_path,
         )
         assert result == "Custom squash for develop"
+
+
+class TestLoadContextFiles:
+    def test_returns_empty_when_local_dir_is_none(self) -> None:
+        assert load_context_files(None) == ""
+
+    def test_returns_empty_when_context_dir_missing(self, tmp_path: Path) -> None:
+        assert load_context_files(tmp_path) == ""
+
+    def test_returns_empty_when_context_dir_is_a_file(self, tmp_path: Path) -> None:
+        (tmp_path / "context").write_text("oops")
+        assert load_context_files(tmp_path) == ""
+
+    def test_returns_empty_when_context_dir_empty(self, tmp_path: Path) -> None:
+        (tmp_path / "context").mkdir()
+        assert load_context_files(tmp_path) == ""
+
+    def test_includes_two_files_in_sorted_order(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "b.txt").write_text("BBBB")
+        (ctx / "a.md").write_text("AAAA")
+        result = load_context_files(tmp_path)
+        assert result == "# Project context\n\n## a.md\nAAAA\n\n## b.txt\nBBBB\n\n"
+
+    def test_skips_disallowed_extensions(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "ok.md").write_text("ok")
+        (ctx / "skipme.png").write_bytes(b"\x89PNG")
+        (ctx / "no_ext").write_text("nope")
+        result = load_context_files(tmp_path)
+        assert "ok.md" in result
+        assert "skipme.png" not in result
+        assert "no_ext" not in result
+
+    def test_ignores_subdirectories(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "ok.md").write_text("ok")
+        sub = ctx / "nested"
+        sub.mkdir()
+        (sub / "deep.md").write_text("deep")
+        result = load_context_files(tmp_path)
+        assert "ok.md" in result
+        assert "deep.md" not in result
+        assert "nested" not in result
+
+    def test_includes_all_allowed_extensions(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        for name in (
+            "x.md",
+            "x.txt",
+            "x.sql",
+            "x.yaml",
+            "x.yml",
+            "x.json",
+            "x.proto",
+        ):
+            (ctx / name).write_text(f"body-{name}")
+        result = load_context_files(tmp_path)
+        for name in (
+            "x.md",
+            "x.txt",
+            "x.sql",
+            "x.yaml",
+            "x.yml",
+            "x.json",
+            "x.proto",
+        ):
+            assert f"## {name}\nbody-{name}" in result
+
+    def test_drops_files_over_byte_cap_and_warns_once(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "a.txt").write_text("A" * 100)
+        (ctx / "b.txt").write_text("B" * 100)
+        (ctx / "c.txt").write_text("C" * 100)
+        warnings: list[str] = []
+        result = load_context_files(tmp_path, max_bytes=150, warn=warnings.append)
+        assert "## a.txt\n" + ("A" * 100) in result
+        assert "b.txt" not in result
+        assert "c.txt" not in result
+        assert len(warnings) == 1
+        assert "2" in warnings[0]
+        assert "150" in warnings[0]
+
+    def test_no_warning_when_nothing_skipped(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "a.md").write_text("hi")
+        warnings: list[str] = []
+        load_context_files(tmp_path, warn=warnings.append)
+        assert warnings == []
+
+    def test_warn_callable_optional_when_skipping(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "a.txt").write_text("X" * 1000)
+        # No warn callable; must not raise even though we skip a file.
+        result = load_context_files(tmp_path, max_bytes=10)
+        assert result == ""
+
+    def test_handles_invalid_utf8_via_replace(self, tmp_path: Path) -> None:
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "bad.txt").write_bytes(b"hello \xff world")
+        result = load_context_files(tmp_path)
+        assert "## bad.txt" in result
+        assert "hello" in result and "world" in result
+
+
+class TestBuildReportApiChangesPrompt:
+    def _write_template(self, tmp_path: Path) -> None:
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir(exist_ok=True)
+        (prompts_dir / "report_api_changes.txt").write_text(
+            "branch={{BRANCH}}\n"
+            "base={{DEFAULT_BRANCH}}\n"
+            "progress={{PROGRESS_FILE}}\n"
+            "paths:\n{{PUBLIC_API_PATHS}}\n"
+            "context:\n{{PROJECT_CONTEXT}}\n"
+        )
+
+    def test_substitutes_all_variables(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=["src/api", "src/rpc"],
+            progress_file="/tmp/progress.txt",
+        )
+        assert "branch=feature-x" in result
+        assert "base=main" in result
+        assert "progress=/tmp/progress.txt" in result
+        assert "paths:\n- src/api\n- src/rpc" in result
+        # No leftover placeholders.
+        for token in (
+            "{{BRANCH}}",
+            "{{DEFAULT_BRANCH}}",
+            "{{PROGRESS_FILE}}",
+            "{{PUBLIC_API_PATHS}}",
+            "{{PROJECT_CONTEXT}}",
+        ):
+            assert token not in result
+
+    def test_empty_public_api_paths_renders_inference_fallback(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        assert "paths:\n(infer from project structure)" in result
+
+    def test_default_branch_falls_back_to_main(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="",
+            public_api_paths=[],
+        )
+        assert "base=main" in result
+
+    def test_injects_project_context_when_present(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        ctx = tmp_path / "context"
+        ctx.mkdir()
+        (ctx / "openapi.yaml").write_text("openapi: 3.0.0")
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        assert "# Project context" in result
+        assert "## openapi.yaml" in result
+        assert "openapi: 3.0.0" in result
+
+    def test_no_project_context_block_when_dir_absent(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        assert "# Project context" not in result
+        # Trailing block becomes empty.
+        assert result.endswith("context:\n\n")
+
+    def test_no_agent_expansion(self, tmp_path: Path) -> None:
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "report_api_changes.txt").write_text("marker {{agent:quality}} end")
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        assert "{{agent:quality}}" in result
+        assert "Use the Task tool" not in result
+
+    def test_no_commit_format_block_by_default(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+        )
+        assert COMMIT_FORMAT_SENTINEL not in result
+
+    def test_appends_commit_format_when_provided(self, tmp_path: Path) -> None:
+        self._write_template(tmp_path)
+        result = build_report_api_changes_prompt(
+            local_dir=tmp_path,
+            branch="feature-x",
+            default_branch="main",
+            public_api_paths=[],
+            commit_format="CUSTOM_FMT_BODY",
+        )
+        assert result.count(COMMIT_FORMAT_SENTINEL) == 1
+        assert result.rstrip().endswith("CUSTOM_FMT_BODY")
+
+
+class TestDefaultReportApiChangesPrompt:
+    def test_loads_and_has_required_placeholders(self) -> None:
+        prompt = load_prompt("report_api_changes")
+        for token in (
+            "{{BRANCH}}",
+            "{{DEFAULT_BRANCH}}",
+            "{{PUBLIC_API_PATHS}}",
+            "{{PROJECT_CONTEXT}}",
+        ):
+            assert token in prompt, f"missing placeholder {token!r} in default prompt"
+
+    def test_loads_and_has_required_signal_names(self) -> None:
+        prompt = load_prompt("report_api_changes")
+        assert "<<<CADENCE:REPORT_BEGIN>>>" in prompt
+        assert "<<<CADENCE:REPORT_END>>>" in prompt
+        assert "<<<CADENCE:REPORT_DONE>>>" in prompt
+        assert "<<<CADENCE:REPORT_FAILED>>>" in prompt
 
 
 class TestPlanPromptHasNoCommitFormat:

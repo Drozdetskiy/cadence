@@ -29,6 +29,8 @@ from cadence.status import (
     SignalCompleted,
     SignalFailed,
     SignalPlanReady,
+    SignalReportDone,
+    SignalReportFailed,
     SignalReviewDone,
 )
 
@@ -45,6 +47,12 @@ class TestDetectSignal:
 
     def test_plan_ready(self) -> None:
         assert detect_signal("<<<CADENCE:PLAN_READY>>>") == SignalPlanReady
+
+    def test_report_done(self) -> None:
+        assert detect_signal("body <<<CADENCE:REPORT_DONE>>>") == SignalReportDone
+
+    def test_report_failed(self) -> None:
+        assert detect_signal("<<<CADENCE:REPORT_FAILED>>>") == SignalReportFailed
 
     def test_no_signal(self) -> None:
         assert detect_signal("just some text without any signals") == ""

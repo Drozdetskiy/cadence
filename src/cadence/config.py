@@ -26,6 +26,7 @@ class Config:
     plan_model: str = "claude-opus-4-7"
     task_model: str = "claude-opus-4-7"
     review_model: str = "claude-opus-4-7"
+    report_api_changes_model: str = ""
     iteration_delay_ms: int = 2000
     task_retry_count: int = 1
     max_iterations: int = 50
@@ -73,6 +74,7 @@ class Config:
             "You've hit your limit",
         ]
     )
+    public_api_paths: list[str] = field(default_factory=list)
     colors: ColorConfig = field(default_factory=ColorConfig)
 
 
@@ -120,6 +122,7 @@ def load_config(config_dir: Path | None) -> Config:
         "plan_model",
         "task_model",
         "review_model",
+        "report_api_changes_model",
         "session_timeout",
         "idle_timeout",
         "wait_on_limit",
@@ -137,6 +140,7 @@ def load_config(config_dir: Path | None) -> Config:
     _LIST_FIELDS = {
         "claude_error_patterns",
         "claude_limit_patterns",
+        "public_api_paths",
     }
 
     for key in _STR_FIELDS:
@@ -173,6 +177,7 @@ class YamlOverrides:
     plan_model: str | None = None
     task_model: str | None = None
     review_model: str | None = None
+    report_api_changes_model: str | None = None
     default_branch: str | None = None
 
 
@@ -191,7 +196,7 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     if not isinstance(raw, dict):
         raise ValueError("invalid config.yaml: top-level must be a mapping")
 
-    for section in ("plan", "task", "review"):
+    for section in ("plan", "task", "review", "report_api_changes"):
         value = raw.get(section)
         if not isinstance(value, dict):
             continue
@@ -202,8 +207,10 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
             overrides.plan_model = model
         elif section == "task":
             overrides.task_model = model
-        else:
+        elif section == "review":
             overrides.review_model = model
+        else:
+            overrides.report_api_changes_model = model
 
     default_branch = raw.get("default_branch")
     if isinstance(default_branch, str) and default_branch:
@@ -224,6 +231,8 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.task_model = overrides.task_model
     if overrides.review_model is not None:
         cfg.review_model = overrides.review_model
+    if overrides.report_api_changes_model is not None:
+        cfg.report_api_changes_model = overrides.report_api_changes_model
     if overrides.default_branch is not None:
         cfg.default_branch = overrides.default_branch
 

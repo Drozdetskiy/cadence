@@ -48,6 +48,8 @@ class TestConfigDefaults:
         assert cfg.default_branch == "main"
         assert cfg.init_prompt_name == "init"
         assert cfg.commit_trailer == ""
+        assert cfg.report_api_changes_model == ""
+        assert cfg.public_api_paths == []
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -148,6 +150,24 @@ class TestLoadConfig:
         yaml_path.write_text('claude_error_patterns:\n  - "custom error"\n')
         cfg = load_config(tmp_path)
         assert cfg.claude_error_patterns == ["custom error"]
+
+    def test_load_public_api_paths(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('public_api_paths:\n  - "src/api"\n  - "proto"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.public_api_paths == ["src/api", "proto"]
+
+    def test_load_report_api_changes_model(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("report_api_changes_model: claude-sonnet-4-6\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_api_changes_model == "claude-sonnet-4-6"
+
+    def test_default_report_api_changes_model_is_empty(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.report_api_changes_model == ""
 
     def test_load_colors(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -287,6 +307,25 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides("default_branch: 42\n")
         assert overrides.default_branch is None
 
+    def test_report_api_changes_model_override(self) -> None:
+        text = "report_api_changes:\n  model: opus-report\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_api_changes_model == "opus-report"
+        assert overrides.plan_model is None
+        assert overrides.task_model is None
+        assert overrides.review_model is None
+
+    def test_report_api_changes_model_alongside_others(self) -> None:
+        text = "task:\n  model: sonnet\nreport_api_changes:\n  model: opus-report\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+        assert overrides.report_api_changes_model == "opus-report"
+
+    def test_report_api_changes_model_empty_value_ignored(self) -> None:
+        text = "report_api_changes:\n  model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.report_api_changes_model is None
+
 
 class TestLoadYamlConfig:
     def test_loads_valid_file(self, tmp_path: Path) -> None:
@@ -340,6 +379,16 @@ class TestApplyYamlOverrides:
         cfg = Config(default_branch="main")
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.default_branch == "main"
+
+    def test_report_api_changes_model_overrides(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(cfg, YamlOverrides(report_api_changes_model="opus-rep"))
+        assert cfg.report_api_changes_model == "opus-rep"
+
+    def test_report_api_changes_model_none_is_no_op(self) -> None:
+        cfg = Config(report_api_changes_model="preset")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.report_api_changes_model == "preset"
 
 
 class TestFindYamlConfig:
