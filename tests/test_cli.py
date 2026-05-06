@@ -7236,3 +7236,1306 @@ class TestRunReportTestCasesMode:
         kwargs = mock_run_report.call_args.kwargs
         assert kwargs["base"] == "staging"
         assert kwargs["default_branch"] == "staging"
+
+
+class HookRecorder:
+    def __init__(self, outcomes: list[Any] | None = None) -> None:
+        from cadence.hooks import HookOutcome
+
+        self.calls: list[dict[str, Any]] = []
+        self._outcomes = list(outcomes) if outcomes else []
+        self._default = HookOutcome(ran=False, exit_code=0, timed_out=False)
+
+    def __call__(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self._outcomes:
+            return self._outcomes.pop(0)
+        return self._default
+
+
+class TestRunPlanModeHooks:
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_and_post_called_in_order(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "0042-feature"
+        task_dir.mkdir(parents=True)
+        f = task_dir / "init"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f)
+
+        assert len(recorder.calls) == 2
+        assert recorder.calls[0]["kind"] == "pre"
+        assert recorder.calls[0]["phase"] == "plan"
+        assert recorder.calls[1]["kind"] == "post"
+        assert recorder.calls[1]["phase"] == "plan"
+        mock_executor.run.assert_called_once()
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_hook_failure_aborts_phase(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=7, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "0042-feature"
+        task_dir.mkdir(parents=True)
+        f = task_dir / "init"
+        f.write_text("implement feature X")
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_plan_mode(f)
+        assert excinfo.value.code == 7
+
+        mock_executor.run.assert_not_called()
+        assert len(recorder.calls) == 1
+        assert recorder.calls[0]["kind"] == "pre"
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_post_hook_failure_warns_but_succeeds(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(
+            outcomes=[
+                HookOutcome(ran=False, exit_code=0, timed_out=False),
+                HookOutcome(ran=True, exit_code=3, timed_out=False),
+            ]
+        )
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "0042-feature"
+        task_dir.mkdir(parents=True)
+        f = task_dir / "init"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f)
+
+        mock_log.warn.assert_any_call("post-%s hook exited %d", "plan", 3)
+        mock_executor.run.assert_called_once()
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_env_contents(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "0042-feature"
+        task_dir.mkdir(parents=True)
+        f = task_dir / "init"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f)
+
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_PHASE"] == "plan"
+        assert pre_env["CADENCE_HOOK"] == "pre"
+        assert pre_env["CADENCE_BRANCH"] == ""
+        assert pre_env["CADENCE_TASK_NAME"] == "0042-feature"
+        assert pre_env["CADENCE_TASKS_ROOT"] == os.path.abspath("cdc-tasks")
+
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_HOOK"] == "post"
+        assert post_env["CADENCE_PHASE_RESULT"] == "success"
+        assert post_env["CADENCE_PHASE_DURATION_MS"].isdigit()
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_hooks_disabled_does_not_warn_or_exit(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0, tasks_root="cdc-tasks", hooks_enabled=False
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "0042-feature"
+        task_dir.mkdir(parents=True)
+        f = task_dir / "init"
+        f.write_text("implement feature X")
+
+        run_plan_mode(f)
+
+        for call in recorder.calls:
+            assert call["enabled"] is False
+        assert mock_log.warn.call_count == 0
+
+
+class TestRunTaskModeHooks:
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_and_post_called(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: done\n\n- [x] done item\n")
+
+        run_task_mode(f)
+
+        assert len(recorder.calls) == 2
+        assert recorder.calls[0]["kind"] == "pre"
+        assert recorder.calls[0]["phase"] == "task"
+        assert recorder.calls[1]["kind"] == "post"
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_BRANCH"] == "0042-feature"
+        assert pre_env["CADENCE_TASK_NAME"] == "0042-feature"
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_PHASE_RESULT"] == "success"
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_hook_failure_aborts(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=9, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_task_mode(f)
+        assert excinfo.value.code == 9
+
+        mock_executor.run.assert_not_called()
+        assert len(recorder.calls) == 1
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_post_hook_failure_warns(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m00s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalCompleted)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(
+            outcomes=[
+                HookOutcome(ran=False, exit_code=0, timed_out=False),
+                HookOutcome(ran=True, exit_code=4, timed_out=False),
+            ]
+        )
+        mock_run_hook.side_effect = recorder
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: done\n\n- [x] done item\n")
+
+        run_task_mode(f)
+
+        mock_log.warn.assert_any_call("post-%s hook exited %d", "task", 4)
+
+
+class TestRunReviewModeHooks:
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_and_post_called(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalReviewDone)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+            run_review_mode()
+
+        assert len(recorder.calls) == 2
+        assert recorder.calls[0]["kind"] == "pre"
+        assert recorder.calls[0]["phase"] == "review"
+        assert recorder.calls[1]["kind"] == "post"
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_BRANCH"] == "0042-feature"
+        assert pre_env["CADENCE_TASK_NAME"] == "0042-feature"
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_pre_hook_failure_aborts(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=11, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+
+            with pytest.raises(SystemExit) as excinfo:
+                run_review_mode()
+            assert excinfo.value.code == 11
+
+            mock_runner.run.assert_not_called()
+
+        assert len(recorder.calls) == 1
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    @patch("cadence.cli.Service")
+    def test_post_hook_failure_warns(
+        self,
+        mock_svc_cls: MagicMock,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(iteration_delay_ms=0, tasks_root="cdc-tasks")
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "0042-feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_svc.root.return_value = "/repo"
+        mock_svc_cls.return_value = mock_svc
+
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output="done", signal=SignalReviewDone)
+        mock_executor_cls.return_value = mock_executor
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(
+            outcomes=[
+                HookOutcome(ran=False, exit_code=0, timed_out=False),
+                HookOutcome(ran=True, exit_code=2, timed_out=False),
+            ]
+        )
+        mock_run_hook.side_effect = recorder
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+            run_review_mode()
+
+        mock_log.warn.assert_any_call("post-%s hook exited %d", "review", 2)
+
+
+class TestRunSquashModeHooks:
+    @staticmethod
+    def _setup_mock_service(
+        *,
+        branch: str = "feat-x",
+        is_default: bool = False,
+        is_dirty: bool = False,
+        commits_ahead: int = 3,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.current_branch.return_value = branch
+        svc.is_default_branch.return_value = is_default
+        svc.is_dirty.return_value = is_dirty
+        svc.commits_ahead.return_value = commits_ahead
+        svc.diff_stats.return_value = DiffStats(files=2, additions=5, deletions=1)
+        svc.head_hash.return_value = "deadbeefcafe"
+        svc.root.return_value = "/repo"
+        return svc
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_and_post_called(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nmsg body\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            expected_tasks_root = os.path.abspath("cdc-tasks")
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert len(recorder.calls) == 2
+        assert recorder.calls[0]["kind"] == "pre"
+        assert recorder.calls[0]["phase"] == "squash"
+        assert recorder.calls[1]["kind"] == "post"
+        assert recorder.calls[1]["phase"] == "squash"
+
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_PHASE"] == "squash"
+        assert pre_env["CADENCE_HOOK"] == "pre"
+        assert pre_env["CADENCE_BRANCH"] == "feat-x"
+        assert pre_env["CADENCE_TASK_NAME"] == "feat-x"
+        assert pre_env["CADENCE_TASKS_ROOT"] == expected_tasks_root
+
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_HOOK"] == "post"
+        assert post_env["CADENCE_PHASE_RESULT"] == "success"
+        assert post_env["CADENCE_PHASE_DURATION_MS"].isdigit()
+
+        mock_svc.squash_commits.assert_called_once()
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_hook_failure_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor = MagicMock()
+        mock_executor_cls.return_value = mock_executor
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=13, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 13
+        mock_executor.run.assert_not_called()
+        mock_svc.squash_commits.assert_not_called()
+        assert len(recorder.calls) == 1
+        assert recorder.calls[0]["kind"] == "pre"
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_post_hook_failure_warns_but_squash_preserved(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = "<<<CADENCE:COMMIT_MSG_BEGIN>>>\nmsg body\n<<<CADENCE:COMMIT_MSG_END>>>"
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        recorder = HookRecorder(
+            outcomes=[
+                HookOutcome(ran=False, exit_code=0, timed_out=False),
+                HookOutcome(ran=True, exit_code=6, timed_out=False),
+            ]
+        )
+        mock_run_hook.side_effect = recorder
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.squash_commits.assert_called_once()
+        mock_log.warn.assert_any_call("post-%s hook exited %d", "squash", 6)
+        mock_log.close.assert_called_once_with(success=True)
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_validation_failures_skip_hook(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        # detached HEAD
+        mock_service_cls.return_value = self._setup_mock_service(branch="")
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 2
+
+        # default branch
+        mock_service_cls.return_value = self._setup_mock_service(branch="main", is_default=True)
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 2
+
+        # missing task dir
+        mock_service_cls.return_value = self._setup_mock_service()
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 2
+
+        # plan not completed
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 2
+
+        # dirty tree
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+        mock_service_cls.return_value = self._setup_mock_service(is_dirty=True)
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 2
+
+        # zero commits ahead
+        mock_service_cls.return_value = self._setup_mock_service(commits_ahead=0)
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+        assert excinfo.value.code == 2
+
+        # single commit ahead — early return, no SystemExit
+        mock_service_cls.return_value = self._setup_mock_service(commits_ahead=1)
+        os.chdir(tmp_path)
+        try:
+            run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        # No hook call recorded across any of these validation failures
+        assert recorder.calls == []
+
+
+class TestRunReportApiChangesModeHooks:
+    @staticmethod
+    def _setup_mock_service(
+        *,
+        branch: str = "feat-x",
+        is_default: bool = False,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.current_branch.return_value = branch
+        svc.is_default_branch.return_value = is_default
+        svc.root.return_value = "/repo"
+        return svc
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_and_post_called(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            expected_tasks_root = os.path.abspath("cdc-tasks")
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert len(recorder.calls) == 2
+        assert recorder.calls[0]["kind"] == "pre"
+        assert recorder.calls[0]["phase"] == "report"
+        assert recorder.calls[1]["kind"] == "post"
+        assert recorder.calls[1]["phase"] == "report"
+
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_PHASE"] == "report"
+        assert pre_env["CADENCE_REPORT_TYPE"] == "api-changes"
+        assert pre_env["CADENCE_BRANCH"] == "feat-x"
+        assert pre_env["CADENCE_TASK_NAME"] == "feat-x"
+        assert pre_env["CADENCE_TASKS_ROOT"] == expected_tasks_root
+
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_REPORT_TYPE"] == "api-changes"
+        assert post_env["CADENCE_PHASE_RESULT"] == "success"
+        assert post_env["CADENCE_PHASE_DURATION_MS"].isdigit()
+
+        mock_run_report.assert_called_once()
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_hook_failure_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=15, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 15
+        mock_run_report.assert_not_called()
+        assert len(recorder.calls) == 1
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_post_hook_records_failure_when_run_report_raises(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.side_effect = RuntimeError("report failed")
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert len(recorder.calls) == 2
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_PHASE_RESULT"] == "failure"
+
+
+class TestRunReportTestCasesModeHooks:
+    @staticmethod
+    def _setup_mock_service(
+        *,
+        branch: str = "feat-x",
+        is_default: bool = False,
+    ) -> MagicMock:
+        svc = MagicMock()
+        svc.current_branch.return_value = branch
+        svc.is_default_branch.return_value = is_default
+        svc.root.return_value = "/repo"
+        return svc
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_and_post_called_with_test_cases_report_type(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-test-cases.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.return_value = True
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_test_cases_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert len(recorder.calls) == 2
+        pre_env = recorder.calls[0]["env"]
+        assert pre_env["CADENCE_PHASE"] == "report"
+        assert pre_env["CADENCE_REPORT_TYPE"] == "test-cases"
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_REPORT_TYPE"] == "test-cases"
+        assert post_env["CADENCE_PHASE_RESULT"] == "success"
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_pre_hook_failure_aborts(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.hooks import HookOutcome
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-test-cases.txt")
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+
+        recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=21, timed_out=False)])
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_test_cases_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 21
+        mock_run_report.assert_not_called()
+        mock_log.close.assert_called_once_with(success=False)
+
+    @patch("cadence.cli.run_hook")
+    @patch("cadence.cli.run_report")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_post_hook_records_failure_when_run_report_raises(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_run_report: MagicMock,
+        mock_run_hook: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-test-cases.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_executor_cls.return_value = MagicMock()
+        mock_run_report.side_effect = RuntimeError("report failed")
+
+        recorder = HookRecorder()
+        mock_run_hook.side_effect = recorder
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_report_test_cases_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        assert len(recorder.calls) == 2
+        post_env = recorder.calls[1]["env"]
+        assert post_env["CADENCE_PHASE_RESULT"] == "failure"
+        assert post_env["CADENCE_REPORT_TYPE"] == "test-cases"

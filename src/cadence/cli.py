@@ -24,6 +24,7 @@ from cadence.config import (
 )
 from cadence.executor.claude_executor import ClaudeExecutor
 from cadence.git import DiffStats, Service
+from cadence.hooks import run_hook
 from cadence.input import ParallelAbortCollector, TerminalCollector, ask_yes_no
 from cadence.processor.prompts import build_squash_commit_prompt
 from cadence.processor.reporter import run_report
@@ -375,6 +376,76 @@ def _setup_runtime(
     return cfg, holder, colors, git_svc, factory, cfg.default_branch, local_dir
 
 
+def _build_hook_env(
+    phase: str,
+    *,
+    branch: str,
+    tasks_root: str,
+    task_name: str = "",
+    report_type: str = "",
+) -> dict[str, str]:
+    return {
+        "CADENCE_PHASE": phase,
+        "CADENCE_BRANCH": branch,
+        "CADENCE_TASK_NAME": task_name,
+        "CADENCE_TASKS_ROOT": os.path.abspath(tasks_root),
+        "CADENCE_REPORT_TYPE": report_type,
+    }
+
+
+def _invoke_pre_hook(
+    phase: str,
+    *,
+    cfg: Config,
+    repo_root: str,
+    env: dict[str, str],
+    logger: Logger,
+) -> None:
+    hook_env = {**env, "CADENCE_HOOK": "pre"}
+    outcome = run_hook(
+        phase=phase,
+        kind="pre",
+        hooks_dir=cfg.hooks_dir,
+        enabled=cfg.hooks_enabled,
+        env=hook_env,
+        cwd=repo_root,
+        logger=logger,
+        timeout=cfg.hooks_timeout_seconds,
+    )
+    if outcome.failed:
+        raise SystemExit(outcome.exit_code)
+
+
+def _invoke_post_hook(
+    phase: str,
+    *,
+    cfg: Config,
+    repo_root: str,
+    env: dict[str, str],
+    logger: Logger,
+    success: bool,
+    duration_ms: int,
+) -> None:
+    hook_env = {
+        **env,
+        "CADENCE_HOOK": "post",
+        "CADENCE_PHASE_RESULT": "success" if success else "failure",
+        "CADENCE_PHASE_DURATION_MS": str(duration_ms),
+    }
+    outcome = run_hook(
+        phase=phase,
+        kind="post",
+        hooks_dir=cfg.hooks_dir,
+        enabled=cfg.hooks_enabled,
+        env=hook_env,
+        cwd=repo_root,
+        logger=logger,
+        timeout=cfg.hooks_timeout_seconds,
+    )
+    if outcome.failed:
+        logger.warn("post-%s hook exited %d", phase, outcome.exit_code)
+
+
 def display_stats(stats: DiffStats, elapsed: str, branch: str) -> None:
     typer.echo(
         f"branch: {branch}  elapsed: {elapsed}  "
@@ -391,7 +462,7 @@ def run_plan_mode(
 ) -> None:
     content = _read_plan_file(plan_file)
 
-    cfg, holder, colors, _git_svc, factory, default_branch, local_dir = _setup_runtime(
+    cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
         config,
         plan_file,
         repo_path=repo_path if repo_path is not None else ".",
@@ -446,21 +517,43 @@ def run_plan_mode(
         holder=holder,
     )
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "plan",
+        branch="",
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(plan_file.parent.name),
+    )
+
     run_success = False
     try:
-        runner = Runner(ctx, cfg, deps)
-        run_success = runner.run()
-        if run_success and repo_path is None:
-            typer.echo(f"run: cadence task {plan_path}")
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except UserAbortedError:
-        log.print("aborted by user")
-        return
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+        _invoke_pre_hook("plan", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
+        try:
+            runner = Runner(ctx, cfg, deps)
+            run_success = runner.run()
+            if run_success and repo_path is None:
+                typer.echo(f"run: cadence task {plan_path}")
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except UserAbortedError:
+            log.print("aborted by user")
+            return
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "plan",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 
@@ -581,31 +674,53 @@ def run_task_mode(
     break_event = threading.Event()
     _install_sigquit(break_event)
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "task",
+        branch=branch,
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(branch),
+    )
+
     run_success = False
     try:
-        runner = Runner(ctx, cfg, deps)
-        runner.set_break_event(break_event)
-        runner.set_pause_handler(_make_pause_handler(log))
-        runner.set_git_checker(git_svc)
+        _invoke_pre_hook("task", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
+        try:
+            runner = Runner(ctx, cfg, deps)
+            runner.set_break_event(break_event)
+            runner.set_pause_handler(_make_pause_handler(log))
+            runner.set_git_checker(git_svc)
 
-        run_success = runner.run()
-        if run_success:
-            stats = git_svc.diff_stats(default_branch)
-            try:
-                git_svc.mark_plan_completed(plan_path_str)
-            except (RuntimeError, OSError) as exc:
-                log.warn("could not mark plan completed: %s", exc)
-            if repo_path is None:
-                display_stats(stats, log.elapsed(), branch)
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except UserAbortedError:
-        log.print("aborted by user")
-        return
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+            run_success = runner.run()
+            if run_success:
+                stats = git_svc.diff_stats(default_branch)
+                try:
+                    git_svc.mark_plan_completed(plan_path_str)
+                except (RuntimeError, OSError) as exc:
+                    log.warn("could not mark plan completed: %s", exc)
+                if repo_path is None:
+                    display_stats(stats, log.elapsed(), branch)
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except UserAbortedError:
+            log.print("aborted by user")
+            return
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "task",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 
@@ -667,26 +782,48 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
     break_event = threading.Event()
     _install_sigquit(break_event)
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "review",
+        branch=branch,
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(branch) if branch else "",
+    )
+
     run_success = False
     try:
-        runner = Runner(ctx, cfg, deps)
-        runner.set_break_event(break_event)
-        runner.set_pause_handler(_make_pause_handler(log))
-        runner.set_git_checker(git_svc)
+        _invoke_pre_hook("review", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
+        try:
+            runner = Runner(ctx, cfg, deps)
+            runner.set_break_event(break_event)
+            runner.set_pause_handler(_make_pause_handler(log))
+            runner.set_git_checker(git_svc)
 
-        run_success = runner.run()
-        if run_success:
-            stats = git_svc.diff_stats(default_branch)
-            display_stats(stats, log.elapsed(), branch)
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except UserAbortedError:
-        log.print("aborted by user")
-        return
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+            run_success = runner.run()
+            if run_success:
+                stats = git_svc.diff_stats(default_branch)
+                display_stats(stats, log.elapsed(), branch)
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except UserAbortedError:
+            log.print("aborted by user")
+            return
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "review",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 
@@ -786,37 +923,59 @@ def run_squash_mode(
 
     claude = factory(log, cfg.task_model)
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "squash",
+        branch=branch,
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(branch),
+    )
+
     run_success = False
     try:
-        result = claude.run(prompt)
-        if result.idle_timed_out:
-            log.error("claude idle-timed out before producing a commit message")
-            raise SystemExit(1)
-        if result.error is not None:
-            log.error("claude error: %s", result.error)
-            raise SystemExit(1)
-        message = parse_squash_commit_message(result.output or "")
-        if not message:
-            log.error("claude did not return a commit message")
-            raise SystemExit(1)
-        if git_svc.is_dirty():
-            log.error("working tree was modified during squash; aborting")
-            raise SystemExit(1)
+        _invoke_pre_hook("squash", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
         try:
-            git_svc.squash_commits(default_branch, message)
-        except RuntimeError as exc:
-            log.error("squash failed: %s", exc)
-            raise SystemExit(1) from None
-        stats = git_svc.diff_stats(default_branch)
-        if repo_path is None:
-            display_stats(stats, log.elapsed(), branch)
-        run_success = True
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+            result = claude.run(prompt)
+            if result.idle_timed_out:
+                log.error("claude idle-timed out before producing a commit message")
+                raise SystemExit(1)
+            if result.error is not None:
+                log.error("claude error: %s", result.error)
+                raise SystemExit(1)
+            message = parse_squash_commit_message(result.output or "")
+            if not message:
+                log.error("claude did not return a commit message")
+                raise SystemExit(1)
+            if git_svc.is_dirty():
+                log.error("working tree was modified during squash; aborting")
+                raise SystemExit(1)
+            try:
+                git_svc.squash_commits(default_branch, message)
+            except RuntimeError as exc:
+                log.error("squash failed: %s", exc)
+                raise SystemExit(1) from None
+            stats = git_svc.diff_stats(default_branch)
+            if repo_path is None:
+                display_stats(stats, log.elapsed(), branch)
+            run_success = True
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "squash",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 
@@ -886,32 +1045,55 @@ def run_report_api_changes_mode(
     model = cfg.report_api_changes_model or cfg.review_model
     claude = factory(log, model)
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "report",
+        branch=branch,
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(branch),
+        report_type="api-changes",
+    )
+
     run_success = False
     try:
-        run_success = run_report(
-            "api-changes",
-            base=default_branch,
-            stdout_only=stdout_only,
-            executor=claude,
-            git_svc=git_svc,
-            logger=log,
-            local_dir=local_dir,
-            public_api_paths=cfg.public_api_paths,
-            branch=branch,
-            default_branch=default_branch,
-            report_path=report_path,
-        )
-        if run_success and not stdout_only:
-            typer.echo(f"wrote: {report_path}")
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except RuntimeError as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from None
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+        _invoke_pre_hook("report", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
+        try:
+            run_success = run_report(
+                "api-changes",
+                base=default_branch,
+                stdout_only=stdout_only,
+                executor=claude,
+                git_svc=git_svc,
+                logger=log,
+                local_dir=local_dir,
+                public_api_paths=cfg.public_api_paths,
+                branch=branch,
+                default_branch=default_branch,
+                report_path=report_path,
+            )
+            if run_success and not stdout_only:
+                typer.echo(f"wrote: {report_path}")
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except RuntimeError as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from None
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "report",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 
@@ -981,32 +1163,55 @@ def run_report_test_cases_mode(
     model = cfg.report_test_cases_model or cfg.review_model
     claude = factory(log, model)
 
+    repo_root = git_svc.root()
+    hook_env = _build_hook_env(
+        "report",
+        branch=branch,
+        tasks_root=cfg.tasks_root,
+        task_name=sanitize_plan_name(branch),
+        report_type="test-cases",
+    )
+
     run_success = False
     try:
-        run_success = run_report(
-            "test-cases",
-            base=default_branch,
-            stdout_only=stdout_only,
-            executor=claude,
-            git_svc=git_svc,
-            logger=log,
-            local_dir=local_dir,
-            public_api_paths=cfg.public_api_paths,
-            branch=branch,
-            default_branch=default_branch,
-            report_path=report_path,
-        )
-        if run_success and not stdout_only:
-            typer.echo(f"wrote: {report_path}")
-    except KeyboardInterrupt:
-        log.print("interrupted by user")
-        return
-    except RuntimeError as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from None
-    except Exception as exc:
-        log.error("execution failed: %s", exc)
-        raise SystemExit(1) from exc
+        _invoke_pre_hook("report", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
+        start = time.monotonic()
+        try:
+            run_success = run_report(
+                "test-cases",
+                base=default_branch,
+                stdout_only=stdout_only,
+                executor=claude,
+                git_svc=git_svc,
+                logger=log,
+                local_dir=local_dir,
+                public_api_paths=cfg.public_api_paths,
+                branch=branch,
+                default_branch=default_branch,
+                report_path=report_path,
+            )
+            if run_success and not stdout_only:
+                typer.echo(f"wrote: {report_path}")
+        except KeyboardInterrupt:
+            log.print("interrupted by user")
+            return
+        except RuntimeError as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from None
+        except Exception as exc:
+            log.error("execution failed: %s", exc)
+            raise SystemExit(1) from exc
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            _invoke_post_hook(
+                "report",
+                cfg=cfg,
+                repo_root=repo_root,
+                env=hook_env,
+                logger=log,
+                success=run_success,
+                duration_ms=duration_ms,
+            )
     finally:
         log.close(success=run_success)
 

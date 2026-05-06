@@ -51,6 +51,9 @@ class TestConfigDefaults:
         assert cfg.report_api_changes_model == ""
         assert cfg.report_test_cases_model == ""
         assert cfg.public_api_paths == []
+        assert cfg.hooks_dir == ".cadence/hooks"
+        assert cfg.hooks_timeout_seconds == 60
+        assert cfg.hooks_enabled is True
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -181,6 +184,22 @@ class TestLoadConfig:
         yaml_path.write_text("claude_command: x\n")
         cfg = load_config(tmp_path)
         assert cfg.report_test_cases_model == ""
+
+    def test_load_hooks_fields(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(
+            "hooks_dir: custom/path\nhooks_timeout_seconds: 30\nhooks_enabled: false\n"
+        )
+        cfg = load_config(tmp_path)
+        assert cfg.hooks_dir == "custom/path"
+        assert cfg.hooks_timeout_seconds == 30
+        assert cfg.hooks_enabled is False
+
+    def test_invalid_hooks_timeout_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("hooks_timeout_seconds: not-a-number\n")
+        with pytest.raises(ValueError):
+            load_config(tmp_path)
 
     def test_load_colors(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

@@ -76,6 +76,9 @@ class Config:
         ]
     )
     public_api_paths: list[str] = field(default_factory=list)
+    hooks_dir: str = ".cadence/hooks"
+    hooks_timeout_seconds: int = 60
+    hooks_enabled: bool = True
     colors: ColorConfig = field(default_factory=ColorConfig)
 
 
@@ -133,11 +136,16 @@ def load_config(config_dir: Path | None) -> Config:
         "init_prompt_name",
         "commit_trailer",
         "commit_format",
+        "hooks_dir",
     }
     _INT_FIELDS = {
         "iteration_delay_ms",
         "task_retry_count",
         "max_iterations",
+        "hooks_timeout_seconds",
+    }
+    _BOOL_FIELDS = {
+        "hooks_enabled",
     }
     _LIST_FIELDS = {
         "claude_error_patterns",
@@ -152,6 +160,10 @@ def load_config(config_dir: Path | None) -> Config:
     for key in _INT_FIELDS:
         if key in data:
             setattr(cfg, key, int(data[key]))
+
+    for key in _BOOL_FIELDS:
+        if key in data:
+            setattr(cfg, key, bool(data[key]))
 
     for key in _LIST_FIELDS:
         if key in data:
