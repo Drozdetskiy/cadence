@@ -39,6 +39,12 @@ from cadence.processor.signals import parse_squash_commit_message
 from cadence.progress.colors import Colors
 from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
 from cadence.status import Mode, PhaseHolder
+from cadence.usage import (
+    UsageStats,
+    estimate_cost,
+    format_chain_summary,
+    format_phase_summary,
+)
 
 
 @dataclass(frozen=True)
@@ -459,6 +465,7 @@ def run_plan_mode(
     config: Path | None = None,
     repo_path: str | None = None,
     input_collector: InputCollector | None = None,
+    chain_collector: UsageStats | None = None,
 ) -> None:
     content = _read_plan_file(plan_file)
 
@@ -515,6 +522,9 @@ def run_plan_mode(
         input_collector=input_collector if input_collector is not None else TerminalCollector(),
         logger=log,
         holder=holder,
+        plan_model=cfg.plan_model,
+        task_model=cfg.task_model,
+        review_model=cfg.review_model,
     )
 
     repo_root = git_svc.root()
@@ -531,6 +541,8 @@ def run_plan_mode(
         start = time.monotonic()
         try:
             runner = Runner(ctx, cfg, deps)
+            if chain_collector is not None:
+                runner.set_chain_collector(chain_collector)
             run_success = runner.run()
             if run_success and repo_path is None:
                 typer.echo(f"run: cadence task {plan_path}")
@@ -590,6 +602,7 @@ def run_task_mode(
     *,
     config: Path | None = None,
     repo_path: str | None = None,
+    chain_collector: UsageStats | None = None,
 ) -> None:
     if not task_file.is_file():
         typer.echo(f"error: file not found: {task_file}", err=True)
@@ -660,6 +673,9 @@ def run_task_mode(
         logger=log,
         holder=holder,
         review_executor=review_claude,
+        plan_model=cfg.plan_model,
+        task_model=cfg.task_model,
+        review_model=cfg.review_model,
     )
 
     ctx = RunContext(
@@ -691,6 +707,8 @@ def run_task_mode(
             runner.set_break_event(break_event)
             runner.set_pause_handler(_make_pause_handler(log))
             runner.set_git_checker(git_svc)
+            if chain_collector is not None:
+                runner.set_chain_collector(chain_collector)
 
             run_success = runner.run()
             if run_success:
@@ -768,6 +786,9 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
+        plan_model=cfg.plan_model,
+        task_model=cfg.task_model,
+        review_model=cfg.review_model,
     )
 
     ctx = RunContext(
@@ -832,6 +853,7 @@ def run_squash_mode(
     *,
     config: Path | None = None,
     repo_path: str | None = None,
+    chain_collector: UsageStats | None = None,
 ) -> None:
     cfg, holder, colors, git_svc, factory, default_branch, local_dir = _setup_runtime(
         config,
@@ -932,11 +954,18 @@ def run_squash_mode(
     )
 
     run_success = False
+    phase_stats = UsageStats()
+    phase_model = cfg.task_model
     try:
         _invoke_pre_hook("squash", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
         start = time.monotonic()
         try:
+            iter_start = time.monotonic()
             result = claude.run(prompt)
+            iter_ms = int((time.monotonic() - iter_start) * 1000)
+            phase_stats.add(result.usage, duration_ms=iter_ms)
+            if result.model:
+                phase_model = result.model
             if result.idle_timed_out:
                 log.error("claude idle-timed out before producing a commit message")
                 raise SystemExit(1)
@@ -967,6 +996,20 @@ def run_squash_mode(
             raise SystemExit(1) from exc
         finally:
             duration_ms = int((time.monotonic() - start) * 1000)
+            if cfg.print_usage:
+                cost = estimate_cost(phase_stats, phase_model)
+                phase_stats.set_cost(cost)
+                log.print(
+                    "%s",
+                    format_phase_summary(
+                        phase_stats,
+                        phase_model,
+                        "squash",
+                        cost_estimates=cfg.cost_estimates,
+                    ),
+                )
+                if chain_collector is not None:
+                    chain_collector.merge(phase_stats)
             _invoke_post_hook(
                 "squash",
                 cfg=cfg,
@@ -978,6 +1021,45 @@ def run_squash_mode(
             )
     finally:
         log.close(success=run_success)
+
+
+class _ReportPhaseTracker:
+    def __init__(self, inner: object, phase_stats: UsageStats) -> None:
+        self._inner = inner
+        self._phase_stats = phase_stats
+        self.last_model: str = ""
+
+    def run(self, prompt: str) -> object:
+        iter_start = time.monotonic()
+        result = self._inner.run(prompt)  # type: ignore[attr-defined]
+        iter_ms = int((time.monotonic() - iter_start) * 1000)
+        self._phase_stats.add(result.usage, duration_ms=iter_ms)
+        if result.model:
+            self.last_model = result.model
+        return result
+
+
+def _emit_report_phase_summary(
+    *,
+    cfg: Config,
+    log: Logger,
+    phase_stats: UsageStats,
+    phase_model: str,
+    phase_label: str,
+) -> None:
+    if not cfg.print_usage:
+        return
+    cost = estimate_cost(phase_stats, phase_model)
+    phase_stats.set_cost(cost)
+    log.print(
+        "%s",
+        format_phase_summary(
+            phase_stats,
+            phase_model,
+            phase_label,
+            cost_estimates=cfg.cost_estimates,
+        ),
+    )
 
 
 def run_report_api_changes_mode(
@@ -1044,6 +1126,8 @@ def run_report_api_changes_mode(
 
     model = cfg.report_api_changes_model or cfg.review_model
     claude = factory(log, model)
+    phase_stats = UsageStats()
+    tracker = _ReportPhaseTracker(claude, phase_stats)
 
     repo_root = git_svc.root()
     hook_env = _build_hook_env(
@@ -1063,7 +1147,7 @@ def run_report_api_changes_mode(
                 "api-changes",
                 base=default_branch,
                 stdout_only=stdout_only,
-                executor=claude,
+                executor=tracker,  # type: ignore[arg-type]
                 git_svc=git_svc,
                 logger=log,
                 local_dir=local_dir,
@@ -1085,6 +1169,13 @@ def run_report_api_changes_mode(
             raise SystemExit(1) from exc
         finally:
             duration_ms = int((time.monotonic() - start) * 1000)
+            _emit_report_phase_summary(
+                cfg=cfg,
+                log=log,
+                phase_stats=phase_stats,
+                phase_model=tracker.last_model or model,
+                phase_label="report-api-changes",
+            )
             _invoke_post_hook(
                 "report",
                 cfg=cfg,
@@ -1162,6 +1253,8 @@ def run_report_test_cases_mode(
 
     model = cfg.report_test_cases_model or cfg.review_model
     claude = factory(log, model)
+    phase_stats = UsageStats()
+    tracker = _ReportPhaseTracker(claude, phase_stats)
 
     repo_root = git_svc.root()
     hook_env = _build_hook_env(
@@ -1181,7 +1274,7 @@ def run_report_test_cases_mode(
                 "test-cases",
                 base=default_branch,
                 stdout_only=stdout_only,
-                executor=claude,
+                executor=tracker,  # type: ignore[arg-type]
                 git_svc=git_svc,
                 logger=log,
                 local_dir=local_dir,
@@ -1203,6 +1296,13 @@ def run_report_test_cases_mode(
             raise SystemExit(1) from exc
         finally:
             duration_ms = int((time.monotonic() - start) * 1000)
+            _emit_report_phase_summary(
+                cfg=cfg,
+                log=log,
+                phase_stats=phase_stats,
+                phase_model=tracker.last_model or model,
+                phase_label="report-test-cases",
+            )
             _invoke_post_hook(
                 "report",
                 cfg=cfg,
@@ -1343,6 +1443,7 @@ def _run_plan_on_current_branch(
     config: Path | None,
     repo_path: str | None = None,
     input_collector: InputCollector | None = None,
+    chain_collector: UsageStats | None = None,
 ) -> None:
     cfg, _branch, task_dir = _resolve_current_task_dir(config, repo_path=repo_path)
 
@@ -1360,6 +1461,7 @@ def _run_plan_on_current_branch(
         config=config,
         repo_path=repo_path,
         input_collector=input_collector,
+        chain_collector=chain_collector,
     )
 
 
@@ -1367,6 +1469,7 @@ def _run_task_on_current_branch(
     *,
     config: Path | None,
     repo_path: str | None = None,
+    chain_collector: UsageStats | None = None,
 ) -> None:
     _cfg, _branch, task_dir = _resolve_current_task_dir(config, repo_path=repo_path)
 
@@ -1375,7 +1478,7 @@ def _run_task_on_current_branch(
         typer.echo(f"error: plan file not found: {plan_file}", err=True)
         raise SystemExit(2)
 
-    run_task_mode(plan_file, config=config, repo_path=repo_path)
+    run_task_mode(plan_file, config=config, repo_path=repo_path, chain_collector=chain_collector)
 
 
 def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
@@ -1409,6 +1512,17 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
         raise SystemExit(2)
 
     total = len(names)
+    chain_stats = UsageStats()
+
+    def _emit_chain_summary() -> None:
+        if cfg.print_usage:
+            typer.echo(
+                format_chain_summary(
+                    chain_stats,
+                    cost_estimates=cfg.cost_estimates,
+                    tasks=total,
+                )
+            )
 
     def _bail_if_interrupted(i: int, name: str) -> None:
         if _sigint.shutdown_event.is_set():
@@ -1423,11 +1537,11 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                 git_svc.checkout_branch(name)
             else:
                 git_svc.create_branch_from(name, task_default)
-            _run_plan_on_current_branch(config=config)
+            _run_plan_on_current_branch(config=config, chain_collector=chain_stats)
             _bail_if_interrupted(i, name)
-            _run_task_on_current_branch(config=config)
+            _run_task_on_current_branch(config=config, chain_collector=chain_stats)
             _bail_if_interrupted(i, name)
-            run_squash_mode(config=config)
+            run_squash_mode(config=config, chain_collector=chain_stats)
             _bail_if_interrupted(i, name)
         except SystemExit as exc:
             if exc.code != 0 and not _sigint.shutdown_event.is_set():
@@ -1435,6 +1549,7 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                     f"chain failed at task {i}/{total}: {name}",
                     err=True,
                 )
+            _emit_chain_summary()
             raise
         except RuntimeError as exc:
             typer.echo(f"error: {exc}", err=True)
@@ -1442,9 +1557,11 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                 f"chain failed at task {i}/{total}: {name}",
                 err=True,
             )
+            _emit_chain_summary()
             raise SystemExit(1) from None
 
     typer.echo(f"chain complete: {total} task(s)")
+    _emit_chain_summary()
 
 
 @dataclass(frozen=True)
@@ -1454,6 +1571,7 @@ class _ParallelTaskResult:
     phase: str = ""
     elapsed: str = ""
     error: str = ""
+    usage: UsageStats | None = None
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -1482,8 +1600,10 @@ def _run_parallel_worker(
     tasks_root: str,
     stop_event: threading.Event,
 ) -> _ParallelTaskResult:
+    worker_stats = UsageStats()
+
     if stop_event.is_set():
-        return _ParallelTaskResult(name=name, status="cancelled")
+        return _ParallelTaskResult(name=name, status="cancelled", usage=worker_stats)
 
     start = time.monotonic()
     _chain_echo(f"[chain] {name}: started")
@@ -1509,7 +1629,12 @@ def _run_parallel_worker(
             msg += f": {detail}"
         _chain_echo(msg)
         return _ParallelTaskResult(
-            name=name, status="failed", phase=phase, elapsed=elapsed, error=detail or str(exc)
+            name=name,
+            status="failed",
+            phase=phase,
+            elapsed=elapsed,
+            error=detail or str(exc),
+            usage=worker_stats,
         )
 
     try:
@@ -1519,7 +1644,12 @@ def _run_parallel_worker(
         elapsed = _format_elapsed(time.monotonic() - start)
         _chain_echo(f"[chain] {name}: failed at worktree_add ({elapsed}): {exc}")
         return _ParallelTaskResult(
-            name=name, status="failed", phase="worktree_add", elapsed=elapsed, error=str(exc)
+            name=name,
+            status="failed",
+            phase="worktree_add",
+            elapsed=elapsed,
+            error=str(exc),
+            usage=worker_stats,
         )
 
     try:
@@ -1527,17 +1657,26 @@ def _run_parallel_worker(
             config=config,
             repo_path=worktree_path,
             input_collector=ParallelAbortCollector(),
+            chain_collector=worker_stats,
         )
     except BaseException as exc:
         return fail("plan", exc)
 
     try:
-        _run_task_on_current_branch(config=config, repo_path=worktree_path)
+        _run_task_on_current_branch(
+            config=config,
+            repo_path=worktree_path,
+            chain_collector=worker_stats,
+        )
     except BaseException as exc:
         return fail("task", exc)
 
     try:
-        run_squash_mode(config=config, repo_path=worktree_path)
+        run_squash_mode(
+            config=config,
+            repo_path=worktree_path,
+            chain_collector=worker_stats,
+        )
     except BaseException as exc:
         return fail("squash", exc)
 
@@ -1547,7 +1686,7 @@ def _run_parallel_worker(
     except RuntimeError as rm_exc:
         _chain_echo(f"[chain] {name}: warn: worktree remove failed: {rm_exc}", err=True)
     _chain_echo(f"[chain] {name}: completed ({elapsed})")
-    return _ParallelTaskResult(name=name, status="ok", elapsed=elapsed)
+    return _ParallelTaskResult(name=name, status="ok", elapsed=elapsed, usage=worker_stats)
 
 
 def run_chain_parallel(
@@ -1660,6 +1799,19 @@ def run_chain_parallel(
 
     succeeded = sum(1 for r in results.values() if r.status == "ok")
     _chain_echo(f"[chain] complete: {succeeded}/{total} succeeded")
+
+    if cfg.print_usage:
+        chain_stats = UsageStats()
+        for r in results.values():
+            if r.usage is not None:
+                chain_stats.merge(r.usage)
+        _chain_echo(
+            format_chain_summary(
+                chain_stats,
+                cost_estimates=cfg.cost_estimates,
+                tasks=total,
+            )
+        )
 
     if any(r.status == "failed" for r in results.values()):
         raise SystemExit(1)

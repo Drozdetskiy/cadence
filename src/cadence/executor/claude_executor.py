@@ -20,6 +20,7 @@ from cadence.executor.events import (
     TextContent,
     TextDelta,
     ToolUseBlock,
+    Usage,
     parse_event,
 )
 from cadence.executor.process_group import ProcessGroupCleanup
@@ -44,6 +45,9 @@ class Result:
     signal: str = ""
     error: Exception | None = None
     idle_timed_out: bool = False
+    usage: Usage | None = None
+    session_id: str = ""
+    model: str = ""
 
 
 class PatternMatchError(Exception):
@@ -324,6 +328,11 @@ class ClaudeExecutor:
             and isinstance(event.content_block, ToolUseBlock)
         ):
             self._activity_handler(event.content_block.name)
+
+        if isinstance(event, ResultEvent):
+            result.usage = event.usage
+            result.session_id = event.session_id
+            result.model = event.model
 
         text = _extract_text_from_event(event)
         if text:

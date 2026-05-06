@@ -54,6 +54,8 @@ class TestConfigDefaults:
         assert cfg.hooks_dir == ".cadence/hooks"
         assert cfg.hooks_timeout_seconds == 60
         assert cfg.hooks_enabled is True
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -194,6 +196,27 @@ class TestLoadConfig:
         assert cfg.hooks_dir == "custom/path"
         assert cfg.hooks_timeout_seconds == 30
         assert cfg.hooks_enabled is False
+
+    def test_load_usage_flags_false(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("print_usage: false\ncost_estimates: false\n")
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is False
+        assert cfg.cost_estimates is False
+
+    def test_default_usage_flags_when_yaml_missing_keys(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
+
+    def test_non_bool_yaml_value_coerced_to_true(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text('print_usage: "no"\ncost_estimates: "no"\n')
+        cfg = load_config(tmp_path)
+        assert cfg.print_usage is True
+        assert cfg.cost_estimates is True
 
     def test_invalid_hooks_timeout_raises(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"

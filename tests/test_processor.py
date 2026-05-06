@@ -13,6 +13,7 @@ from cadence.executor.claude_executor import (
     PatternMatchError,
     Result,
 )
+from cadence.executor.events import Usage
 from cadence.processor.prompts import (
     append_commit_trailer_instruction,
     build_plan_prompt,
@@ -34,6 +35,7 @@ from cadence.status import (
     SignalPlanReady,
     SignalReviewDone,
 )
+from cadence.usage import UsageStats
 
 
 class TestNormalizeCrlf:
@@ -1019,3 +1021,285 @@ class TestReviewExecutorRouting:
         runner, _log, _ = _make_review_runner(executor)
         # No review_executor; property should return the primary one.
         assert runner._review_executor is executor
+
+
+def _flatten_print_calls(log: MagicMock) -> str:
+    return "\n".join(" ".join(str(a) for a in call.args) for call in log.print.call_args_list)
+
+
+_FAKE_USAGE = Usage(
+    input_tokens=100,
+    output_tokens=50,
+    cache_read_tokens=200,
+    cache_creation_tokens=10,
+)
+
+
+class TestRunnerUsageSummaries:
+    def _make_task_runner_with_models(
+        self,
+        executor: object,
+        plan: Path,
+        *,
+        app_cfg: AppConfig | None = None,
+        task_model: str = "claude-opus-4-7",
+    ) -> tuple[Runner, MagicMock]:
+        ctx = RunContext(mode=Mode.FULL, plan_file=str(plan))
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        holder = PhaseHolder()
+        deps = Dependencies(
+            executor=executor,  # type: ignore[arg-type]
+            input_collector=MagicMock(),
+            logger=log,
+            holder=holder,
+            task_model=task_model,
+        )
+        cfg = app_cfg or AppConfig(max_iterations=10, iteration_delay_ms=0)
+        return Runner(ctx, cfg, deps), log
+
+    def test_iteration_and_phase_summary_emitted(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            session_id="abc123",
+            model="claude-opus-4-7",
+        )
+        runner, log = self._make_task_runner_with_models(executor, plan)
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "iter 1 done in" in printed
+        assert "phase task done in" in printed
+        assert "session abc123" in printed
+
+    def test_print_usage_false_suppresses_summary(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0, print_usage=False)
+        runner, log = self._make_task_runner_with_models(executor, plan, app_cfg=cfg)
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "iter " not in printed
+        assert "phase " not in printed
+
+    def test_missing_usage_renders_unavailable(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=None,
+            model="claude-opus-4-7",
+        )
+        runner, log = self._make_task_runner_with_models(executor, plan)
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "usage unavailable" in printed
+
+    def test_unknown_model_renders_question_mark_cost(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            model="claude-mystery-9-9",
+        )
+        runner, log = self._make_task_runner_with_models(
+            executor, plan, task_model="claude-mystery-9-9"
+        )
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "cost ≈ ?" in printed
+        # Token counts are still present on the iteration line.
+        assert "in 100" in printed
+        assert "out 50" in printed
+
+    def test_cost_estimates_false_drops_cost_keeps_tokens(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0, cost_estimates=False)
+        runner, log = self._make_task_runner_with_models(executor, plan, app_cfg=cfg)
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "cost" not in printed
+        assert "in 100" in printed
+        assert "out 50" in printed
+
+    def test_chain_collector_receives_phase_stats(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        runner, _ = self._make_task_runner_with_models(executor, plan)
+        chain = UsageStats()
+        runner.set_chain_collector(chain)
+
+        runner.run_task_phase()
+
+        assert chain.iterations == 1
+        assert chain.input == 100
+        assert chain.output == 50
+        assert chain.had_usage is True
+        assert chain.cost_known is True
+
+    def test_phase_summary_emitted_on_executor_exception(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_PENDING)
+        executor = MagicMock()
+        boom = RuntimeError("kaboom")
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=boom,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        runner, log = self._make_task_runner_with_models(executor, plan)
+
+        with pytest.raises(RuntimeError, match="kaboom"):
+            runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "phase task done in" in printed
+
+    def test_iteration_uses_configured_model_when_result_model_empty(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal=SignalCompleted,
+            usage=_FAKE_USAGE,
+            model="",
+        )
+        runner, log = self._make_task_runner_with_models(
+            executor, plan, task_model="claude-opus-4-7"
+        )
+
+        runner.run_task_phase()
+
+        printed = _flatten_print_calls(log)
+        assert "cost ≈ $" in printed
+        assert "cost ≈ ?" not in printed
+
+    def test_phase_summary_emitted_on_plan_exception(self, tmp_path: Path) -> None:
+        executor = MagicMock()
+        boom = RuntimeError("plan-boom")
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=boom,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        ctx = RunContext(mode=Mode.PLAN, plan_description="desc")
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+            plan_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=boom,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        with pytest.raises(RuntimeError, match="plan-boom"):
+            runner.run_plan_creation()
+
+        printed = _flatten_print_calls(log)
+        assert "phase plan done in" in printed
+
+    def test_phase_summary_emitted_on_review_exception(self) -> None:
+        executor = MagicMock()
+        boom = RuntimeError("review-boom")
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=boom,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        ctx = RunContext(mode=Mode.REVIEW)
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+            review_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        with pytest.raises(RuntimeError, match="review-boom"):
+            runner.run_claude_review("prompt")
+
+        printed = _flatten_print_calls(log)
+        assert "phase review done in" in printed
+
+    def test_phase_summary_emitted_on_review_loop_exception(self) -> None:
+        executor = MagicMock()
+        boom = RuntimeError("review-loop-boom")
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=boom,
+            usage=_FAKE_USAGE,
+            model="claude-opus-4-7",
+        )
+        ctx = RunContext(mode=Mode.REVIEW)
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+            review_model="claude-opus-4-7",
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+
+        with pytest.raises(RuntimeError, match="review-loop-boom"):
+            runner.run_claude_review_loop()
+
+        printed = _flatten_print_calls(log)
+        assert "phase review-loop done in" in printed

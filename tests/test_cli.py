@@ -3483,7 +3483,12 @@ class TestRunPlanSubcommand:
         mock_run_plan.assert_called_once()
         args, kwargs = mock_run_plan.call_args
         assert args[0] == Path("cdc-tasks/feat-x/init")
-        assert kwargs == {"config": None, "repo_path": None, "input_collector": None}
+        assert kwargs == {
+            "config": None,
+            "repo_path": None,
+            "input_collector": None,
+            "chain_collector": None,
+        }
 
 
 class TestRunTaskSubcommand:
@@ -3580,7 +3585,7 @@ class TestRunTaskSubcommand:
         mock_run_task.assert_called_once()
         args, kwargs = mock_run_task.call_args
         assert args[0] == Path("cdc-tasks/feat-x/plan")
-        assert kwargs == {"config": None, "repo_path": None}
+        assert kwargs == {"config": None, "repo_path": None, "chain_collector": None}
 
 
 class TestRunSquashMode:
@@ -3937,6 +3942,71 @@ class TestRunSquashMode:
         mock_svc.diff_stats.assert_called_with("main")
         mock_display.assert_called_once()
         mock_log.close.assert_called_once_with(success=True)
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_phase_summary_emitted_on_success(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.executor.events import Usage
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "feat-x.\n\nAdded: a thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output=claude_output,
+            usage=Usage(
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_tokens=200,
+                cache_creation_tokens=10,
+            ),
+            model="claude-opus-4-7",
+        )
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        printed = "\n".join(
+            " ".join(str(a) for a in call.args) for call in mock_log.print.call_args_list
+        )
+        assert "phase squash done in" in printed
 
     @patch("cadence.cli.ClaudeExecutor")
     @patch("cadence.cli.Service")
@@ -4890,7 +4960,7 @@ class TestRunChainMode:
         chain = tmp_path / "chain.txt"
         chain.write_text("a\nb\nc\n")
 
-        def side_effect(*, config: Path | None) -> None:
+        def side_effect(*, config: Path | None, chain_collector: Any = None) -> None:
             if mock_plan.call_count == 2:
                 raise SystemExit(1)
 
@@ -4944,9 +5014,22 @@ class TestRunChainMode:
         finally:
             os.chdir(original_cwd)
 
-        mock_plan.assert_called_once_with(config=cfg_path)
-        mock_task.assert_called_once_with(config=cfg_path)
-        mock_squash.assert_called_once_with(config=cfg_path)
+        from cadence.usage import UsageStats
+
+        plan_kwargs = mock_plan.call_args.kwargs
+        assert plan_kwargs["config"] == cfg_path
+        assert isinstance(plan_kwargs["chain_collector"], UsageStats)
+        task_kwargs = mock_task.call_args.kwargs
+        assert task_kwargs["config"] == cfg_path
+        assert isinstance(task_kwargs["chain_collector"], UsageStats)
+        squash_kwargs = mock_squash.call_args.kwargs
+        assert squash_kwargs["config"] == cfg_path
+        assert isinstance(squash_kwargs["chain_collector"], UsageStats)
+        assert (
+            plan_kwargs["chain_collector"]
+            is task_kwargs["chain_collector"]
+            is squash_kwargs["chain_collector"]
+        )
 
     @patch("cadence.cli.run_squash_mode")
     @patch("cadence.cli._run_task_on_current_branch")
@@ -5067,7 +5150,7 @@ class TestRunChainMode:
         chain = tmp_path / "chain.txt"
         chain.write_text("a\nb\nc\n")
 
-        def side_effect(*, config: Path | None) -> None:
+        def side_effect(*, config: Path | None, chain_collector: Any = None) -> None:
             if mock_plan.call_count == 2:
                 _sigint.shutdown_event.set()
 
@@ -5087,9 +5170,187 @@ class TestRunChainMode:
         assert mock_plan.call_count == 2
         assert mock_task.call_count == 1
         assert mock_squash.call_count == 1
-        err = capsys.readouterr().err
+        captured = capsys.readouterr()
+        err = captured.err
+        out = captured.out
         assert "chain interrupted at task 2/3: b" in err
         assert "chain failed at task 2/3" not in err
+        assert out.count("chain done in") == 1
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_summary_printed_with_summed_counts(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.executor.events import Usage
+        from cadence.usage import UsageStats
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("alpha", "beta"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\n")
+
+        def plan_se(*, config: Any, chain_collector: Any, **kw: Any) -> None:
+            assert isinstance(chain_collector, UsageStats)
+            s = UsageStats()
+            s.add(
+                Usage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    cache_read_tokens=200,
+                    cache_creation_tokens=10,
+                ),
+                duration_ms=1000,
+            )
+            chain_collector.merge(s)
+
+        mock_plan.side_effect = plan_se
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "chain done in" in out
+        assert "tasks 2" in out
+        assert "iters 2" in out
+        assert "in 200" in out
+        assert "out 100" in out
+        assert "cache_read 400" in out
+        assert "cache_create 20" in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_summary_suppressed_when_print_usage_false(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        cfg = Config(tasks_root="cdc-tasks", default_branch="main", print_usage=False)
+        mock_setup.return_value = (
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            mock_svc,
+            MagicMock(),
+            "main",
+            None,
+        )
+
+        (tmp_path / "cdc-tasks" / "alpha").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "alpha" / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "chain done in" not in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_summary_printed_when_task_fails(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.executor.events import Usage
+        from cadence.usage import UsageStats
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.return_value = False
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("a", "b"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("a\nb\n")
+
+        def plan_se(*, config: Any, chain_collector: Any, **kw: Any) -> None:
+            s = UsageStats()
+            s.add(
+                Usage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    cache_read_tokens=200,
+                    cache_creation_tokens=0,
+                ),
+                duration_ms=500,
+            )
+            chain_collector.merge(s)
+            if mock_plan.call_count == 2:
+                raise SystemExit(1)
+
+        mock_plan.side_effect = plan_se
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "chain failed at task 2/2: b" in captured.err
+        assert "chain done in" in captured.out
+        assert "tasks 2" in captured.out
+        assert "iters 2" in captured.out
+        assert "in 200" in captured.out
 
 
 class TestRunChainParallel:
@@ -5281,6 +5542,7 @@ class TestRunChainParallel:
             config: Path | None,
             repo_path: str | None = None,
             input_collector: Any = None,
+            chain_collector: Any = None,
         ) -> None:
             assert repo_path is not None
             if repo_path.endswith("/a"):
@@ -5437,6 +5699,7 @@ class TestRunChainParallel:
             config: Path | None,
             repo_path: str | None = None,
             input_collector: Any = None,
+            chain_collector: Any = None,
         ) -> None:
             captured["input_collector"] = input_collector
             assert isinstance(input_collector, ParallelAbortCollector)
@@ -5489,6 +5752,7 @@ class TestRunChainParallel:
             config: Path | None,
             repo_path: str | None = None,
             input_collector: Any = None,
+            chain_collector: Any = None,
         ) -> None:
             try:
                 raise RuntimeError("real underlying reason")
@@ -5541,6 +5805,7 @@ class TestRunChainParallel:
             config: Path | None,
             repo_path: str | None = None,
             input_collector: Any = None,
+            chain_collector: Any = None,
         ) -> None:
             raise SystemExit(1)
 
@@ -5783,6 +6048,72 @@ class TestRunChainParallel:
         assert "[chain] alpha: failed" in captured.err
         assert "disk full" in captured.err
         assert "[chain] complete: 0/1 succeeded" in captured.out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_chain_summary_aggregates_workers(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.executor.events import Usage
+        from cadence.usage import UsageStats
+
+        svc = self._make_svc(tmp_path)
+        self._make_setup_patch(mock_setup, svc)
+
+        for name in ("alpha", "beta"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\n")
+
+        def plan_se(
+            *,
+            config: Any,
+            repo_path: str | None,
+            input_collector: Any,
+            chain_collector: Any,
+        ) -> None:
+            assert isinstance(chain_collector, UsageStats)
+            s = UsageStats()
+            s.add(
+                Usage(
+                    input_tokens=100,
+                    output_tokens=50,
+                    cache_read_tokens=200,
+                    cache_creation_tokens=10,
+                ),
+                duration_ms=1000,
+            )
+            chain_collector.merge(s)
+
+        mock_plan.side_effect = plan_se
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_chain_parallel(chain, parallel=2)
+        finally:
+            os.chdir(original_cwd)
+
+        out = capsys.readouterr().out
+        assert "chain done in" in out
+        assert "tasks 2" in out
+        assert "iters 2" in out
+        assert "in 200" in out
+        assert "out 100" in out
+        assert "cache_read 400" in out
+        assert "cache_create 20" in out
 
 
 class TestComputeReportPath:
@@ -6660,6 +6991,142 @@ class TestRunReportApiChangesMode:
 
         prompt = mock_executor.run.call_args.args[0]
         assert "infer from project structure" in prompt
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_phase_summary_emitted_after_report(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.executor.events import Usage
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            public_api_paths=["src/api"],
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output=executor_output,
+            signal=SignalReportDone,
+            usage=Usage(
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_tokens=200,
+                cache_creation_tokens=10,
+            ),
+            model="claude-opus-4-7",
+        )
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        printed = [
+            (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
+            for call in mock_log.print.call_args_list
+        ]
+        summary = next((p for p in printed if "phase report-api-changes done in" in p), None)
+        assert summary is not None
+        assert "iters 1" in summary
+        assert "in 100" in summary
+        assert "out 50" in summary
+        assert "cost ≈ $" in summary
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_phase_summary_suppressed_when_print_usage_false(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+        from cadence.executor.events import Usage
+
+        mock_detect.return_value = None
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            public_api_paths=["src/api"],
+            print_usage=False,
+        )
+        mock_service_cls.return_value = self._setup_mock_service()
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-report-api-changes.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        body = "# API changes: feat-x vs main"
+        executor_output = (
+            f"<<<CADENCE:REPORT_BEGIN>>>\n{body}\n<<<CADENCE:REPORT_END>>>\n{SignalReportDone}\n"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(
+            output=executor_output,
+            signal=SignalReportDone,
+            usage=Usage(
+                input_tokens=100,
+                output_tokens=50,
+                cache_read_tokens=200,
+                cache_creation_tokens=10,
+            ),
+            model="claude-opus-4-7",
+        )
+        mock_executor_cls.return_value = mock_executor
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_report_api_changes_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        printed = [
+            (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
+            for call in mock_log.print.call_args_list
+        ]
+        assert not any("phase report-api-changes done in" in p for p in printed)
 
 
 class TestComputeReportPathTestCases:

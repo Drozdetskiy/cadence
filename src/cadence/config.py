@@ -79,6 +79,8 @@ class Config:
     hooks_dir: str = ".cadence/hooks"
     hooks_timeout_seconds: int = 60
     hooks_enabled: bool = True
+    print_usage: bool = True
+    cost_estimates: bool = True
     colors: ColorConfig = field(default_factory=ColorConfig)
 
 
@@ -146,6 +148,8 @@ def load_config(config_dir: Path | None) -> Config:
     }
     _BOOL_FIELDS = {
         "hooks_enabled",
+        "print_usage",
+        "cost_estimates",
     }
     _LIST_FIELDS = {
         "claude_error_patterns",
