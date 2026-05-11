@@ -178,6 +178,7 @@ claude_args: "--dangerously-skip-permissions --verbose"
 plan_model:                claude-opus-4-7
 task_model:                claude-opus-4-7
 review_model:              claude-opus-4-7
+squash_model:              claude-sonnet-4-6
 report_api_changes_model:  ""           # empty = fall back to review_model
 report_test_cases_model:   ""           # empty = fall back to review_model
 
@@ -241,12 +242,26 @@ task:
   model: claude-opus-4-7
 review:
   model: claude-opus-4-7
+  quality:
+    model: sonnet     # per-agent override for the review-phase sub-agents
+  implementation:
+    model: sonnet     # allowed values: opus | sonnet | haiku (Task-tool aliases)
+  testing:
+    model: opus
+  simplification:
+    model: opus
+squash:
+  model: claude-sonnet-4-6
 report_api_changes:
   model: claude-opus-4-7
 report_test_cases:
   model: claude-opus-4-7
 default_branch: develop
 ```
+
+Per-agent review models (`review.<agent>.model`) override the Task-tool model alias for each review sub-agent independently of `review.model` (which is the model the top-level reviewer runs on). Values must be one of `opus`, `sonnet`, `haiku` — the Task tool only accepts those three aliases. Invalid values raise a `ValueError` at config parse time. Resolution order (highest wins): per-task `config.yaml` → top-level `.cadence/config.yaml` → frontmatter in `.cadence/agents/<name>.txt` → frontmatter in the embedded default agent. Embedded defaults: `quality=sonnet`, `implementation=sonnet`, `testing=opus`, `simplification=opus`.
+
+`squash.model` is a full Claude model ID (like `task_model`/`plan_model`), not an alias — it picks the model `cadence squash` uses to write the commit message. Default `claude-sonnet-4-6`.
 
 If `--config` is omitted, cadence auto-discovers `config.yaml` next to the plan/task file — typically `cdc-tasks/<NNNN-slug>/config.yaml` (no parent walk). For `squash` and `cadence report …` the same lookup is anchored on the current branch's task directory (`cdc-tasks/<branch>/config.yaml`). For `review`, `init`, `status`, `doctor`, and `chain` auto-discovery is skipped — only an explicit `--config` is honored. An explicit path that does not exist is a hard error; an auto-discovered missing file is silently ignored. YAML parse errors are always fatal.
 

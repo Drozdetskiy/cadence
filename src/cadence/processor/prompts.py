@@ -139,6 +139,7 @@ def expand_agent_references(
     local_dir: Path | None,
     warn: Callable[[str], None] | None,
     base_vars: dict[str, str],
+    agent_models: dict[str, str] | None = None,
 ) -> str:
     def _sub(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -149,7 +150,12 @@ def expand_agent_references(
                 warn(str(exc))
             return match.group(0)
         body = replace_base_variables(agent.body, **base_vars)
-        return format_agent_expansion(body, model=agent.model, agent_type=agent.agent_type)
+        model = agent.model
+        if agent_models:
+            override = agent_models.get(name)
+            if override:
+                model = override
+        return format_agent_expansion(body, model=model, agent_type=agent.agent_type)
 
     return _AGENT_REF_RE.sub(_sub, prompt)
 
@@ -165,6 +171,7 @@ def replace_prompt_variables(
     local_dir: Path | None,
     warn: Callable[[str], None] | None = None,
     commit_format: str = "",
+    agent_models: dict[str, str] | None = None,
 ) -> str:
     base_vars: dict[str, str] = {
         "plan_file": plan_file,
@@ -173,7 +180,13 @@ def replace_prompt_variables(
         "default_branch": default_branch,
     }
     prompt = replace_base_variables(prompt, **base_vars)
-    prompt = expand_agent_references(prompt, local_dir=local_dir, warn=warn, base_vars=base_vars)
+    prompt = expand_agent_references(
+        prompt,
+        local_dir=local_dir,
+        warn=warn,
+        base_vars=base_vars,
+        agent_models=agent_models,
+    )
     prompt = append_commit_trailer_instruction(prompt, commit_trailer)
     prompt = append_commit_format_instruction(prompt, commit_format)
     return prompt
@@ -349,6 +362,7 @@ def build_review_first_prompt(
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
     commit_format: str = "",
+    agent_models: dict[str, str] | None = None,
 ) -> str:
     prompt = load_prompt("review_first", local_dir=local_dir)
     return replace_prompt_variables(
@@ -361,6 +375,7 @@ def build_review_first_prompt(
         local_dir=local_dir,
         warn=warn,
         commit_format=commit_format,
+        agent_models=agent_models,
     )
 
 
@@ -373,6 +388,7 @@ def build_review_second_prompt(
     commit_trailer: str = "",
     warn: Callable[[str], None] | None = None,
     commit_format: str = "",
+    agent_models: dict[str, str] | None = None,
 ) -> str:
     prompt = load_prompt("review_second", local_dir=local_dir)
     return replace_prompt_variables(
@@ -385,6 +401,7 @@ def build_review_second_prompt(
         local_dir=local_dir,
         warn=warn,
         commit_format=commit_format,
+        agent_models=agent_models,
     )
 
 

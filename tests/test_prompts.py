@@ -343,6 +343,75 @@ class TestExpandAgentReferences:
         assert "{{DEFAULT_BRANCH}}" not in result
         assert "{{GOAL}}" not in result
 
+    def test_agent_models_override_replaces_frontmatter_model(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("---\nmodel: opus\n---\nthe body\n")
+        result = expand_agent_references(
+            "{{agent:quality}}",
+            local_dir=tmp_path,
+            warn=None,
+            base_vars={},
+            agent_models={"quality": "haiku"},
+        )
+        assert "with model=haiku" in result
+        assert "with model=opus" not in result
+
+    def test_agent_models_override_when_frontmatter_absent(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("the body\n")
+        result = expand_agent_references(
+            "{{agent:quality}}",
+            local_dir=tmp_path,
+            warn=None,
+            base_vars={},
+            agent_models={"quality": "sonnet"},
+        )
+        assert "with model=sonnet" in result
+
+    def test_agent_models_none_falls_back_to_frontmatter(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("---\nmodel: opus\n---\nthe body\n")
+        result = expand_agent_references(
+            "{{agent:quality}}",
+            local_dir=tmp_path,
+            warn=None,
+            base_vars={},
+            agent_models=None,
+        )
+        assert "with model=opus" in result
+
+    def test_agent_models_empty_string_falls_back_to_frontmatter(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("---\nmodel: opus\n---\nthe body\n")
+        result = expand_agent_references(
+            "{{agent:quality}}",
+            local_dir=tmp_path,
+            warn=None,
+            base_vars={},
+            agent_models={"quality": ""},
+        )
+        assert "with model=opus" in result
+
+    def test_agent_models_only_affects_matching_name(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("---\nmodel: opus\n---\nquality body\n")
+        (agents_dir / "testing.txt").write_text("---\nmodel: sonnet\n---\ntesting body\n")
+        result = expand_agent_references(
+            "{{agent:quality}} | {{agent:testing}}",
+            local_dir=tmp_path,
+            warn=None,
+            base_vars={},
+            agent_models={"quality": "haiku"},
+        )
+        assert "with model=haiku" in result
+        assert "with model=sonnet" in result
+        assert "with model=opus" not in result
+
 
 class TestReplacePromptVariables:
     def test_trailer_appended_once(self) -> None:
@@ -543,6 +612,30 @@ class TestBuildReviewFirstPrompt:
         )
         assert "Load Plan Decision Surface" in result
 
+    def test_agent_models_override_threaded(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "quality.txt").write_text("---\nmodel: opus\n---\nQUALITY_BODY\n")
+        result = build_review_first_prompt(
+            plan_file="",
+            progress_file="",
+            default_branch="main",
+            local_dir=tmp_path,
+            agent_models={"quality": "haiku"},
+        )
+        assert "with model=haiku" in result
+
+    def test_default_agents_emit_expected_models(self) -> None:
+        # No local override and no agent_models: each shipped default agent
+        # must render with the model alias declared in its frontmatter.
+        result = build_review_first_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+            default_branch="main",
+        )
+        assert result.count("with model=sonnet") == 2
+        assert result.count("with model=opus") == 2
+
 
 class TestBuildReviewSecondPrompt:
     def test_expands_two_agents(self) -> None:
@@ -619,6 +712,19 @@ class TestBuildReviewSecondPrompt:
             default_branch="main",
         )
         assert "Load Plan Decision Surface" in result
+
+    def test_agent_models_override_threaded(self, tmp_path: Path) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "implementation.txt").write_text("---\nmodel: opus\n---\nIMPL_BODY\n")
+        result = build_review_second_prompt(
+            plan_file="",
+            progress_file="",
+            default_branch="main",
+            local_dir=tmp_path,
+            agent_models={"implementation": "sonnet"},
+        )
+        assert "with model=sonnet" in result
 
 
 class TestAppendCommitFormatInstruction:

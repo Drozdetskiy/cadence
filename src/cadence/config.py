@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+_AGENT_MODEL_ALIASES: frozenset[str] = frozenset({"opus", "sonnet", "haiku"})
+
 
 @dataclass
 class ColorConfig:
@@ -26,6 +28,7 @@ class Config:
     plan_model: str = "claude-opus-4-7"
     task_model: str = "claude-opus-4-7"
     review_model: str = "claude-opus-4-7"
+    squash_model: str = "claude-sonnet-4-6"
     report_api_changes_model: str = ""
     report_test_cases_model: str = ""
     iteration_delay_ms: int = 2000
@@ -85,7 +88,30 @@ class Config:
     progress_jsonl: bool = False
     running_threshold_minutes: int = 10
     import_max_bytes: int = 256 * 1024
+    agent_models: dict[str, str] = field(default_factory=dict)
     colors: ColorConfig = field(default_factory=ColorConfig)
+
+
+def _parse_agent_models(raw: dict[str, Any]) -> dict[str, str]:
+    review = raw.get("review")
+    if not isinstance(review, dict):
+        return {}
+    result: dict[str, str] = {}
+    for name, val in review.items():
+        if name == "model":
+            continue
+        if not isinstance(val, dict):
+            continue
+        model_val = val.get("model")
+        if not isinstance(model_val, str) or not model_val:
+            continue
+        normalized = model_val.strip().lower()
+        if normalized not in _AGENT_MODEL_ALIASES:
+            raise ValueError(
+                f"invalid review.{name}.model: {model_val!r} (allowed aliases: opus, sonnet, haiku)"
+            )
+        result[str(name)] = normalized
+    return result
 
 
 _DURATION_RE = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
@@ -132,6 +158,7 @@ def load_config(config_dir: Path | None) -> Config:
         "plan_model",
         "task_model",
         "review_model",
+        "squash_model",
         "report_api_changes_model",
         "report_test_cases_model",
         "session_timeout",
@@ -181,6 +208,8 @@ def load_config(config_dir: Path | None) -> Config:
         if key in data:
             setattr(cfg, key, [str(x) for x in data[key]])
 
+    cfg.agent_models = _parse_agent_models(data)
+
     if "colors" in data and isinstance(data["colors"], dict):
         color_data = data["colors"]
         color_cfg = cfg.colors
@@ -203,9 +232,11 @@ class YamlOverrides:
     plan_model: str | None = None
     task_model: str | None = None
     review_model: str | None = None
+    squash_model: str | None = None
     report_api_changes_model: str | None = None
     report_test_cases_model: str | None = None
     default_branch: str | None = None
+    agent_models: dict[str, str] = field(default_factory=dict)
 
 
 def parse_yaml_overrides(text: str | None) -> YamlOverrides:
@@ -223,7 +254,14 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     if not isinstance(raw, dict):
         raise ValueError("invalid config.yaml: top-level must be a mapping")
 
-    for section in ("plan", "task", "review", "report_api_changes", "report_test_cases"):
+    for section in (
+        "plan",
+        "task",
+        "review",
+        "squash",
+        "report_api_changes",
+        "report_test_cases",
+    ):
         value = raw.get(section)
         if not isinstance(value, dict):
             continue
@@ -236,6 +274,8 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
             overrides.task_model = model
         elif section == "review":
             overrides.review_model = model
+        elif section == "squash":
+            overrides.squash_model = model
         elif section == "report_api_changes":
             overrides.report_api_changes_model = model
         else:
@@ -244,6 +284,8 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     default_branch = raw.get("default_branch")
     if isinstance(default_branch, str) and default_branch:
         overrides.default_branch = default_branch
+
+    overrides.agent_models = _parse_agent_models(raw)
 
     return overrides
 
@@ -260,12 +302,17 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.task_model = overrides.task_model
     if overrides.review_model is not None:
         cfg.review_model = overrides.review_model
+    if overrides.squash_model is not None:
+        cfg.squash_model = overrides.squash_model
     if overrides.report_api_changes_model is not None:
         cfg.report_api_changes_model = overrides.report_api_changes_model
     if overrides.report_test_cases_model is not None:
         cfg.report_test_cases_model = overrides.report_test_cases_model
     if overrides.default_branch is not None:
         cfg.default_branch = overrides.default_branch
+    if overrides.agent_models:
+        for name, model in overrides.agent_models.items():
+            cfg.agent_models[name] = model
 
 
 def find_yaml_config(start_dir: Path) -> Path | None:
