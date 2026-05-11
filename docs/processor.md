@@ -138,6 +138,7 @@ Full pipeline: tasks -> review_first -> review_loop.
 2. PhaseReview: run_claude_review(ReviewFirstPrompt)
    - section "claude review 0: all findings"
    - single pass, 4 agents
+   - step 3 below is skipped when round 1 returns REVIEW_DONE
 
 3. PhaseReview: run_claude_review_loop()
    - review loop (critical/major)
@@ -152,6 +153,7 @@ Review pipeline without task phase.
 ```
 1. PhaseReview: run_claude_review(ReviewFirstPrompt)
 2. PhaseReview: run_claude_review_loop()
+   - skipped when round 1 returns REVIEW_DONE
 ```
 
 ### run_tasks_only()
@@ -265,6 +267,8 @@ A single review pass. Used for "review 0: all findings" with ReviewFirstPrompt (
 4. REVIEW_DONE signal: ok
 5. No REVIEW_DONE: warning "did not complete cleanly", continue
 ```
+
+Sets `Runner.last_review_done` to `True` on `REVIEW_DONE` and `False` otherwise (including the "did not complete cleanly" path). `_run_review_pipeline` reads this flag to skip `run_claude_review_loop()` when round 1 finished cleanly.
 
 ### Review loop: run_claude_review_loop()
 
