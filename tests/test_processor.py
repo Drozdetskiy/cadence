@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -864,6 +864,42 @@ class TestRunClaudeReview:
         with pytest.raises(RuntimeError, match="boom"):
             runner.run_claude_review("prompt")
 
+    def test_review_done_sets_last_review_done(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        runner, _log, _ = _make_review_runner(executor)
+        assert runner.run_claude_review("prompt") is True
+        assert runner.last_review_done is True
+
+    def test_no_signal_clears_last_review_done(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal="")
+        runner, _log, _ = _make_review_runner(executor)
+        runner.last_review_done = True
+        assert runner.run_claude_review("prompt") is True
+        assert runner.last_review_done is False
+
+    def test_pattern_error_does_not_set_last_review_done(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(
+            output="",
+            signal="",
+            error=PatternMatchError("API Error:", "claude /usage"),
+        )
+        runner, _log, _ = _make_review_runner(executor)
+        runner.last_review_done = True
+        assert runner.run_claude_review("prompt") is False
+        assert runner.last_review_done is False
+
+    def test_failed_signal_clears_last_review_done(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalFailed)
+        runner, _log, _ = _make_review_runner(executor)
+        runner.last_review_done = True
+        with pytest.raises(RuntimeError, match="review failed"):
+            runner.run_claude_review("prompt")
+        assert runner.last_review_done is False
+
 
 class TestRunClaudeReviewLoop:
     def test_review_done_first_iteration(self) -> None:
@@ -973,7 +1009,10 @@ class TestRunnerForwardsCommitFormat:
 
     def test_review_first_forwards_commit_format(self) -> None:
         executor = MagicMock()
-        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        executor.run.side_effect = [
+            Result(output="", signal=""),  # round 1 — empty signal forces loop
+            Result(output="", signal=SignalReviewDone),  # loop iteration
+        ]
         ctx = RunContext(mode=Mode.REVIEW, plan_file="")
         log = MagicMock()
         log.path = "/tmp/progress.txt"
@@ -994,8 +1033,8 @@ class TestRunnerForwardsCommitFormat:
         # review_second prompt. Both must carry commit_format — assert across
         # every executor call so a regression in either build site is caught.
         assert executor.run.call_count >= 2
-        for call in executor.run.call_args_list:
-            prompt = call[0][0]
+        for run_call in executor.run.call_args_list:
+            prompt = run_call[0][0]
             assert "MARKER_REVIEW_FORMAT" in prompt
             assert "Format every git commit message using these rules:" in prompt
 
@@ -1007,15 +1046,32 @@ class TestRunFullPipeline:
         executor.run.side_effect = [
             Result(output="", signal=SignalCompleted),  # task phase
             Result(output="", signal=SignalReviewDone),  # review_first
-            Result(output="", signal=SignalReviewDone),  # review_loop
         ]
-        runner, _log, _ = _make_review_runner(
+        runner, log, _ = _make_review_runner(
+            executor,
+            plan_file=str(plan),
+            mode=Mode.FULL,
+        )
+        assert runner.run_full() is True
+        assert executor.run.call_count == 2
+        log.print.assert_any_call("nothing to verify, skipping review loop")
+
+    def test_full_pipeline_runs_loop_when_round_one_not_clean(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        executor = MagicMock()
+        executor.run.side_effect = [
+            Result(output="", signal=SignalCompleted),  # task phase
+            Result(output="", signal=""),  # review_first — no signal, forces loop
+            Result(output="", signal=SignalReviewDone),  # review loop iteration
+        ]
+        runner, log, _ = _make_review_runner(
             executor,
             plan_file=str(plan),
             mode=Mode.FULL,
         )
         assert runner.run_full() is True
         assert executor.run.call_count == 3
+        assert call("nothing to verify, skipping review loop") not in log.print.call_args_list
 
     def test_task_phase_failure_short_circuits(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_PENDING)
@@ -1040,15 +1096,42 @@ class TestRunReviewOnly:
         executor = MagicMock()
         executor.run.side_effect = [
             Result(output="", signal=SignalReviewDone),  # review_first
-            Result(output="", signal=SignalReviewDone),  # review_loop
         ]
-        runner, _log, _ = _make_review_runner(
+        runner, log, _ = _make_review_runner(
+            executor,
+            plan_file="",
+            mode=Mode.REVIEW,
+        )
+        assert runner.run_review_only() is True
+        assert executor.run.call_count == 1
+        log.print.assert_any_call("nothing to verify, skipping review loop")
+
+    def test_skips_loop_when_round_one_returns_review_done(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        runner, log, _ = _make_review_runner(
+            executor,
+            plan_file="",
+            mode=Mode.REVIEW,
+        )
+        assert runner.run_review_only() is True
+        assert executor.run.call_count == 1
+        log.print.assert_any_call("nothing to verify, skipping review loop")
+
+    def test_runs_loop_when_round_one_did_not_complete_cleanly(self) -> None:
+        executor = MagicMock()
+        executor.run.side_effect = [
+            Result(output="", signal=""),  # round 1 — no signal
+            Result(output="", signal=SignalReviewDone),  # loop iteration
+        ]
+        runner, log, _ = _make_review_runner(
             executor,
             plan_file="",
             mode=Mode.REVIEW,
         )
         assert runner.run_review_only() is True
         assert executor.run.call_count == 2
+        assert call("nothing to verify, skipping review loop") not in log.print.call_args_list
 
 
 class TestReviewExecutorRouting:
@@ -1059,7 +1142,25 @@ class TestReviewExecutorRouting:
         primary.run.return_value = Result(output="", signal=SignalCompleted)
         review.run.side_effect = [
             Result(output="", signal=SignalReviewDone),  # review_first
-            Result(output="", signal=SignalReviewDone),  # review_loop
+        ]
+        runner, _log, _ = _make_review_runner(
+            primary,
+            plan_file=str(plan),
+            review_executor=review,
+            mode=Mode.FULL,
+        )
+        assert runner.run_full() is True
+        assert primary.run.call_count == 1
+        assert review.run.call_count == 1
+
+    def test_review_executor_used_for_loop(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        primary = MagicMock()
+        review = MagicMock()
+        primary.run.return_value = Result(output="", signal=SignalCompleted)
+        review.run.side_effect = [
+            Result(output="", signal=""),  # review_first — forces loop
+            Result(output="", signal=SignalReviewDone),  # loop iteration
         ]
         runner, _log, _ = _make_review_runner(
             primary,

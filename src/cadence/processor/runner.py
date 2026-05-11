@@ -142,6 +142,7 @@ class Runner:
         self._git_checker: GitChecker | None = None
         self._chain_collector: UsageStats | None = None
         self.last_session_timed_out = False
+        self.last_review_done: bool = False
 
     def set_break_event(self, event: threading.Event) -> None:
         self._break_event = event
@@ -194,6 +195,9 @@ class Runner:
         )
         if not self.run_claude_review(review_prompt):
             return False
+        if self.last_review_done:
+            self._deps.logger.print("nothing to verify, skipping review loop")
+            return True
         return self.run_claude_review_loop()
 
     def run_tasks_only(self) -> bool:
@@ -358,6 +362,7 @@ class Runner:
         log = self._deps.logger
         log.print_section(new_claude_review_section(0, "all findings"))
 
+        self.last_review_done = False
         phase_stats = UsageStats()
         phase_model = self._deps.review_model
         phase_result = "success"
@@ -401,6 +406,7 @@ class Runner:
                 raise RuntimeError("review failed")
 
             if is_review_done(result.signal):
+                self.last_review_done = True
                 log.print("review completed, no issues found")
                 return True
 
