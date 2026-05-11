@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cadence.processor.agents import AgentDef, load_agent
+from cadence.processor.agents import AgentDef, load_agent, normalize_model_alias
 
 
 class TestLoadAgentFallback:
@@ -160,23 +160,26 @@ class TestEmbeddedDefaults:
         assert result.body.startswith(
             "Review code for bugs, security issues, and quality problems."
         )
-        assert result.model == ""
+        assert result.model == "sonnet"
         assert result.agent_type == "general-purpose"
 
     def test_implementation_body_loads(self) -> None:
         result = load_agent("implementation")
         assert result is not None
         assert result.body.startswith("Review whether the implementation achieves the stated goal")
+        assert result.model == "sonnet"
 
     def test_testing_body_loads(self) -> None:
         result = load_agent("testing")
         assert result is not None
         assert result.body.startswith("Review test coverage and quality.")
+        assert result.model == "opus"
 
     def test_simplification_body_loads(self) -> None:
         result = load_agent("simplification")
         assert result is not None
         assert result.body.startswith("Detect over-engineered and overcomplicated code")
+        assert result.model == "opus"
 
     @pytest.mark.parametrize(
         "name",
@@ -191,6 +194,44 @@ class TestEmbeddedDefaults:
         result = load_agent(name)
         assert result is not None, f"shipped agent {name!r} returned None"
         assert result.body.strip(), f"shipped agent {name!r} loaded but body is empty"
+
+    @pytest.mark.parametrize(
+        ("name", "expected_model"),
+        [
+            ("quality", "sonnet"),
+            ("implementation", "sonnet"),
+            ("testing", "opus"),
+            ("simplification", "opus"),
+        ],
+    )
+    def test_default_agent_frontmatter_model(self, name: str, expected_model: str) -> None:
+        result = load_agent(name)
+        assert result.model == expected_model
+        # Frontmatter delimiters and the model line must be stripped from the
+        # body — otherwise they'd leak into the rendered prompt sent to Claude.
+        assert "---" not in result.body.splitlines()[0]
+        assert "model:" not in result.body.splitlines()[0]
+        assert result.body.strip()
+
+
+class TestNormalizeModelAlias:
+    def test_alias_passthrough(self) -> None:
+        assert normalize_model_alias("opus") == "opus"
+        assert normalize_model_alias("sonnet") == "sonnet"
+        assert normalize_model_alias("haiku") == "haiku"
+
+    def test_long_id_normalized(self) -> None:
+        assert normalize_model_alias("claude-sonnet-4-5-20250929") == "sonnet"
+        assert normalize_model_alias("claude-opus-4-7") == "opus"
+        assert normalize_model_alias("claude-haiku-4-5-20251001") == "haiku"
+
+    def test_invalid_returns_empty(self) -> None:
+        assert normalize_model_alias("gpt-4") == ""
+        assert normalize_model_alias("") == ""
+        assert normalize_model_alias("   ") == ""
+
+    def test_strips_and_lowercases(self) -> None:
+        assert normalize_model_alias("  OPUS  ") == "opus"
 
 
 class TestAgentDef:

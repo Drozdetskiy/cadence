@@ -18,7 +18,7 @@ _ALLOWED_MODELS: tuple[str, ...] = ("opus", "sonnet", "haiku")
 _DEFAULT_AGENT_TYPE = "general-purpose"
 
 
-def _normalize_model(value: str) -> str:
+def normalize_model_alias(value: str) -> str:
     stripped = value.strip()
     if not stripped:
         return ""
@@ -95,7 +95,7 @@ def load_agent(
     model_raw = fields.get("model", "")
     model = ""
     if model_raw:
-        normalized = _normalize_model(model_raw)
+        normalized = normalize_model_alias(model_raw)
         if normalized:
             model = normalized
         else:
@@ -107,4 +107,4 @@ def load_agent(
     return AgentDef(name=name, body=body, model=model, agent_type=agent_type)
 
 
-__all__ = ["AgentDef", "load_agent"]
+__all__ = ["AgentDef", "load_agent", "normalize_model_alias"]

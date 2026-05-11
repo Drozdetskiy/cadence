@@ -1134,6 +1134,84 @@ class TestRunReviewOnly:
         assert call("nothing to verify, skipping review loop") not in log.print.call_args_list
 
 
+class TestReviewAgentModelsWiring:
+    def test_review_first_threads_agent_models_override(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        ctx = RunContext(mode=Mode.REVIEW, plan_file="")
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+        )
+        cfg = AppConfig(
+            max_iterations=10,
+            iteration_delay_ms=0,
+            agent_models={"quality": "haiku"},
+        )
+        runner = Runner(ctx, cfg, deps)
+        assert runner.run_review_only() is True
+        prompt = executor.run.call_args_list[0][0][0]
+        # quality (overridden to haiku) + implementation (sonnet) +
+        # testing (opus) + simplification (opus).
+        assert prompt.count("with model=haiku") == 1
+        assert prompt.count("with model=sonnet") == 1
+        assert prompt.count("with model=opus") == 2
+
+    def test_review_first_defaults_use_frontmatter_models(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        ctx = RunContext(mode=Mode.REVIEW, plan_file="")
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+        )
+        cfg = AppConfig(max_iterations=10, iteration_delay_ms=0)
+        runner = Runner(ctx, cfg, deps)
+        assert runner.run_review_only() is True
+        prompt = executor.run.call_args_list[0][0][0]
+        # No overrides: quality/implementation default to sonnet,
+        # testing/simplification default to opus.
+        assert prompt.count("with model=sonnet") == 2
+        assert prompt.count("with model=opus") == 2
+        assert "with model=haiku" not in prompt
+
+    def test_review_second_threads_agent_models_override(self) -> None:
+        executor = MagicMock()
+        executor.run.side_effect = [
+            Result(output="", signal=""),  # forces loop
+            Result(output="", signal=SignalReviewDone),  # loop iteration
+        ]
+        ctx = RunContext(mode=Mode.REVIEW, plan_file="")
+        log = MagicMock()
+        log.path = "/tmp/progress.txt"
+        deps = Dependencies(
+            executor=executor,
+            input_collector=MagicMock(),
+            logger=log,
+            holder=PhaseHolder(),
+        )
+        cfg = AppConfig(
+            max_iterations=10,
+            iteration_delay_ms=0,
+            agent_models={"implementation": "haiku"},
+        )
+        runner = Runner(ctx, cfg, deps)
+        assert runner.run_review_only() is True
+        # The review-loop prompt is the second executor call.
+        loop_prompt = executor.run.call_args_list[1][0][0]
+        # review_second expands only quality + implementation.
+        assert loop_prompt.count("with model=haiku") == 1
+        assert loop_prompt.count("with model=sonnet") == 1
+
+
 class TestReviewExecutorRouting:
     def test_review_uses_review_executor_when_set(self, tmp_path: Path) -> None:
         plan = _write_plan(tmp_path, _PLAN_DONE)

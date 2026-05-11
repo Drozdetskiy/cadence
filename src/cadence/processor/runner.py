@@ -192,6 +192,7 @@ class Runner:
             commit_trailer=self._app.commit_trailer,
             commit_format=self._app.commit_format,
             warn=self._deps.logger.warn,
+            agent_models=self._app.agent_models,
         )
         if not self.run_claude_review(review_prompt):
             return False
@@ -433,6 +434,7 @@ class Runner:
             commit_trailer=self._app.commit_trailer,
             commit_format=self._app.commit_format,
             warn=log.warn,
+            agent_models=self._app.agent_models,
         )
 
         phase_stats = UsageStats()

@@ -5046,6 +5046,188 @@ class TestRunSquashMode:
         assert kwargs["repo_path"] == "."
         assert kwargs["claude_cwd"] is None
 
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_executor_uses_squash_model_not_task_model(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            task_model="claude-opus-4-7",
+            squash_model="claude-haiku-4-5",
+        )
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "feat-x.\n\nAdded: a thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_executor_cls.assert_called_once()
+        assert mock_executor_cls.call_args.kwargs["model"] == "claude-haiku-4-5"
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_default_squash_model_flows_through(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        cfg = Config(tasks_root="cdc-tasks", default_branch="main")
+        assert cfg.squash_model == "claude-sonnet-4-6"
+        assert cfg.task_model == "claude-opus-4-7"
+        mock_config.return_value = cfg
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "feat-x.\n\nAdded: a thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with patch("cadence.cli.display_stats"):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_executor_cls.assert_called_once()
+        assert mock_executor_cls.call_args.kwargs["model"] == "claude-sonnet-4-6"
+
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_phase_summary_uses_squash_model(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            tasks_root="cdc-tasks",
+            default_branch="main",
+            task_model="claude-opus-4-7",
+            squash_model="claude-haiku-4-5",
+            print_usage=True,
+        )
+        mock_svc = self._setup_mock_service()
+        mock_service_cls.return_value = mock_svc
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress-squash.txt")
+        mock_log.elapsed.return_value = "0m05s"
+        mock_logger_cls.return_value = mock_log
+
+        claude_output = (
+            "<<<CADENCE:COMMIT_MSG_BEGIN>>>\n"
+            "feat-x.\n\nAdded: a thing.\n"
+            "<<<CADENCE:COMMIT_MSG_END>>>"
+        )
+        mock_executor = MagicMock()
+        mock_executor.run.return_value = Result(output=claude_output)
+        mock_executor_cls.return_value = mock_executor
+
+        task_dir = tmp_path / "cdc-tasks" / "feat-x"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan-completed").write_text("done", encoding="utf-8")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                patch("cadence.cli.display_stats"),
+                patch("cadence.cli.format_phase_summary", return_value="summary") as mock_fmt,
+            ):
+                run_squash_mode()
+        finally:
+            os.chdir(original_cwd)
+
+        mock_fmt.assert_called_once()
+        args, kwargs = mock_fmt.call_args
+        positional_models = [a for a in args if isinstance(a, str)]
+        assert "claude-haiku-4-5" in positional_models or kwargs.get("model") == (
+            "claude-haiku-4-5"
+        )
+        assert "claude-opus-4-7" not in positional_models
+        assert kwargs.get("model") != "claude-opus-4-7"
+
 
 class TestParseChainFile:
     def test_missing_file_exits(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

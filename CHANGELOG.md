@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.23.0 - 2026-05-12
+
+### New Features
+
+- Per-agent review models: `review.<agent>.model` in `.cadence/config.yaml` (or per-task `config.yaml`) overrides the Task-tool model alias for each review sub-agent (`quality`, `implementation`, `testing`, `simplification`, or any user-defined agent under `.cadence/agents/`). Allowed values: `opus`, `sonnet`, `haiku`. Resolution order (highest wins): per-task YAML → top-level YAML → frontmatter in `.cadence/agents/<name>.txt` → frontmatter in the embedded default → empty (Task tool invoked without `model=`).
+- Separate squash-phase model: new `squash.model` (or top-level `squash_model:`) config key, default `claude-sonnet-4-6`. `cadence squash` no longer reuses `task_model`; usage and cost reporting for the squash phase use `squash_model` too.
+
+### Other
+
+- Default model for the `quality` and `implementation` review sub-agents is now explicitly `sonnet` (previously inherited the session default — in practice `opus` when running `cadence run` on opus); `testing` and `simplification` keep `opus` explicitly. To restore the previous behavior set `review.quality.model: opus` and `review.implementation.model: opus`.
+
 ## v0.22.0 - 2026-05-06
 
 ### New Features

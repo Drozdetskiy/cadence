@@ -38,6 +38,7 @@ class TestConfigDefaults:
         assert cfg.plan_model == "claude-opus-4-7"
         assert cfg.task_model == "claude-opus-4-7"
         assert cfg.review_model == "claude-opus-4-7"
+        assert cfg.squash_model == "claude-sonnet-4-6"
         assert cfg.iteration_delay_ms == 2000
         assert cfg.task_retry_count == 1
         assert cfg.max_iterations == 50
@@ -60,6 +61,7 @@ class TestConfigDefaults:
         assert cfg.progress_jsonl is False
         assert cfg.running_threshold_minutes == 10
         assert cfg.import_max_bytes == 262144
+        assert cfg.agent_models == {}
         assert cfg.commit_format != ""
         assert "a single line `<branch-name>. <Clause>: <what>.`" in cfg.commit_format
         assert "separated by `. ` (period + space)" in cfg.commit_format
@@ -166,6 +168,18 @@ class TestLoadConfig:
         yaml_path.write_text('public_api_paths:\n  - "src/api"\n  - "proto"\n')
         cfg = load_config(tmp_path)
         assert cfg.public_api_paths == ["src/api", "proto"]
+
+    def test_load_squash_model_top_level(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("squash_model: claude-haiku-4-5\n")
+        cfg = load_config(tmp_path)
+        assert cfg.squash_model == "claude-haiku-4-5"
+
+    def test_default_squash_model(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.squash_model == "claude-sonnet-4-6"
 
     def test_load_report_api_changes_model(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -281,6 +295,41 @@ class TestLoadConfig:
         yaml_path.write_text("hooks_timeout_seconds: not-a-number\n")
         with pytest.raises(ValueError):
             load_config(tmp_path)
+
+    def test_load_agent_models_top_level(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(
+            "review:\n  quality:\n    model: sonnet\n  testing:\n    model: opus\n"
+        )
+        cfg = load_config(tmp_path)
+        assert cfg.agent_models == {"quality": "sonnet", "testing": "opus"}
+
+    def test_load_agent_models_invalid_alias_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("review:\n  quality:\n    model: gpt-4\n")
+        with pytest.raises(ValueError, match=r"invalid review\.quality\.model"):
+            load_config(tmp_path)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        ["claude-opus-4-7", "gpt-opus", "haiku-like", "opus2", "the-sonnet-model"],
+    )
+    def test_load_agent_models_substring_alias_rejected(
+        self, tmp_path: Path, bad_value: str
+    ) -> None:
+        # Per the plan's "Out of Scope": full Claude model IDs and any
+        # non-alias string must be rejected for per-agent overrides — only the
+        # bare aliases opus/sonnet/haiku are valid.
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(f"review:\n  quality:\n    model: {bad_value}\n")
+        with pytest.raises(ValueError, match=r"invalid review\.quality\.model"):
+            load_config(tmp_path)
+
+    def test_load_agent_models_default_empty(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.agent_models == {}
 
     def test_load_colors(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -420,6 +469,30 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides("default_branch: 42\n")
         assert overrides.default_branch is None
 
+    def test_squash_model_override(self) -> None:
+        text = "squash:\n  model: claude-sonnet-4-6\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.squash_model == "claude-sonnet-4-6"
+        assert overrides.plan_model is None
+        assert overrides.task_model is None
+        assert overrides.review_model is None
+
+    def test_squash_model_alongside_others(self) -> None:
+        text = "task:\n  model: sonnet\nsquash:\n  model: claude-haiku-4-5\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.task_model == "sonnet"
+        assert overrides.squash_model == "claude-haiku-4-5"
+
+    def test_squash_model_empty_value_ignored(self) -> None:
+        text = "squash:\n  model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.squash_model is None
+
+    def test_squash_section_missing_leaves_default(self) -> None:
+        text = "task:\n  model: sonnet\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.squash_model is None
+
     def test_report_api_changes_model_override(self) -> None:
         text = "report_api_changes:\n  model: opus-report\n"
         overrides = parse_yaml_overrides(text)
@@ -453,6 +526,55 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides(text)
         assert overrides.task_model == "sonnet"
         assert overrides.report_test_cases_model == "opus-tc"
+
+    def test_agent_models_parsed(self) -> None:
+        text = "review:\n  quality:\n    model: sonnet\n  implementation:\n    model: haiku\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.agent_models == {"quality": "sonnet", "implementation": "haiku"}
+
+    def test_agent_models_coexist_with_review_model(self) -> None:
+        text = "review:\n  model: opus\n  quality:\n    model: sonnet\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.review_model == "opus"
+        assert overrides.agent_models == {"quality": "sonnet"}
+
+    def test_agent_models_unknown_agent_name_accepted(self) -> None:
+        text = "review:\n  custom-agent:\n    model: opus\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.agent_models == {"custom-agent": "opus"}
+
+    def test_agent_models_invalid_alias_raises(self) -> None:
+        text = "review:\n  quality:\n    model: gpt-4\n"
+        with pytest.raises(ValueError, match=r"invalid review\.quality\.model"):
+            parse_yaml_overrides(text)
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        ["claude-opus-4-7", "gpt-opus", "haiku-like", "opus2", "the-sonnet-model"],
+    )
+    def test_agent_models_substring_alias_rejected(self, bad_value: str) -> None:
+        text = f"review:\n  quality:\n    model: {bad_value}\n"
+        with pytest.raises(ValueError, match=r"invalid review\.quality\.model"):
+            parse_yaml_overrides(text)
+
+    def test_agent_models_no_review_section(self) -> None:
+        overrides = parse_yaml_overrides("task:\n  model: sonnet\n")
+        assert overrides.agent_models == {}
+
+    def test_agent_models_alias_normalized(self) -> None:
+        text = "review:\n  quality:\n    model: SONNET\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.agent_models == {"quality": "sonnet"}
+
+    def test_agent_models_empty_model_value_ignored(self) -> None:
+        text = "review:\n  quality:\n    model:\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.agent_models == {}
+
+    def test_agent_models_non_mapping_entry_ignored(self) -> None:
+        text = "review:\n  quality: sonnet\n  implementation:\n    model: haiku\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.agent_models == {"implementation": "haiku"}
 
     def test_report_test_cases_model_empty_value_ignored(self) -> None:
         text = "report_test_cases:\n  model:\n"
@@ -519,6 +641,16 @@ class TestApplyYamlOverrides:
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.default_branch == "main"
 
+    def test_squash_model_overrides(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(cfg, YamlOverrides(squash_model="claude-haiku-4-5"))
+        assert cfg.squash_model == "claude-haiku-4-5"
+
+    def test_squash_model_none_is_no_op(self) -> None:
+        cfg = Config(squash_model="preset-squash")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.squash_model == "preset-squash"
+
     def test_report_api_changes_model_overrides(self) -> None:
         cfg = Config()
         apply_yaml_overrides(cfg, YamlOverrides(report_api_changes_model="opus-rep"))
@@ -538,6 +670,24 @@ class TestApplyYamlOverrides:
         cfg = Config(report_test_cases_model="preset")
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.report_test_cases_model == "preset"
+
+    def test_agent_models_merge_into_cfg(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(
+            cfg,
+            YamlOverrides(agent_models={"quality": "sonnet", "implementation": "haiku"}),
+        )
+        assert cfg.agent_models == {"quality": "sonnet", "implementation": "haiku"}
+
+    def test_agent_models_per_task_overrides_top_level(self) -> None:
+        cfg = Config(agent_models={"quality": "opus", "testing": "opus"})
+        apply_yaml_overrides(cfg, YamlOverrides(agent_models={"quality": "sonnet"}))
+        assert cfg.agent_models == {"quality": "sonnet", "testing": "opus"}
+
+    def test_agent_models_empty_overrides_keeps_existing(self) -> None:
+        cfg = Config(agent_models={"quality": "opus"})
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.agent_models == {"quality": "opus"}
 
 
 class TestFindYamlConfig:

@@ -1002,7 +1002,7 @@ def run_squash_mode(
         commit_format=cfg.commit_format,
     )
 
-    claude = factory(log, cfg.task_model)
+    claude = factory(log, cfg.squash_model)
 
     repo_root = git_svc.root()
     hook_env = _build_hook_env(
@@ -1014,7 +1014,7 @@ def run_squash_mode(
 
     run_success = False
     phase_stats = UsageStats()
-    phase_model = cfg.task_model
+    phase_model = cfg.squash_model
     try:
         _invoke_pre_hook("squash", cfg=cfg, repo_root=repo_root, env=hook_env, logger=log)
         start = time.monotonic()
