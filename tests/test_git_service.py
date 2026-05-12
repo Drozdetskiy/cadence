@@ -842,6 +842,98 @@ class TestServiceDiffAgainst:
         mock.diff_against.assert_called_once_with("main", paths=None)
 
 
+class TestServiceEnsureLocalIgnore:
+    def _read_exclude(self, path: str) -> str:
+        with open(os.path.join(path, ".git", "info", "exclude")) as f:
+            return f.read()
+
+    def test_writes_all_expected_patterns(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _make_commit(path)
+        svc = Service(path, _Log())
+        svc.ensure_local_ignore("cdc-tasks")
+        content = self._read_exclude(path)
+        for pat in (
+            "cdc-tasks/**/plan",
+            "cdc-tasks/**/plan-completed",
+            "cdc-tasks/**/progress-*.txt",
+            "cdc-tasks/**/progress-*.jsonl",
+            "cdc-tasks/**/config.yaml",
+            "cdc-tasks/**/report-*.md",
+        ):
+            assert pat in content
+
+    def test_check_ignore_recognizes_plan_and_progress(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _make_commit(path)
+        svc = Service(path, _Log())
+        svc.ensure_local_ignore("cdc-tasks")
+
+        (tmp_path / "cdc-tasks" / "foo").mkdir(parents=True)
+        (tmp_path / "cdc-tasks" / "foo" / "plan").write_text("p")
+        (tmp_path / "cdc-tasks" / "foo" / "progress-task.txt").write_text("x")
+        (tmp_path / "cdc-tasks" / "foo" / "init").write_text("i")
+
+        plan_check = subprocess.run(
+            ["git", "-C", path, "check-ignore", "-v", "cdc-tasks/foo/plan"],
+            capture_output=True,
+            text=True,
+        )
+        assert plan_check.returncode == 0
+        assert "cdc-tasks/**/plan" in plan_check.stdout
+
+        prog_check = subprocess.run(
+            ["git", "-C", path, "check-ignore", "-v", "cdc-tasks/foo/progress-task.txt"],
+            capture_output=True,
+            text=True,
+        )
+        assert prog_check.returncode == 0
+
+        init_check = subprocess.run(
+            ["git", "-C", path, "check-ignore", "-v", "cdc-tasks/foo/init"],
+            capture_output=True,
+            text=True,
+        )
+        assert init_check.returncode == 1
+
+    def test_idempotent_single_block(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _make_commit(path)
+        svc = Service(path, _Log())
+        svc.ensure_local_ignore("cdc-tasks")
+        svc.ensure_local_ignore("cdc-tasks")
+        content = self._read_exclude(path)
+        assert content.count("# >>> cadence (managed) >>>") == 1
+        assert content.count("# <<< cadence (managed) <<<") == 1
+
+    def test_swallows_backend_error_and_warns(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _make_commit(path)
+        log = _Log()
+        svc = Service(path, log)
+
+        def boom(_lines: list[str]) -> None:
+            raise OSError("disk full")
+
+        svc._repo.write_managed_exclude = boom  # type: ignore[method-assign]
+        svc.ensure_local_ignore("cdc-tasks")
+        assert any("could not update" in m and "disk full" in m for m in log.messages)
+
+    def test_empty_tasks_root_is_noop(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        _make_commit(path)
+        svc = Service(path, _Log())
+        svc.ensure_local_ignore("")
+        exclude = tmp_path / ".git" / "info" / "exclude"
+        if exclude.exists():
+            assert "# >>> cadence (managed) >>>" not in exclude.read_text()
+
+
 class TestServiceWorktreePassThroughs:
     def _service_with_mock_backend(self, tmp_path: Path) -> tuple[Service, MagicMock]:
         _init_repo(str(tmp_path))

@@ -1424,6 +1424,141 @@ class TestSetupRuntime:
 
         assert mock_executor_cls.call_args.kwargs.get("cwd") is None
 
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_calls_ensure_local_ignore_with_tasks_root(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        _check: MagicMock,
+        mock_service_cls: MagicMock,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks")
+        mock_svc = MagicMock()
+        mock_service_cls.return_value = mock_svc
+
+        _setup_runtime(None, None)
+
+        mock_svc.ensure_local_ignore.assert_called_once_with("cdc-tasks")
+
+
+class TestEnsureLocalIgnoreWiring:
+    @staticmethod
+    def _init_repo(repo: Path, *, branch: str = "main") -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", "-b", branch, str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.name", "Test"],
+            check=True,
+        )
+        readme = repo / "README.md"
+        readme.write_text("hello\n")
+        subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "initial"], check=True)
+
+    def test_init_writes_managed_block(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        monkeypatch.chdir(repo)
+
+        run_task_init_mode("feat-x")
+
+        exclude = (repo / ".git" / "info" / "exclude").read_text()
+        assert "# >>> cadence (managed) >>>" in exclude
+        assert "# <<< cadence (managed) <<<" in exclude
+        for pattern in (
+            "cdc-tasks/**/plan",
+            "cdc-tasks/**/plan-completed",
+            "cdc-tasks/**/progress-*.txt",
+            "cdc-tasks/**/progress-*.jsonl",
+            "cdc-tasks/**/config.yaml",
+            "cdc-tasks/**/report-*.md",
+        ):
+            assert pattern in exclude
+
+    def test_setup_runtime_re_registers_after_exclude_removed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        monkeypatch.chdir(repo)
+
+        run_task_init_mode("feat-y")
+
+        exclude_path = repo / ".git" / "info" / "exclude"
+        exclude_path.unlink()
+        assert not exclude_path.exists()
+
+        with patch("cadence.cli.check_claude_dep"):
+            _setup_runtime(None, None)
+
+        re_registered = exclude_path.read_text()
+        assert "# >>> cadence (managed) >>>" in re_registered
+        assert "cdc-tasks/**/plan" in re_registered
+
+    def test_status_does_not_modify_exclude(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "feat-x"], check=True)
+        (repo / "cdc-tasks" / "feat-x").mkdir(parents=True)
+        (repo / "cdc-tasks" / "feat-x" / "init").write_text("scaffold")
+
+        exclude_path = repo / ".git" / "info" / "exclude"
+        original = exclude_path.read_text() if exclude_path.exists() else None
+
+        monkeypatch.chdir(repo)
+        run_status_mode(current_only=False, json_output=False)
+
+        now = exclude_path.read_text() if exclude_path.exists() else None
+        assert now == original
+
+    def test_doctor_does_not_modify_exclude(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import contextlib
+
+        from cadence.cli import run_doctor_mode
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+
+        exclude_path = repo / ".git" / "info" / "exclude"
+        original = exclude_path.read_text() if exclude_path.exists() else None
+
+        monkeypatch.chdir(repo)
+        with contextlib.suppress(SystemExit):
+            run_doctor_mode()
+
+        now = exclude_path.read_text() if exclude_path.exists() else None
+        assert now == original
+
 
 class TestFindExistingPlan:
     def test_only_plan_exists_returns_plan_path(

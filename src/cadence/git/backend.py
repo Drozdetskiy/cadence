@@ -260,6 +260,49 @@ class ExternalBackend:
                 continue
         return stats
 
+    def git_common_dir(self) -> str:
+        code, stdout, stderr = self._run_with_status("rev-parse", "--git-common-dir")
+        if code != 0:
+            raise RuntimeError(f"git rev-parse --git-common-dir failed (exit {code}): {stderr}")
+        out = stdout.strip()
+        if not out:
+            raise RuntimeError("git rev-parse --git-common-dir returned empty")
+        if os.path.isabs(out):
+            return out
+        return os.path.normpath(os.path.join(self._path, out))
+
+    def write_managed_exclude(self, lines: list[str]) -> None:
+        common = self.git_common_dir()
+        info_dir = os.path.join(common, "info")
+        os.makedirs(info_dir, exist_ok=True)
+        target = os.path.join(info_dir, "exclude")
+
+        begin = "# >>> cadence (managed) >>>"
+        end = "# <<< cadence (managed) <<<"
+        header = "# Auto-managed by cadence — do not edit; regenerated on each phase."
+
+        block_body = [begin, header, *lines, end]
+        block_text = "\n".join(block_body)
+
+        existing = ""
+        if os.path.exists(target):
+            with open(target, encoding="utf-8") as f:
+                existing = f.read()
+
+        if begin in existing and end in existing:
+            pre, _, rest = existing.partition(begin)
+            _, _, post = rest.partition(end)
+            new_text = pre + block_text + post
+        else:
+            if existing and not existing.endswith("\n"):
+                existing += "\n"
+            new_text = existing + block_text + "\n"
+
+        tmp = target + ".cadence.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        os.replace(tmp, target)
+
     def worktree_add(self, path: str, branch: str, base: str) -> None:
         resolved = self._resolve_ref(base)
         if not resolved:

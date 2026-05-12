@@ -345,6 +345,90 @@ class TestExternalBackendWorktrees:
         assert "no-such-base" in str(excinfo.value)
 
 
+class TestExternalBackendGitCommonDir:
+    def test_normal_repo_returns_dot_git(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        be = ExternalBackend(path)
+        common = be.git_common_dir()
+        assert os.path.isabs(common)
+        assert os.path.realpath(common) == os.path.realpath(os.path.join(path, ".git"))
+
+    def test_worktree_returns_main_git_dir(self, tmp_path: Path) -> None:
+        main = tmp_path / "repo"
+        main.mkdir()
+        main_path = str(main)
+        _init_repo(main_path, branch="main")
+        _commit(main_path, filename="a.txt", content="a")
+
+        wt = tmp_path / "wt"
+        subprocess.run(
+            ["git", "-C", main_path, "worktree", "add", str(wt), "-b", "feature"],
+            capture_output=True,
+            check=True,
+            env=_git_env(),
+        )
+
+        be = ExternalBackend(str(wt))
+        common = be.git_common_dir()
+        assert os.path.realpath(common) == os.path.realpath(os.path.join(main_path, ".git"))
+
+
+class TestExternalBackendWriteManagedExclude:
+    def _read_exclude(self, path: str) -> str:
+        with open(os.path.join(path, ".git", "info", "exclude")) as f:
+            return f.read()
+
+    def test_creates_info_dir_and_file_when_missing(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        info_dir = tmp_path / ".git" / "info"
+        if info_dir.exists():
+            for child in info_dir.iterdir():
+                child.unlink()
+            info_dir.rmdir()
+        assert not info_dir.exists()
+        be = ExternalBackend(path)
+        be.write_managed_exclude(["cdc-tasks/**/plan"])
+        content = self._read_exclude(path)
+        assert "# >>> cadence (managed) >>>" in content
+        assert "cdc-tasks/**/plan" in content
+        assert "# <<< cadence (managed) <<<" in content
+
+    def test_appends_block_when_file_exists_without_block(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        target = tmp_path / ".git" / "info" / "exclude"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# user wrote this\nuser-ignore-me\n")
+        be = ExternalBackend(path)
+        be.write_managed_exclude(["a/**", "b/**"])
+        content = target.read_text()
+        assert content.startswith("# user wrote this\nuser-ignore-me\n")
+        assert "# >>> cadence (managed) >>>" in content
+        assert "a/**" in content
+        assert "b/**" in content
+
+    def test_replaces_block_in_place_without_duplicating(self, tmp_path: Path) -> None:
+        path = str(tmp_path)
+        _init_repo(path)
+        target = tmp_path / ".git" / "info" / "exclude"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# above\nabove-ignore\n")
+        be = ExternalBackend(path)
+        be.write_managed_exclude(["v1/**"])
+        with open(target, "a") as f:
+            f.write("\n# below\nbelow-ignore\n")
+        be.write_managed_exclude(["v2/**"])
+        content = target.read_text()
+        assert content.count("# >>> cadence (managed) >>>") == 1
+        assert content.count("# <<< cadence (managed) <<<") == 1
+        assert "v2/**" in content
+        assert "v1/**" not in content
+        assert "# above\nabove-ignore\n" in content
+        assert "# below\nbelow-ignore\n" in content
+
+
 class TestExternalBackendDiffFingerprint:
     def test_clean(self, tmp_path: Path) -> None:
         path = str(tmp_path)

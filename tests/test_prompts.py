@@ -118,6 +118,14 @@ class TestBuildTaskPrompt:
             "Custom task: /tmp/p.md goal=implementation of plan at /tmp/p.md branch=develop"
         )
 
+    def test_warns_against_staging_plan_or_running_git_add_all(self) -> None:
+        result = build_task_prompt(
+            plan_file="/tmp/plan.md",
+            progress_file="/tmp/progress.txt",
+        )
+        assert "NEVER stage /tmp/plan.md" in result
+        assert "skip the commit" in result
+
 
 class TestBuildPlanPrompt:
     def test_does_not_include_documentation_update_task(self) -> None:
