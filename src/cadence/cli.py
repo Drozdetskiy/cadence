@@ -389,6 +389,8 @@ def _setup_runtime(
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
 
+    git_svc.ensure_local_ignore(cfg.tasks_root)
+
     holder = PhaseHolder()
     colors = Colors(cfg.colors)
     idle_timeout = parse_duration(cfg.idle_timeout)
@@ -1418,6 +1420,8 @@ def run_task_init_mode(
     except RuntimeError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise SystemExit(1) from None
+
+    git_svc.ensure_local_ignore(cfg.tasks_root)
 
     try:
         git_svc.ensure_has_commits(

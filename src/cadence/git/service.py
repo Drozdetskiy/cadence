@@ -101,6 +101,23 @@ class Service:
     def worktree_exists(self, path: str) -> bool:
         return self._repo.worktree_exists(path)
 
+    def ensure_local_ignore(self, tasks_root: str) -> None:
+        root = (tasks_root or "").strip().replace("\\", "/").rstrip("/")
+        if not root:
+            return
+        patterns = [
+            f"{root}/**/plan",
+            f"{root}/**/plan-completed",
+            f"{root}/**/progress-*.txt",
+            f"{root}/**/progress-*.jsonl",
+            f"{root}/**/config.yaml",
+            f"{root}/**/report-*.md",
+        ]
+        try:
+            self._repo.write_managed_exclude(patterns)
+        except (RuntimeError, OSError) as exc:
+            self._log.warn("could not update .git/info/exclude: %s", exc)
+
     def create_branch_for_plan(self, plan_file: str, default_branch: str) -> None:
         resolved_plan = self._resolve_filesystem_case(plan_file)
         branch = self._prepare_plan_branch(resolved_plan, default_branch)
