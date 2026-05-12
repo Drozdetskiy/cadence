@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.24.0 - 2026-05-13
+
+### Changed
+
+- Plan and progress files are now automatically excluded from git staging via a managed block in `.git/info/exclude` written at every phase entry point — they can no longer be accidentally committed.
+- Task prompt instructs Claude to stage files by explicit path and skip the commit when only the plan checkbox changed.
+
 ## v0.23.0 - 2026-05-12
 
 ### New Features
