@@ -4502,7 +4502,9 @@ class TestRunSquashMode:
         from cadence.config import Config
 
         mock_config.return_value = Config(tasks_root="cdc-tasks")
-        mock_service_cls.return_value = self._setup_mock_service(is_dirty=True)
+        svc = self._setup_mock_service(is_dirty=True)
+        svc.dirty_status_lines.return_value = [" M src/foo.py"]
+        mock_service_cls.return_value = svc
 
         task_dir = tmp_path / "cdc-tasks" / "feat-x"
         task_dir.mkdir(parents=True)
@@ -4517,7 +4519,9 @@ class TestRunSquashMode:
             os.chdir(original_cwd)
 
         assert excinfo.value.code == 2
-        assert "uncommitted changes" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "uncommitted changes" in err
+        assert "src/foo.py" in err
 
     @patch("cadence.cli.Service")
     @patch("cadence.cli.load_config")
@@ -5728,6 +5732,7 @@ class TestRunChainMode:
     ) -> None:
         mock_svc = MagicMock()
         mock_svc.is_dirty.return_value = True
+        mock_svc.dirty_status_lines.return_value = [" M src/leaked.py"]
         mock_svc.current_branch.return_value = "main"
         self._make_setup_patch(mock_setup, mock_svc)
 
@@ -5736,8 +5741,56 @@ class TestRunChainMode:
         with pytest.raises(SystemExit) as excinfo:
             run_chain_mode(chain)
         assert excinfo.value.code == 2
-        assert "uncommitted changes present" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "uncommitted changes present" in err
+        assert "src/leaked.py" in err
         mock_plan.assert_not_called()
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_dirty_between_chain_tasks_aborts(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        mock_svc = MagicMock()
+        mock_svc.is_dirty.side_effect = [False, False, True]
+        mock_svc.dirty_status_lines.return_value = [" M src/leaked.py"]
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        self._make_setup_patch(mock_setup, mock_svc)
+
+        for name in ("alpha", "beta"):
+            (tmp_path / "cdc-tasks" / name).mkdir(parents=True)
+            (tmp_path / "cdc-tasks" / name / "init").touch()
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("alpha\nbeta\n")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_chain_mode(chain)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        assert mock_plan.call_count == 1
+        assert mock_task.call_count == 1
+        assert mock_squash.call_count == 1
+        err = capsys.readouterr().err
+        assert "src/leaked.py" in err
+        assert "at start of task 2/2 (beta)" in err
+        assert "chain failed at task 2/2: beta" in err
 
     @patch("cadence.cli.run_squash_mode")
     @patch("cadence.cli._run_task_on_current_branch")
@@ -6436,6 +6489,34 @@ class TestRunChainParallel:
             assert f"[chain] {name}: started" in out
             assert f"[chain] {name}: completed" in out
         assert "[chain] complete: 3/3 succeeded" in out
+
+    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli._setup_runtime")
+    def test_dirty_working_tree_lists_files(
+        self,
+        mock_setup: MagicMock,
+        mock_plan: MagicMock,
+        mock_task: MagicMock,
+        mock_squash: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        svc = self._make_svc(tmp_path)
+        svc.is_dirty.return_value = True
+        svc.dirty_status_lines.return_value = [" M src/leaked.py"]
+        self._make_setup_patch(mock_setup, svc)
+
+        chain = tmp_path / "chain.txt"
+        chain.write_text("task-a\n")
+        with pytest.raises(SystemExit) as excinfo:
+            run_chain_parallel(chain, parallel=2)
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "uncommitted changes present" in err
+        assert "src/leaked.py" in err
+        mock_plan.assert_not_called()
 
     @patch("cadence.cli.run_squash_mode")
     @patch("cadence.cli._run_task_on_current_branch")

@@ -157,6 +157,40 @@ class TestExternalBackendDirty:
         be = ExternalBackend(str(tmp_path))
         assert be.is_dirty() is True
 
+    def test_dirty_status_lines_clean(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        be = ExternalBackend(str(tmp_path))
+        assert be.dirty_status_lines() == []
+
+    def test_dirty_status_lines_modified(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        (tmp_path / "README.md").write_text("changed")
+        be = ExternalBackend(str(tmp_path))
+        lines = be.dirty_status_lines()
+        assert len(lines) == 1
+        assert "README.md" in lines[0]
+        assert lines[0].startswith(" M") or lines[0].startswith("M ")
+
+    def test_dirty_status_lines_untracked_skipped(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        (tmp_path / "new.txt").write_text("x")
+        be = ExternalBackend(str(tmp_path))
+        assert be.dirty_status_lines() == []
+
+    def test_dirty_status_lines_mixed(self, tmp_path: Path) -> None:
+        _init_repo(str(tmp_path))
+        _make_commit(str(tmp_path))
+        (tmp_path / "README.md").write_text("changed")
+        (tmp_path / "extra.txt").write_text("untracked")
+        be = ExternalBackend(str(tmp_path))
+        lines = be.dirty_status_lines()
+        assert len(lines) == 1
+        assert "README.md" in lines[0]
+        assert all("extra.txt" not in line for line in lines)
+
     def test_has_changes_other_than(self, tmp_path: Path) -> None:
         _init_repo(str(tmp_path))
         _make_commit(str(tmp_path))
