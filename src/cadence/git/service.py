@@ -58,6 +58,9 @@ class Service:
     def is_dirty(self) -> bool:
         return self._repo.is_dirty()
 
+    def dirty_status_lines(self) -> list[str]:
+        return self._repo.dirty_status_lines()
+
     def diff_stats(self, base_branch: str) -> DiffStats:
         return self._repo.diff_stats(base_branch)
 

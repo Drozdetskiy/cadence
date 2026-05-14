@@ -137,17 +137,21 @@ class ExternalBackend:
                     hasher.update(blob.strip().encode("utf-8"))
         return hasher.hexdigest()
 
-    def is_dirty(self) -> bool:
+    def dirty_status_lines(self) -> list[str]:
         code, stdout, _ = self._run_with_status("status", "--porcelain")
         if code != 0:
-            return False
+            return []
+        out: list[str] = []
         for line in stdout.splitlines():
             if not line:
                 continue
             if line.startswith("??"):
                 continue
-            return True
-        return False
+            out.append(line)
+        return out
+
+    def is_dirty(self) -> bool:
+        return bool(self.dirty_status_lines())
 
     def has_changes_other_than(self, path: str) -> list[str]:
         rel = self._to_relative(path)

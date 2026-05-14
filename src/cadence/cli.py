@@ -184,6 +184,12 @@ def _validate_chain_tasks(tasks_root: str, names: list[str]) -> list[str]:
     return warnings
 
 
+def _echo_dirty_status(lines: list[str], header: str | None = None) -> None:
+    typer.echo(header or "error: uncommitted changes present:", err=True)
+    for line in lines:
+        typer.echo(f"  {line}", err=True)
+
+
 def _resolve_chain_default_branch(tasks_root: str, name: str, global_default: str) -> str:
     task_dir = Path(tasks_root) / name
     yaml_path = find_yaml_config(task_dir)
@@ -955,7 +961,7 @@ def run_squash_mode(
         raise SystemExit(2)
 
     if git_svc.is_dirty():
-        typer.echo("error: uncommitted changes present", err=True)
+        _echo_dirty_status(git_svc.dirty_status_lines())
         raise SystemExit(2)
 
     ahead = git_svc.commits_ahead(default_branch)
@@ -1709,7 +1715,7 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
         raise SystemExit(1) from None
 
     if git_svc.is_dirty():
-        typer.echo("error: uncommitted changes present", err=True)
+        _echo_dirty_status(git_svc.dirty_status_lines())
         raise SystemExit(2)
     if git_svc.current_branch() == "":
         typer.echo("error: cannot chain from a detached HEAD", err=True)
@@ -1749,6 +1755,14 @@ def run_chain_mode(chain_file: Path, *, config: Path | None = None) -> None:
                 git_svc.checkout_branch(name)
             else:
                 git_svc.create_branch_from(name, task_default)
+            if git_svc.is_dirty():
+                _echo_dirty_status(
+                    git_svc.dirty_status_lines(),
+                    header=(
+                        f"error: uncommitted changes present at start of task {i}/{total} ({name}):"
+                    ),
+                )
+                raise SystemExit(2)
             _run_plan_on_current_branch(config=config, chain_collector=chain_stats)
             _bail_if_interrupted(i, name)
             _run_task_on_current_branch(config=config, chain_collector=chain_stats)
@@ -1924,7 +1938,7 @@ def run_chain_parallel(
         raise SystemExit(1) from None
 
     if git_svc.is_dirty():
-        typer.echo("error: uncommitted changes present", err=True)
+        _echo_dirty_status(git_svc.dirty_status_lines())
         raise SystemExit(2)
     if git_svc.current_branch() == "":
         typer.echo("error: cannot chain from a detached HEAD", err=True)
