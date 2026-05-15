@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.25.0 - 2026-05-15
+
+### Changed
+
+- `cadence chain` now checks for uncommitted changes before each task (not just at chain start), so dirt introduced mid-chain is caught early with the task position and the list of dirty files.
+- Dirty-tree errors from `cadence squash` and `cadence chain` now list the offending files instead of a bare message.
+
 ## v0.24.0 - 2026-05-13
 
 ### Changed
