@@ -2304,6 +2304,250 @@ class TestRunTaskModeReviewExecutor:
             assert deps.review_executor is None
 
 
+class TestRunTaskModeReviewSecondExecutor:
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_distinct_review_second_model_passes_second_executor(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0,
+            task_model="sonnet",
+            review_model="opus",
+            review_second_model="haiku",
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        primary = MagicMock(name="primary")
+        secondary = MagicMock(name="secondary")
+        tertiary = MagicMock(name="tertiary")
+        mock_executor_cls.side_effect = [primary, secondary, tertiary]
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_task_mode(f)
+
+            assert mock_executor_cls.call_count == 3
+            deps = mock_runner_cls.call_args.args[2]
+            assert deps.executor is primary
+            assert deps.review_executor is secondary
+            assert deps.review_second_executor is tertiary
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_matching_review_second_model_leaves_second_executor_none(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0,
+            task_model="sonnet",
+            review_model="opus",
+            review_second_model="opus",
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "1m"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        primary = MagicMock(name="primary")
+        secondary = MagicMock(name="secondary")
+        mock_executor_cls.side_effect = [primary, secondary]
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        f = tmp_path / "plan.md"
+        f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_task_mode(f)
+
+            assert mock_executor_cls.call_count == 2
+            deps = mock_runner_cls.call_args.args[2]
+            assert deps.executor is primary
+            assert deps.review_executor is secondary
+            assert deps.review_second_executor is None
+
+
+class TestRunReviewModeReviewSecondExecutor:
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_distinct_review_second_model_passes_second_executor(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0,
+            task_model="sonnet",
+            review_model="opus",
+            review_second_model="haiku",
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        primary = MagicMock(name="primary")
+        secondary = MagicMock(name="secondary")
+        mock_executor_cls.side_effect = [primary, secondary]
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode()
+
+            assert mock_executor_cls.call_count == 2
+            deps = mock_runner_cls.call_args.args[2]
+            second_call_model = mock_executor_cls.call_args_list[1].kwargs["model"]
+            assert second_call_model == "opus"
+            first_call_model = mock_executor_cls.call_args_list[0].kwargs["model"]
+            assert first_call_model == "haiku"
+            assert deps.executor is secondary
+            assert deps.review_second_executor is primary
+
+    @patch("cadence.cli._install_sigquit")
+    @patch("cadence.cli.TerminalCollector")
+    @patch("cadence.cli.ClaudeExecutor")
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli.Logger")
+    def test_matching_review_second_model_leaves_second_executor_none(
+        self,
+        mock_logger_cls: MagicMock,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        mock_executor_cls: MagicMock,
+        mock_terminal_cls: MagicMock,
+        _sigquit: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(
+            iteration_delay_ms=0,
+            task_model="sonnet",
+            review_model="opus",
+            review_second_model="opus",
+        )
+
+        mock_log = MagicMock()
+        mock_log.path = str(tmp_path / "progress.txt")
+        mock_log.elapsed.return_value = "0m30s"
+        mock_logger_cls.return_value = mock_log
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "feature"
+        mock_svc.diff_stats.return_value = DiffStats()
+        mock_service_cls.return_value = mock_svc
+
+        primary = MagicMock(name="primary")
+        mock_executor_cls.return_value = primary
+
+        mock_terminal_cls.return_value = MagicMock()
+
+        with patch("cadence.cli.Runner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner.run.return_value = True
+            mock_runner_cls.return_value = mock_runner
+
+            run_review_mode()
+
+            assert mock_executor_cls.call_count == 1
+            deps = mock_runner_cls.call_args.args[2]
+            assert deps.executor is primary
+            assert deps.review_second_executor is None
+
+
 class TestConfigFlag:
     @patch("cadence.cli.TerminalCollector")
     @patch("cadence.cli.ClaudeExecutor")

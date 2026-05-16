@@ -28,6 +28,7 @@ class Config:
     plan_model: str = "claude-opus-4-7"
     task_model: str = "claude-opus-4-7"
     review_model: str = "claude-opus-4-7"
+    review_second_model: str = ""
     squash_model: str = "claude-sonnet-4-6"
     report_api_changes_model: str = ""
     report_test_cases_model: str = ""
@@ -158,6 +159,7 @@ def load_config(config_dir: Path | None) -> Config:
         "plan_model",
         "task_model",
         "review_model",
+        "review_second_model",
         "squash_model",
         "report_api_changes_model",
         "report_test_cases_model",
@@ -232,6 +234,7 @@ class YamlOverrides:
     plan_model: str | None = None
     task_model: str | None = None
     review_model: str | None = None
+    review_second_model: str | None = None
     squash_model: str | None = None
     report_api_changes_model: str | None = None
     report_test_cases_model: str | None = None
@@ -258,6 +261,7 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
         "plan",
         "task",
         "review",
+        "review_second",
         "squash",
         "report_api_changes",
         "report_test_cases",
@@ -274,6 +278,8 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
             overrides.task_model = model
         elif section == "review":
             overrides.review_model = model
+        elif section == "review_second":
+            overrides.review_second_model = model
         elif section == "squash":
             overrides.squash_model = model
         elif section == "report_api_changes":
@@ -302,6 +308,8 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.task_model = overrides.task_model
     if overrides.review_model is not None:
         cfg.review_model = overrides.review_model
+    if overrides.review_second_model is not None:
+        cfg.review_second_model = overrides.review_second_model
     if overrides.squash_model is not None:
         cfg.squash_model = overrides.squash_model
     if overrides.report_api_changes_model is not None:

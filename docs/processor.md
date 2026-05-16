@@ -47,7 +47,8 @@ class Config:
     task_retry_count: int       # retry on FAILED
     plan_model: str             # model for plan creation phase
     task_model: str             # model for task phase
-    review_model: str           # model for review phases
+    review_model: str           # model for review phases (first pass; also second pass fallback)
+    review_second_model: str    # model for the second review pass (loop); empty = inherit review_model
     default_branch: str         # default branch (from git)
     app_config: AppConfig       # full application config
 ```
@@ -88,17 +89,26 @@ class GitChecker(Protocol):
     def diff_fingerprint(self) -> str: ...       # working-tree diff hash
 ```
 
-### Executors dataclass
+### Dependencies dataclass
 
-Groups executor dependencies:
+Groups Runner dependencies (executors + collaborators):
 ```python
 @dataclass
-class Executors:
-    claude: Executor                     # required: task phase
-    review_claude: Executor | None       # optional: separate model for reviews
+class Dependencies:
+    executor: Executor                          # required: primary executor (task phase)
+    input_collector: InputCollector
+    logger: Logger
+    holder: PhaseHolder
+    review_executor: Executor | None = None     # optional: first review pass; falls back to executor
+    review_second_executor: Executor | None = None  # optional: second review pass (loop); falls back to review_executor
+    plan_model: str = ""
+    task_model: str = ""
+    review_model: str = ""
 ```
 
-If `review_claude` is not set (None), the same executor is used as for claude.
+Fallback chain at runtime:
+- First review pass uses `Runner._review_executor` -> `review_executor` or `executor`.
+- Review loop uses `Runner._review_loop_executor` -> `review_second_executor` or `_review_executor`.
 
 ### Constructors
 
@@ -256,43 +266,71 @@ Key properties:
 - For malformed plans (checkboxes without task headers): checks the whole file
 - break-resume: the same task restarts with a fresh session, the plan is reread
 
-### Review phase: run_claude_review(prompt)
+### Review phase: run_claude_review(prompt) — first pass
 
-A single review pass. Used for "review 0: all findings" with ReviewFirstPrompt (4 agents).
+The FIRST review pass: a single one-shot review run.
+
+- Prompt source: `defaults/prompts/review_first.txt` (built via `build_review_first_prompt`).
+- Agents: 4 — `{{agent:quality}}`, `{{agent:implementation}}`, `{{agent:testing}}`, `{{agent:simplification}}` — emits all findings (not just critical/major).
+- Executor: `self._review_executor` (i.e. `Dependencies.review_executor` with fallback to the primary `executor`).
+- Termination signal: ONLY the legacy `SignalReviewDone` (`<<<CADENCE:REVIEW_DONE>>>`). The new `SignalReviewSecondDone` is NOT recognised here — first-pass behaviour is frozen.
+- Logged section: `claude review 0: all findings`.
 
 ```
 1. result = run_with_limit_retry(review_claude.run, prompt, "claude")
 2. Error: handle_pattern_match_error -> raise
 3. FAILED signal: raise error
-4. REVIEW_DONE signal: ok
+4. REVIEW_DONE signal: ok (sets last_review_done = True)
 5. No REVIEW_DONE: warning "did not complete cleanly", continue
 ```
 
-Sets `Runner.last_review_done` to `True` on `REVIEW_DONE` and `False` otherwise (including the "did not complete cleanly" path). `_run_review_pipeline` reads this flag to skip `run_claude_review_loop()` when round 1 finished cleanly.
+Sets `Runner.last_review_done` to `True` on `SignalReviewDone` and `False` otherwise (including the "did not complete cleanly" path). `_run_review_pipeline` reads this flag to skip `run_claude_review_loop()` when round 1 finished cleanly. A misbehaving first-pass prompt that emits `SignalReviewSecondDone` will therefore leave `last_review_done = False`, and the loop will still run — the new signal is meaningful ONLY in the loop phase.
 
-### Review loop: run_claude_review_loop()
+### Review loop: run_claude_review_loop() — second pass
 
-Iterative review loop with ReviewSecondPrompt (2 agents: critical/major findings only).
+The SECOND review pass: an iterative loop, invoked from `_run_review_pipeline` after `run_claude_review` returns, and skipped when the first pass set `last_review_done = True` (i.e. returned `SignalReviewDone` cleanly).
+
+- Prompt source: `defaults/prompts/review_second.txt` (built via `build_review_second_prompt`).
+- Agents: 2 — `{{agent:quality}}`, `{{agent:implementation}}` — narrows scope to critical/major findings only.
+- Executor: `self._review_loop_executor`, i.e. `Dependencies.review_second_executor` if set, else `self._review_executor` (which itself falls back to the primary `executor`). This lets the loop run on a different model from the first pass without affecting other phases.
+- Termination signals (dual acceptance):
+  - `SignalReviewSecondDone` (`<<<CADENCE:REVIEW_SECOND_DONE>>>`) — emitted by the bundled `review_second.txt`.
+  - `SignalReviewDone` (`<<<CADENCE:REVIEW_DONE>>>`) — accepted for backward compatibility with locally overridden `review_second.txt` files that users authored before the new signal existed.
+- Head-hash short-circuit: if `GitChecker.head_hash()` is unchanged between the start and end of an iteration, the loop returns ("no changes detected") on the assumption that Claude made no commits and therefore had nothing to fix. This check is skipped when the previous session timed out, because a timed-out session may have been killed before a commit landed.
+- Logged section per iteration: `claude review N: critical/major`.
 
 ```
 max_review_iterations = max(3, max_iterations // 10)
 
 loop i = 1..max_review_iterations:
-  1. print_section(ClaudeReviewSection(i, ": critical/major"))
+  1. print_section(ClaudeReviewSection(i, "critical/major"))
   2. head_before = head_hash() (for no-commit detection)
-  3. result = run_with_limit_retry(review_claude.run, ReviewSecondPrompt, "claude")
+  3. result = run_with_limit_retry(review_loop_executor.run, ReviewSecondPrompt, "claude")
   4. Error: handle_pattern_match_error -> return
   5. FAILED signal: raise error
-  6. REVIEW_DONE signal: return ("no more findings")
+  6. REVIEW_DONE or REVIEW_SECOND_DONE signal: return ("no more findings")
   7. last_session_timed_out: skip HEAD check, continue
   8. HEAD unchanged (head_after == head_before): return ("no changes detected")
-  9. log "issues fixed, running another review iteration..."
+  9. log "issues fixed, running another review iteration"
   10. sleep(iteration_delay)
 
 max iterations reached: log warning, return
 ```
 
-No-commit detection logic: if Claude made no commits, there was nothing to fix. Session timeout bypasses this check (the session may have been killed before a commit landed).
+### Signal vocabulary (review pipeline)
+
+| Signal                     | Constant                  | Helper                    | Where recognised                                      | Effect                                                                 |
+|----------------------------|---------------------------|---------------------------|-------------------------------------------------------|------------------------------------------------------------------------|
+| `<<<CADENCE:REVIEW_DONE>>>`        | `SignalReviewDone`        | `is_review_done()`        | first pass (`run_claude_review`); also accepted in loop | first pass: terminate + set `last_review_done = True` (skip the loop); loop: terminate iteration |
+| `<<<CADENCE:REVIEW_SECOND_DONE>>>` | `SignalReviewSecondDone`  | `is_review_second_done()` | loop ONLY (`run_claude_review_loop`)                  | loop: terminate iteration; ignored by the first pass — does NOT set `last_review_done`             |
+
+The two helpers are disjoint by design: `is_review_done(SignalReviewSecondDone) == False` and vice versa.
+
+### Model precedence (review pipeline)
+
+- `cfg.review_model` selects the first-pass executor. When it differs from `cfg.task_model`, the CLI builds a dedicated `review_executor`; otherwise the first pass shares the primary task executor.
+- `cfg.review_second_model` selects the loop executor. When it is set AND differs from the effective first-pass model (`cfg.review_model` if a separate first-pass executor was built, else `cfg.task_model`), the CLI builds a dedicated `review_second_executor`; otherwise the loop falls back to `review_executor`, which in turn falls back to the primary executor. An empty `review_second_model` therefore means "inherit the first-pass model" — current behaviour is preserved for users who do not set the new key.
+- Net fallback chain inside `Runner`: loop -> `review_second_executor` -> `review_executor` -> primary `executor`.
 
 ## Session timeout and idle timeout
 
@@ -461,9 +499,12 @@ Defined in `processor/signals.py`.
 ### Helper functions
 
 ```
-is_review_done(signal)  -> signal == "<<<CADENCE:REVIEW_DONE>>>"
-is_plan_ready(signal)   -> signal == "<<<CADENCE:PLAN_READY>>>"
+is_review_done(signal)         -> signal == "<<<CADENCE:REVIEW_DONE>>>"
+is_review_second_done(signal)  -> signal == "<<<CADENCE:REVIEW_SECOND_DONE>>>"
+is_plan_ready(signal)          -> signal == "<<<CADENCE:PLAN_READY>>>"
 ```
+
+`is_review_done` and `is_review_second_done` are disjoint — neither returns True for the other's constant. See "Signal vocabulary (review pipeline)" above for which phases recognise which signal.
 
 ### QUESTION signal
 

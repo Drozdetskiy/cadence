@@ -38,6 +38,7 @@ class TestConfigDefaults:
         assert cfg.plan_model == "claude-opus-4-7"
         assert cfg.task_model == "claude-opus-4-7"
         assert cfg.review_model == "claude-opus-4-7"
+        assert cfg.review_second_model == ""
         assert cfg.squash_model == "claude-sonnet-4-6"
         assert cfg.iteration_delay_ms == 2000
         assert cfg.task_retry_count == 1
@@ -180,6 +181,19 @@ class TestLoadConfig:
         yaml_path.write_text("claude_command: x\n")
         cfg = load_config(tmp_path)
         assert cfg.squash_model == "claude-sonnet-4-6"
+
+    def test_review_second_model_default_is_empty(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("claude_command: x\n")
+        cfg = load_config(tmp_path)
+        assert cfg.review_second_model == ""
+
+    def test_review_second_model_top_level_key_is_loaded(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("review_second_model: claude-sonnet-4-6\n")
+        cfg = load_config(tmp_path)
+        assert cfg.review_second_model == "claude-sonnet-4-6"
+        assert cfg.review_model == "claude-opus-4-7"
 
     def test_load_report_api_changes_model(self, tmp_path: Path) -> None:
         yaml_path = tmp_path / "config.yaml"
@@ -469,6 +483,24 @@ class TestParseYamlOverrides:
         overrides = parse_yaml_overrides("default_branch: 42\n")
         assert overrides.default_branch is None
 
+    def test_review_second_model_block_is_parsed_from_yaml_overrides(self) -> None:
+        text = "review_second:\n  model: claude-haiku-4-5\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.review_second_model == "claude-haiku-4-5"
+        assert overrides.review_model is None
+        assert overrides.plan_model is None
+        assert overrides.task_model is None
+
+    def test_review_second_model_empty_value_ignored(self) -> None:
+        overrides = parse_yaml_overrides("review_second:\n  model:\n")
+        assert overrides.review_second_model is None
+
+    def test_review_second_model_alongside_review_model(self) -> None:
+        text = "review:\n  model: opus\nreview_second:\n  model: sonnet\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.review_model == "opus"
+        assert overrides.review_second_model == "sonnet"
+
     def test_squash_model_override(self) -> None:
         text = "squash:\n  model: claude-sonnet-4-6\n"
         overrides = parse_yaml_overrides(text)
@@ -640,6 +672,17 @@ class TestApplyYamlOverrides:
         cfg = Config(default_branch="main")
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.default_branch == "main"
+
+    def test_review_second_model_overrides(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(cfg, YamlOverrides(review_second_model="claude-haiku-4-5"))
+        assert cfg.review_second_model == "claude-haiku-4-5"
+
+    def test_review_second_model_unset_leaves_review_model_alone(self) -> None:
+        cfg = Config(review_model="preset-review", review_second_model="preset-second")
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.review_model == "preset-review"
+        assert cfg.review_second_model == "preset-second"
 
     def test_squash_model_overrides(self) -> None:
         cfg = Config()
