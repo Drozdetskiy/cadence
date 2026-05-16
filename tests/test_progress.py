@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from cadence.cli import compute_progress_path
+from cadence.cli_commands._shared import compute_progress_path
 from cadence.config import ColorConfig
 from cadence.progress.colors import Colors
 from cadence.progress.flock import lock_file, unlock_file
