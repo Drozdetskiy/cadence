@@ -62,7 +62,7 @@ class LimitPatternError(Exception):
 3. Then error patterns are checked
 4. If an error pattern is found -- `PatternMatchError` is returned
 
-The function `match_pattern(output, patterns)` is a case-insensitive substring search. Empty patterns and whitespace-only strings are skipped.
+The function `match_pattern(output, patterns)` is a case-sensitive substring search (mirrors `detect_signal`). Empty patterns and whitespace-only strings are skipped.
 
 ## ClaudeExecutor
 
@@ -280,4 +280,4 @@ Note: the SIGQUIT (Ctrl+\) break mechanism is not supported on Windows.
 `threading.Timer` with cancel/restart on each line. When it fires -- process.terminate() + os.killpg(). The timer is recreated after each cancel (threading.Timer does not support reset).
 
 ### Pattern matching
-`match_pattern()` is a trivial function. Case-insensitive substring via `pattern.lower() in text.lower()`.
+`match_pattern()` is a trivial function. Case-sensitive substring via `pattern in text`; mirrors `detect_signal` so both matchers reading the same stream share semantics.

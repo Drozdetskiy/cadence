@@ -69,9 +69,18 @@ class TestDetectSignal:
 
 
 class TestMatchPattern:
-    def test_case_insensitive(self) -> None:
-        result = match_pattern("You've Hit Your Limit", ["you've hit your limit"])
-        assert result == "you've hit your limit"
+    def test_case_sensitive_no_match(self) -> None:
+        assert match_pattern("You've Hit Your Limit", ["you've hit your limit"]) == ""
+
+    def test_case_sensitive_exact_match(self) -> None:
+        assert (
+            match_pattern("You've hit your limit now", ["You've hit your limit"])
+            == "You've hit your limit"
+        )
+
+    def test_mixed_case_pattern_must_match_exact(self) -> None:
+        assert match_pattern("rate limit", ["Rate Limit"]) == ""
+        assert match_pattern("Rate Limit hit", ["Rate Limit"]) == "Rate Limit"
 
     def test_substring_match(self) -> None:
         assert match_pattern("error: API Error: something", ["API Error:"]) == "API Error:"
