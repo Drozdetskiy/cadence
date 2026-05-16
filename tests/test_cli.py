@@ -10,17 +10,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cadence.cli import (
-    _auto_detect_and_run,
+from cadence.cli import app
+from cadence.cli_commands._shared import (
     _build_logger,
     _parse_chain_file,
     _resolve_chain_default_branch,
-    _run_plan_on_current_branch,
-    _run_task_on_current_branch,
     _setup_runtime,
     _sigint,
     _validate_chain_tasks,
-    app,
     check_claude_dep,
     compute_progress_path,
     compute_report_path,
@@ -28,17 +25,29 @@ from cadence.cli import (
     display_stats,
     find_existing_plan,
     resolve_version,
+    to_rel_path,
+)
+from cadence.cli_commands.auto import _auto_detect_and_run
+from cadence.cli_commands.chain import (
     run_chain_mode,
     run_chain_parallel,
+)
+from cadence.cli_commands.doctor import run_doctor_mode
+from cadence.cli_commands.init import run_task_init_mode
+from cadence.cli_commands.plan import (
+    _run_plan_on_current_branch,
     run_plan_mode,
+)
+from cadence.cli_commands.report import (
     run_report_api_changes_mode,
     run_report_test_cases_mode,
-    run_review_mode,
-    run_squash_mode,
-    run_status_mode,
-    run_task_init_mode,
+)
+from cadence.cli_commands.review import run_review_mode
+from cadence.cli_commands.squash import run_squash_mode
+from cadence.cli_commands.status import run_status_mode
+from cadence.cli_commands.task import (
+    _run_task_on_current_branch,
     run_task_mode,
-    to_rel_path,
 )
 from cadence.executor.claude_executor import Result
 from cadence.git import DiffStats
@@ -67,14 +76,14 @@ class TestCheckClaudeDep:
     def test_passes_when_found(self) -> None:
         from cadence.config import Config
 
-        with patch("cadence.cli.shutil.which", return_value="/usr/bin/claude"):
+        with patch("cadence.cli_commands._shared.shutil.which", return_value="/usr/bin/claude"):
             check_claude_dep(Config())
 
     def test_fails_when_not_found(self) -> None:
         from cadence.config import Config
 
         with (
-            patch("cadence.cli.shutil.which", return_value=None),
+            patch("cadence.cli_commands._shared.shutil.which", return_value=None),
             pytest.raises(SystemExit),
         ):
             check_claude_dep(Config())
@@ -87,13 +96,13 @@ class TestToRelPath:
         target = cwd / "src" / "file.py"
         target.parent.mkdir(parents=True)
         target.touch()
-        with patch("cadence.cli.Path.cwd", return_value=cwd):
+        with patch("cadence.cli_commands._shared.Path.cwd", return_value=cwd):
             result = to_rel_path(target)
         assert result == "src/file.py"
 
     def test_absolute_fallback(self, tmp_path: Path) -> None:
         target = tmp_path / "other" / "file.py"
-        with patch("cadence.cli.Path.cwd", return_value=tmp_path / "project"):
+        with patch("cadence.cli_commands._shared.Path.cwd", return_value=tmp_path / "project"):
             result = to_rel_path(target)
         assert str(target) in result
 
@@ -127,10 +136,10 @@ class TestRunPlanMode:
             run_plan_mode(f)
         assert excinfo.value.code == 2
 
-    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_not_git_repo(
         self,
         _check: MagicMock,
@@ -148,14 +157,14 @@ class TestRunPlanMode:
             run_plan_mode(f)
         assert excinfo.value.code == 1
 
-    @patch("cadence.cli.typer.echo")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.typer.echo")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_full_wiring_plan_ready(
         self,
         _svc: MagicMock,
@@ -193,14 +202,14 @@ class TestRunPlanMode:
         mock_log.print.assert_any_call("plan is ready")
         mock_echo.assert_any_call(f"run: cadence task {tmp_path / 'plan.md'}")
 
-    @patch("cadence.cli.typer.echo")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.typer.echo")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_repo_path_suppresses_run_task_hint(
         self,
         _svc: MagicMock,
@@ -240,13 +249,13 @@ class TestRunPlanMode:
             if args and isinstance(args[0], str):
                 assert not args[0].startswith("run: cadence task ")
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_executor_created_with_handlers(
         self,
         _svc: MagicMock,
@@ -282,13 +291,13 @@ class TestRunPlanMode:
         assert call_kwargs.kwargs.get("activity_handler") is not None
         assert call_kwargs.kwargs.get("output_handler") is not None
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_user_aborted(
         self,
         _svc: MagicMock,
@@ -328,7 +337,7 @@ class TestRunPlanMode:
         f.write_text("implement feature X")
         worktree = str(tmp_path / "wt")
 
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.plan._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit) as excinfo:
                 run_plan_mode(f, repo_path=worktree)
@@ -342,7 +351,7 @@ class TestRunPlanMode:
         f = tmp_path / "init"
         f.write_text("implement feature X")
 
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.plan._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit):
                 run_plan_mode(f)
@@ -351,14 +360,14 @@ class TestRunPlanMode:
         assert kwargs["repo_path"] == "."
         assert kwargs["claude_cwd"] is None
 
-    @patch("cadence.cli.Runner")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.Runner")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_injected_input_collector_is_used(
         self,
         _svc: MagicMock,
@@ -392,14 +401,14 @@ class TestRunPlanMode:
         assert deps.input_collector is sentinel_collector
         mock_terminal_cls.assert_not_called()
 
-    @patch("cadence.cli.Runner")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.Runner")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_default_input_collector_is_terminal(
         self,
         _svc: MagicMock,
@@ -433,15 +442,15 @@ class TestRunPlanMode:
         deps = mock_runner_cls.call_args.args[2]
         assert deps.input_collector is terminal_instance
 
-    @patch("cadence.cli.Runner")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.compute_progress_path")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.Runner")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands.plan.compute_progress_path")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_repo_path_resolves_plan_file_to_absolute(
         self,
         _svc: MagicMock,
@@ -508,9 +517,9 @@ class TestRunPlanModeImport:
         missing = tmp_path / "no-such.md"
 
         with (
-            patch("cadence.cli.ClaudeExecutor") as mock_executor_cls,
-            patch("cadence.cli._setup_runtime") as mock_setup,
-            patch("cadence.cli.Logger"),
+            patch("cadence.cli_commands._shared.ClaudeExecutor") as mock_executor_cls,
+            patch("cadence.cli_commands.plan._setup_runtime") as mock_setup,
+            patch("cadence.cli_commands._shared.Logger"),
         ):
             mock_setup.return_value = (
                 Config(iteration_delay_ms=0),
@@ -536,9 +545,9 @@ class TestRunPlanModeImport:
         big.write_bytes(b"x" * 100)
 
         with (
-            patch("cadence.cli.ClaudeExecutor") as mock_executor_cls,
-            patch("cadence.cli._setup_runtime") as mock_setup,
-            patch("cadence.cli.Logger"),
+            patch("cadence.cli_commands._shared.ClaudeExecutor") as mock_executor_cls,
+            patch("cadence.cli_commands.plan._setup_runtime") as mock_setup,
+            patch("cadence.cli_commands._shared.Logger"),
         ):
             mock_setup.return_value = (
                 Config(iteration_delay_ms=0, import_max_bytes=10),
@@ -554,13 +563,13 @@ class TestRunPlanModeImport:
             assert excinfo.value.code == 2
             mock_executor_cls.assert_not_called()
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_path_bound_import_includes_external_brief_in_prompt(
         self,
         _svc: MagicMock,
@@ -597,13 +606,13 @@ class TestRunPlanModeImport:
         assert "EXTERNAL_BRIEF_BODY" in prompt
         assert "# Task brief (init)" not in prompt
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_branch_bound_style_includes_both_init_and_external(
         self,
         _svc: MagicMock,
@@ -643,13 +652,13 @@ class TestRunPlanModeImport:
         assert "# External brief" in prompt
         assert "EXTERNAL_BRIEF_BODY" in prompt
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_qa_loop_still_triggers_with_import(
         self,
         _svc: MagicMock,
@@ -732,37 +741,37 @@ class TestSubcommandRouting:
         result = self._runner().invoke(app, ["bogus"])
         assert result.exit_code == 2
 
-    @patch("cadence.cli.run_task_init_mode")
+    @patch("cadence.cli_commands.init.run_task_init_mode")
     def test_init_calls_run_task_init_mode(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["init", "feat-x"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with("feat-x", config=None, template=None)
 
-    @patch("cadence.cli.run_task_init_mode")
+    @patch("cadence.cli_commands.init.run_task_init_mode")
     def test_init_forwards_template_flag(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["init", "feat-x", "--template", "feature"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with("feat-x", config=None, template="feature")
 
-    @patch("cadence.cli._auto_detect_and_run")
+    @patch("cadence.cli_commands.auto._auto_detect_and_run")
     def test_run_no_subcommand_calls_auto_detect(self, mock_auto: MagicMock) -> None:
         result = self._runner().invoke(app, ["run"])
         assert result.exit_code == 0
         mock_auto.assert_called_once_with(config=None)
 
-    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.plan._run_plan_on_current_branch")
     def test_run_plan_calls_branch_plan(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["run", "plan"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(config=None, import_path=None)
 
-    @patch("cadence.cli._run_task_on_current_branch")
+    @patch("cadence.cli_commands.task._run_task_on_current_branch")
     def test_run_task_calls_branch_task(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["run", "task"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(config=None)
 
-    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli_commands.plan.run_plan_mode")
     def test_plan_subcommand_calls_run_plan_mode(self, mock_run: MagicMock, tmp_path: Path) -> None:
         f = tmp_path / "prompt.md"
         f.write_text("implement X")
@@ -772,7 +781,7 @@ class TestSubcommandRouting:
         assert args[0] == f
         assert kwargs == {"config": None}
 
-    @patch("cadence.cli.run_task_mode")
+    @patch("cadence.cli_commands.task.run_task_mode")
     def test_task_subcommand_calls_run_task_mode(self, mock_run: MagicMock, tmp_path: Path) -> None:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n")
@@ -782,25 +791,25 @@ class TestSubcommandRouting:
         assert args[0] == f
         assert kwargs == {"config": None}
 
-    @patch("cadence.cli.run_review_mode")
+    @patch("cadence.cli_commands.review.run_review_mode")
     def test_review_no_base(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["review"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(None, config=None)
 
-    @patch("cadence.cli.run_review_mode")
+    @patch("cadence.cli_commands.review.run_review_mode")
     def test_review_with_base(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["review", "--base", "origin/develop"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with("origin/develop", config=None)
 
-    @patch("cadence.cli.run_squash_mode")
+    @patch("cadence.cli_commands.squash.run_squash_mode")
     def test_squash_calls_run_squash_mode(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["squash"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(config=None)
 
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_chain_calls_run_chain_mode(self, mock_run: MagicMock, tmp_path: Path) -> None:
         f = tmp_path / "chain.txt"
         f.write_text("a\n")
@@ -808,7 +817,7 @@ class TestSubcommandRouting:
         assert result.exit_code == 0
         mock_run.assert_called_once_with(f, config=None)
 
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_global_config_propagates_to_chain(self, mock_run: MagicMock, tmp_path: Path) -> None:
         f = tmp_path / "chain.txt"
         f.write_text("a\n")
@@ -818,7 +827,7 @@ class TestSubcommandRouting:
         assert result.exit_code == 0
         mock_run.assert_called_once_with(f, config=cfg)
 
-    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli_commands.plan.run_plan_mode")
     def test_global_config_propagates_to_plan(self, mock_run: MagicMock, tmp_path: Path) -> None:
         f = tmp_path / "prompt.md"
         f.write_text("implement X")
@@ -829,7 +838,7 @@ class TestSubcommandRouting:
         _args, kwargs = mock_run.call_args
         assert kwargs == {"config": cfg}
 
-    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli_commands.plan.run_plan_mode")
     def test_plan_with_import_flag_passes_path_and_empty_init(
         self, mock_run: MagicMock, tmp_path: Path
     ) -> None:
@@ -841,7 +850,7 @@ class TestSubcommandRouting:
         assert args[0] == f
         assert kwargs == {"config": None, "import_path": f, "init_content_override": ""}
 
-    @patch("cadence.cli.run_plan_mode")
+    @patch("cadence.cli_commands.plan.run_plan_mode")
     def test_plan_without_import_keeps_default_kwargs(
         self, mock_run: MagicMock, tmp_path: Path
     ) -> None:
@@ -853,7 +862,7 @@ class TestSubcommandRouting:
         assert args[0] == f
         assert kwargs == {"config": None}
 
-    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.plan._run_plan_on_current_branch")
     def test_run_plan_with_import_propagates_path(
         self, mock_run: MagicMock, tmp_path: Path
     ) -> None:
@@ -863,7 +872,7 @@ class TestSubcommandRouting:
         assert result.exit_code == 0
         mock_run.assert_called_once_with(config=None, import_path=f)
 
-    @patch("cadence.cli._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.plan._run_plan_on_current_branch")
     def test_run_plan_without_import_propagates_none(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["run", "plan"])
         assert result.exit_code == 0
@@ -956,14 +965,14 @@ class TestRunTaskMode:
             run_task_mode(tmp_path / "nonexistent.md")
         assert excinfo.value.code == 2
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_happy_path_success(
         self,
         mock_logger_cls: MagicMock,
@@ -1008,14 +1017,14 @@ class TestRunTaskMode:
         mock_svc.mark_plan_completed.assert_called_once()
         mock_log.close.assert_called_once()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_user_aborted(
         self,
         mock_logger_cls: MagicMock,
@@ -1056,14 +1065,14 @@ class TestRunTaskMode:
         mock_svc.diff_stats.assert_not_called()
         mock_svc.mark_plan_completed.assert_not_called()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_service_init_failure(
         self,
         mock_logger_cls: MagicMock,
@@ -1088,14 +1097,14 @@ class TestRunTaskMode:
             run_task_mode(f)
         assert excinfo.value.code == 1
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_move_plan_failure_warns_but_succeeds(
         self,
         mock_logger_cls: MagicMock,
@@ -1145,7 +1154,7 @@ class TestRunTaskMode:
         f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
         worktree = str(tmp_path / "wt")
 
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.task._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit) as excinfo:
                 run_task_mode(f, repo_path=worktree)
@@ -1159,7 +1168,7 @@ class TestRunTaskMode:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1\n\n- [ ] do it\n")
 
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.task._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit):
                 run_task_mode(f)
@@ -1168,16 +1177,16 @@ class TestRunTaskMode:
         assert kwargs["repo_path"] == "."
         assert kwargs["claude_cwd"] is None
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.Runner")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.compute_progress_path")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.Runner")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands.task.compute_progress_path")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_repo_path_resolves_plan_file_to_absolute(
         self,
         mock_logger_cls: MagicMock,
@@ -1240,7 +1249,7 @@ class TestRunTaskMode:
 
 class TestInstallSigquit:
     def test_install_sigquit_sets_event_when_signal_fires(self) -> None:
-        from cadence.cli import _install_sigquit
+        from cadence.cli_commands._shared import _install_sigquit
 
         event = threading.Event()
         sigquit = getattr(signal, "SIGQUIT", None)
@@ -1259,10 +1268,10 @@ class TestInstallSigquit:
 
 
 class TestSetupRuntime:
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_returns_expected_tuple(
         self,
         _detect: MagicMock,
@@ -1288,11 +1297,11 @@ class TestSetupRuntime:
         assert default_branch == "trunk"
         assert local_dir is None
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_factory_creates_executor_with_supplied_model(
         self,
         _detect: MagicMock,
@@ -1315,10 +1324,10 @@ class TestSetupRuntime:
         assert kwargs["activity_handler"] is not None
         assert kwargs["output_handler"] is not None
 
-    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_service_init_failure_exits(
         self,
         _detect: MagicMock,
@@ -1336,10 +1345,10 @@ class TestSetupRuntime:
         assert excinfo.value.code == 1
         assert "not a repo" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_default_repo_path_is_dot(
         self,
         _detect: MagicMock,
@@ -1355,10 +1364,10 @@ class TestSetupRuntime:
 
         assert mock_service_cls.call_args.kwargs.get("path") == "."
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_repo_path_passed_to_service(
         self,
         _detect: MagicMock,
@@ -1376,11 +1385,11 @@ class TestSetupRuntime:
 
         assert mock_service_cls.call_args.kwargs["path"] == worktree
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_factory_passes_claude_cwd(
         self,
         _detect: MagicMock,
@@ -1402,11 +1411,11 @@ class TestSetupRuntime:
 
         assert mock_executor_cls.call_args.kwargs.get("cwd") == worktree
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_factory_default_claude_cwd_is_none(
         self,
         _detect: MagicMock,
@@ -1424,10 +1433,10 @@ class TestSetupRuntime:
 
         assert mock_executor_cls.call_args.kwargs.get("cwd") is None
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_calls_ensure_local_ignore_with_tasks_root(
         self,
         _detect: MagicMock,
@@ -1506,7 +1515,7 @@ class TestEnsureLocalIgnoreWiring:
         exclude_path.unlink()
         assert not exclude_path.exists()
 
-        with patch("cadence.cli.check_claude_dep"):
+        with patch("cadence.cli_commands._shared.check_claude_dep"):
             _setup_runtime(None, None)
 
         re_registered = exclude_path.read_text()
@@ -1542,8 +1551,6 @@ class TestEnsureLocalIgnoreWiring:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import contextlib
-
-        from cadence.cli import run_doctor_mode
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -1654,14 +1661,14 @@ class TestFindExistingPlan:
 
 
 class TestRunReviewMode:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_happy_path_success(
         self,
         mock_logger_cls: MagicMock,
@@ -1695,8 +1702,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("cadence.cli.display_stats") as mock_display,
-            patch("cadence.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli_commands.review.display_stats") as mock_display,
+            patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1712,14 +1719,14 @@ class TestRunReviewMode:
         mock_display.assert_called_once()
         mock_log.close.assert_called_once()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_review_mode_uses_single_executor_with_review_model(
         self,
         mock_logger_cls: MagicMock,
@@ -1755,7 +1762,7 @@ class TestRunReviewMode:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1770,14 +1777,14 @@ class TestRunReviewMode:
             assert deps.executor is primary
             assert deps.review_executor is None
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_review_model_equal_to_task_uses_single_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -1813,7 +1820,7 @@ class TestRunReviewMode:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -1828,14 +1835,14 @@ class TestRunReviewMode:
             assert deps.executor is primary
             assert deps.review_executor is None
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_base_arg_overrides_config_and_autodetect(
         self,
         mock_logger_cls: MagicMock,
@@ -1866,8 +1873,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("cadence.cli.display_stats"),
-            patch("cadence.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli_commands.review.display_stats"),
+            patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1880,14 +1887,14 @@ class TestRunReviewMode:
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "develop"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_base_none_uses_config_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -1918,8 +1925,8 @@ class TestRunReviewMode:
         mock_terminal_cls.return_value = MagicMock()
 
         with (
-            patch("cadence.cli.display_stats"),
-            patch("cadence.cli.Runner") as mock_runner_cls,
+            patch("cadence.cli_commands.review.display_stats"),
+            patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
         ):
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
@@ -1932,14 +1939,14 @@ class TestRunReviewMode:
         ctx_arg = mock_runner_cls.call_args.args[0]
         assert ctx_arg.default_branch == "trunk"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_runner_returns_false_skips_diff_stats(
         self,
         mock_logger_cls: MagicMock,
@@ -1967,7 +1974,7 @@ class TestRunReviewMode:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = False
             mock_runner_cls.return_value = mock_runner
@@ -1977,14 +1984,14 @@ class TestRunReviewMode:
         mock_svc.diff_stats.assert_not_called()
         mock_log.close.assert_called_once()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_user_aborted(
         self,
         mock_logger_cls: MagicMock,
@@ -2012,7 +2019,7 @@ class TestRunReviewMode:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.side_effect = UserAbortedError("aborted")
             mock_runner_cls.return_value = mock_runner
@@ -2023,13 +2030,13 @@ class TestRunReviewMode:
         mock_log.close.assert_called_once()
         mock_svc.diff_stats.assert_not_called()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_discovers_existing_plan(
         self,
         _check: MagicMock,
@@ -2064,8 +2071,8 @@ class TestRunReviewMode:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.Runner") as mock_runner_cls,
+                patch("cadence.cli_commands.review.display_stats"),
+                patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
             ):
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
@@ -2078,13 +2085,13 @@ class TestRunReviewMode:
         finally:
             os.chdir(original_cwd)
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_no_plan_results_in_empty_plan_file(
         self,
         _check: MagicMock,
@@ -2115,8 +2122,8 @@ class TestRunReviewMode:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.Runner") as mock_runner_cls,
+                patch("cadence.cli_commands.review.display_stats"),
+                patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
             ):
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
@@ -2129,13 +2136,13 @@ class TestRunReviewMode:
         finally:
             os.chdir(original_cwd)
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_falls_back_to_plan_completed(
         self,
         _check: MagicMock,
@@ -2170,8 +2177,8 @@ class TestRunReviewMode:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.Runner") as mock_runner_cls,
+                patch("cadence.cli_commands.review.display_stats"),
+                patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
             ):
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
@@ -2186,14 +2193,14 @@ class TestRunReviewMode:
 
 
 class TestRunTaskModeReviewExecutor:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_distinct_review_model_passes_review_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -2233,7 +2240,7 @@ class TestRunTaskModeReviewExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2245,14 +2252,14 @@ class TestRunTaskModeReviewExecutor:
             assert deps.executor is primary
             assert deps.review_executor is secondary
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_matching_review_model_leaves_review_executor_none(
         self,
         mock_logger_cls: MagicMock,
@@ -2291,7 +2298,7 @@ class TestRunTaskModeReviewExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2305,14 +2312,14 @@ class TestRunTaskModeReviewExecutor:
 
 
 class TestRunTaskModeReviewSecondExecutor:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_distinct_review_second_model_passes_second_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -2354,7 +2361,7 @@ class TestRunTaskModeReviewSecondExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2367,14 +2374,14 @@ class TestRunTaskModeReviewSecondExecutor:
             assert deps.review_executor is secondary
             assert deps.review_second_executor is tertiary
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_matching_review_second_model_leaves_second_executor_none(
         self,
         mock_logger_cls: MagicMock,
@@ -2415,7 +2422,7 @@ class TestRunTaskModeReviewSecondExecutor:
         f = tmp_path / "plan.md"
         f.write_text("# plan\n\n### Task 1: x\n\n- [x] done\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2430,14 +2437,14 @@ class TestRunTaskModeReviewSecondExecutor:
 
 
 class TestRunReviewModeReviewSecondExecutor:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_distinct_review_second_model_passes_second_executor(
         self,
         mock_logger_cls: MagicMock,
@@ -2475,7 +2482,7 @@ class TestRunReviewModeReviewSecondExecutor:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2491,14 +2498,14 @@ class TestRunReviewModeReviewSecondExecutor:
             assert deps.executor is secondary
             assert deps.review_second_executor is primary
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_matching_review_second_model_leaves_second_executor_none(
         self,
         mock_logger_cls: MagicMock,
@@ -2535,7 +2542,7 @@ class TestRunReviewModeReviewSecondExecutor:
 
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2549,13 +2556,13 @@ class TestRunReviewModeReviewSecondExecutor:
 
 
 class TestConfigFlag:
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_plan_explicit_config_applies_overrides(
         self,
         _svc: MagicMock,
@@ -2593,13 +2600,13 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "yaml-plan"
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_plan_autodiscovers_yaml_next_to_plan(
         self,
         _svc: MagicMock,
@@ -2634,13 +2641,13 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "discovered-plan"
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_plan_no_yaml_no_overrides(
         self,
         _svc: MagicMock,
@@ -2673,14 +2680,14 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "toml-plan-default"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_task_explicit_config_applies_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -2718,7 +2725,7 @@ class TestConfigFlag:
         yaml_path = yaml_dir / "explicit.yaml"
         yaml_path.write_text("task:\n  model: yaml-task\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2728,14 +2735,14 @@ class TestConfigFlag:
         primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
         assert primary_kwargs["model"] == "yaml-task"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_task_autodiscovers_yaml_next_to_task(
         self,
         mock_logger_cls: MagicMock,
@@ -2770,7 +2777,7 @@ class TestConfigFlag:
         yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text("task:\n  model: discovered-task\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2780,14 +2787,14 @@ class TestConfigFlag:
         primary_kwargs = mock_executor_cls.call_args_list[0].kwargs
         assert primary_kwargs["model"] == "discovered-task"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_review_explicit_config_applies_overrides(
         self,
         mock_logger_cls: MagicMock,
@@ -2820,7 +2827,7 @@ class TestConfigFlag:
         yaml_path = tmp_path / "explicit.yaml"
         yaml_path.write_text("review:\n  model: yaml-review\n")
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2830,15 +2837,15 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "yaml-review"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.find_yaml_config")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.find_yaml_config")
     def test_review_skips_autodiscovery(
         self,
         mock_find: MagicMock,
@@ -2869,7 +2876,7 @@ class TestConfigFlag:
         mock_executor_cls.return_value = MagicMock()
         mock_terminal_cls.return_value = MagicMock()
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -2909,13 +2916,13 @@ class TestConfigFlag:
         assert result.exit_code != 0
         assert "error" in result.output.lower()
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_explicit_config_wins_over_autodiscovery(
         self,
         _svc: MagicMock,
@@ -2954,13 +2961,13 @@ class TestConfigFlag:
         kwargs = mock_executor_cls.call_args.kwargs
         assert kwargs["model"] == "explicit-plan"
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_autodiscovery_does_not_walk_to_parent(
         self,
         _svc: MagicMock,
@@ -3002,13 +3009,13 @@ class TestConfigFlag:
 class TestProgressPathWiring:
     """Verify CLI plumbs tasks_root, default_branch, and head_hash through to the Logger."""
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_on_default_branch_uses_head_hash_segment(
         self,
         _check: MagicMock,
@@ -3039,8 +3046,8 @@ class TestProgressPathWiring:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.Runner") as mock_runner_cls,
+                patch("cadence.cli_commands.review.display_stats"),
+                patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
             ):
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
@@ -3053,13 +3060,13 @@ class TestProgressPathWiring:
         expected = tmp_path / "cdc-tasks" / "abc123def456" / "progress-review.txt"
         assert expected.is_file()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_on_feature_branch_uses_branch_segment(
         self,
         _check: MagicMock,
@@ -3090,8 +3097,8 @@ class TestProgressPathWiring:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.Runner") as mock_runner_cls,
+                patch("cadence.cli_commands.review.display_stats"),
+                patch("cadence.cli_commands.review.Runner") as mock_runner_cls,
             ):
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
@@ -3104,12 +3111,12 @@ class TestProgressPathWiring:
         expected = tmp_path / "cdc-tasks" / "feat-foo" / "progress-review.txt"
         assert expected.is_file()
 
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
     def test_plan_mode_writes_progress_plan_next_to_plan_file(
         self,
         _svc: MagicMock,
@@ -3146,13 +3153,13 @@ class TestProgressPathWiring:
         expected = plan_dir / "progress-plan.txt"
         assert expected.is_file()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_task_mode_writes_progress_task_next_to_plan_file(
         self,
         _check: MagicMock,
@@ -3188,7 +3195,7 @@ class TestProgressPathWiring:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.Runner") as mock_runner_cls:
+            with patch("cadence.cli_commands.task.Runner") as mock_runner_cls:
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = True
                 mock_runner_cls.return_value = mock_runner
@@ -3200,13 +3207,13 @@ class TestProgressPathWiring:
         expected = plan_dir / "progress-task.txt"
         assert expected.is_file()
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_mode_no_branch_no_hash_exits_with_error(
         self,
         _check: MagicMock,
@@ -3275,9 +3282,9 @@ class TestRunTaskInitMode:
         assert "50" in err
         assert not (tmp_path / "cdc-tasks" / long_name).exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_init_accepts_50_char_task_name(
         self,
         _detect: MagicMock,
@@ -3309,9 +3316,9 @@ class TestRunTaskInitMode:
         assert task_dir.is_dir()
         assert (task_dir / "init").is_file()
 
-    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_not_a_git_repo(
         self,
         _detect: MagicMock,
@@ -3328,9 +3335,9 @@ class TestRunTaskInitMode:
         assert excinfo.value.code == 1
         assert "not a repo" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_ensure_has_commits_failure(
         self,
         _detect: MagicMock,
@@ -3352,9 +3359,9 @@ class TestRunTaskInitMode:
         assert "aborted by user" in capsys.readouterr().err
         mock_svc.create_branch.assert_not_called()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_detached_head_exits(
         self,
         _detect: MagicMock,
@@ -3375,9 +3382,9 @@ class TestRunTaskInitMode:
         assert excinfo.value.code == 2
         assert "detached HEAD" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_directory_already_exists(
         self,
         _detect: MagicMock,
@@ -3410,9 +3417,9 @@ class TestRunTaskInitMode:
         assert "task directory already exists" in capsys.readouterr().err
         mock_svc.create_branch.assert_not_called()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_branch_already_exists(
         self,
         _detect: MagicMock,
@@ -3445,9 +3452,9 @@ class TestRunTaskInitMode:
         mock_svc.create_branch.assert_not_called()
         assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_create_branch_failure_leaves_no_dir(
         self,
         _detect: MagicMock,
@@ -3480,9 +3487,9 @@ class TestRunTaskInitMode:
         assert "git checkout -b failed" in capsys.readouterr().err
         assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_happy_path_on_default_branch_no_config(
         self,
         _detect: MagicMock,
@@ -3515,9 +3522,9 @@ class TestRunTaskInitMode:
         assert (task_dir / "init").read_text() == ""
         assert not (task_dir / "config.yaml").exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_happy_path_on_non_default_branch_writes_config(
         self,
         _detect: MagicMock,
@@ -3553,9 +3560,9 @@ class TestRunTaskInitMode:
         loaded = yaml.safe_load(config_path.read_text())
         assert loaded == {"default_branch": "feature-parent"}
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_origin_prefix_on_default_branch_treated_as_default(
         self,
         _detect: MagicMock,
@@ -3583,9 +3590,9 @@ class TestRunTaskInitMode:
 
         assert not (tmp_path / "cdc-tasks" / "scaffold" / "config.yaml").exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_not_found_exits_2_no_side_effects(
         self,
         _detect: MagicMock,
@@ -3622,10 +3629,10 @@ class TestRunTaskInitMode:
         mock_svc.create_branch.assert_not_called()
         assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_pre_fills_init(
         self,
         _detect: MagicMock,
@@ -3666,10 +3673,10 @@ class TestRunTaskInitMode:
         init_file = tmp_path / "cdc-tasks" / "feat-x" / "init"
         assert init_file.read_text(encoding="utf-8") == "hello world\n"
 
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_substitutes_variables(
         self,
         _detect: MagicMock,
@@ -3702,7 +3709,7 @@ class TestRunTaskInitMode:
             def today(cls) -> datetime.date:
                 return datetime.date(2026, 5, 6)
 
-        monkeypatch.setattr("cadence.cli.datetime.date", _FixedDate)
+        monkeypatch.setattr("cadence.cli_commands.init.datetime.date", _FixedDate)
 
         templates_dir = tmp_path / ".cadence" / "templates"
         templates_dir.mkdir(parents=True)
@@ -3729,10 +3736,10 @@ class TestRunTaskInitMode:
         called_args = mock_subproc_run.call_args.args[0]
         assert called_args == ["git", "config", "user.name"]
 
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_unknown_variable_left_intact(
         self,
         _detect: MagicMock,
@@ -3775,10 +3782,10 @@ class TestRunTaskInitMode:
         rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
         assert rendered == "literal: {{foo}} feat-x\n"
 
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_missing_user_name_falls_back_to_empty(
         self,
         _detect: MagicMock,
@@ -3819,10 +3826,10 @@ class TestRunTaskInitMode:
         rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
         assert rendered == "by []\n"
 
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_subprocess_oserror_falls_back_to_empty_author(
         self,
         _detect: MagicMock,
@@ -3860,9 +3867,9 @@ class TestRunTaskInitMode:
         rendered = (tmp_path / "cdc-tasks" / "feat-x" / "init").read_text(encoding="utf-8")
         assert rendered == "by []\n"
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     @pytest.mark.parametrize(
         "bad_name",
         ["", "../etc/passwd", "..", ".", "-flag", "foo/bar", "a\\b"],
@@ -3902,10 +3909,10 @@ class TestRunTaskInitMode:
         mock_svc.create_branch.assert_not_called()
         assert not (tmp_path / "cdc-tasks" / "feat-x").exists()
 
-    @patch("cadence.cli.subprocess.run")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.init.subprocess.run")
+    @patch("cadence.cli_commands.init.Service")
+    @patch("cadence.cli_commands.init.load_config")
+    @patch("cadence.cli_commands.init.detect_local_dir", return_value=None)
     def test_template_honors_custom_templates_dir(
         self,
         _detect: MagicMock,
@@ -3946,9 +3953,9 @@ class TestRunTaskInitMode:
 
 
 class TestRunAutoDetect:
-    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_not_a_git_repo(
         self,
         _detect: MagicMock,
@@ -3965,11 +3972,11 @@ class TestRunAutoDetect:
         assert excinfo.value.code == 1
         assert "not a repo" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_detached_head_exits_2(
         self,
         _detect: MagicMock,
@@ -3994,9 +4001,9 @@ class TestRunAutoDetect:
         mock_run_plan.assert_not_called()
         mock_run_task.assert_not_called()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_task_directory_missing_exits_2(
         self,
         _detect: MagicMock,
@@ -4026,11 +4033,11 @@ class TestRunAutoDetect:
         assert excinfo.value.code == 2
         assert "task directory not found" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_default_branch_exits_2(
         self,
         _detect: MagicMock,
@@ -4055,11 +4062,11 @@ class TestRunAutoDetect:
         mock_run_plan.assert_not_called()
         mock_run_task.assert_not_called()
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_default_branch_origin_prefix_exits_2(
         self,
         _detect: MagicMock,
@@ -4082,11 +4089,11 @@ class TestRunAutoDetect:
         assert excinfo.value.code == 2
         assert "cannot run on default branch develop" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_plan_completed_prints_message(
         self,
         _detect: MagicMock,
@@ -4122,11 +4129,11 @@ class TestRunAutoDetect:
         mock_run_plan.assert_not_called()
         mock_run_task.assert_not_called()
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_plan_exists_calls_run_task_mode(
         self,
         _detect: MagicMock,
@@ -4164,9 +4171,9 @@ class TestRunAutoDetect:
         assert kwargs == {"config": None}
         mock_run_plan.assert_not_called()
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_init_missing_exits_2(
         self,
         _detect: MagicMock,
@@ -4198,9 +4205,9 @@ class TestRunAutoDetect:
         assert excinfo.value.code == 2
         assert "init file not found" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_init_empty_exits_2(
         self,
         _detect: MagicMock,
@@ -4234,11 +4241,11 @@ class TestRunAutoDetect:
         assert excinfo.value.code == 2
         assert "init file is empty" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_init_non_empty_calls_run_plan_mode(
         self,
         _detect: MagicMock,
@@ -4275,11 +4282,11 @@ class TestRunAutoDetect:
         assert kwargs == {"config": None}
         mock_run_task.assert_not_called()
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_uses_init_prompt_name_override(
         self,
         _detect: MagicMock,
@@ -4315,11 +4322,11 @@ class TestRunAutoDetect:
         assert args[0] == Path("cdc-tasks/feat-x/prompt")
         mock_run_task.assert_not_called()
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_plan_takes_precedence_over_init(
         self,
         _detect: MagicMock,
@@ -4354,11 +4361,11 @@ class TestRunAutoDetect:
         mock_run_task.assert_called_once()
         mock_run_plan.assert_not_called()
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.auto.run_task_mode")
+    @patch("cadence.cli_commands.auto.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_plan_completed_takes_precedence_over_plan_and_init(
         self,
         _detect: MagicMock,
@@ -4398,9 +4405,9 @@ class TestRunAutoDetect:
 
 
 class TestRunPlanSubcommand:
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_default_branch_exits_2(
         self,
         _detect: MagicMock,
@@ -4421,9 +4428,9 @@ class TestRunPlanSubcommand:
         assert excinfo.value.code == 2
         assert "cannot run on default branch main" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_init_missing_exits_2(
         self,
         _detect: MagicMock,
@@ -4455,9 +4462,9 @@ class TestRunPlanSubcommand:
         assert excinfo.value.code == 2
         assert "init file not found" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_init_empty_exits_2(
         self,
         _detect: MagicMock,
@@ -4491,10 +4498,10 @@ class TestRunPlanSubcommand:
         assert excinfo.value.code == 2
         assert "init file is empty" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_plan_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.plan.run_plan_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_happy_path_calls_run_plan_mode(
         self,
         _detect: MagicMock,
@@ -4537,9 +4544,9 @@ class TestRunPlanSubcommand:
 
 
 class TestRunTaskSubcommand:
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_default_branch_exits_2(
         self,
         _detect: MagicMock,
@@ -4560,9 +4567,9 @@ class TestRunTaskSubcommand:
         assert excinfo.value.code == 2
         assert "cannot run on default branch main" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_plan_missing_exits_2(
         self,
         _detect: MagicMock,
@@ -4594,10 +4601,10 @@ class TestRunTaskSubcommand:
         assert excinfo.value.code == 2
         assert "plan file not found" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_task_mode")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands.task.run_task_mode")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_happy_path_calls_run_task_mode(
         self,
         _detect: MagicMock,
@@ -4651,10 +4658,10 @@ class TestRunSquashMode:
         svc.head_hash.return_value = "deadbeefcafe"
         return svc
 
-    @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service", side_effect=RuntimeError("not a repo"))
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_not_a_git_repo(
         self,
         _check: MagicMock,
@@ -4672,10 +4679,10 @@ class TestRunSquashMode:
         assert excinfo.value.code == 1
         assert "not a repo" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_detached_head_exits(
         self,
         _check: MagicMock,
@@ -4694,10 +4701,10 @@ class TestRunSquashMode:
         assert excinfo.value.code == 2
         assert "detached HEAD" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_default_branch_exits(
         self,
         _check: MagicMock,
@@ -4717,10 +4724,10 @@ class TestRunSquashMode:
         err = capsys.readouterr().err
         assert "default branch main" in err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_task_directory_missing(
         self,
         _check: MagicMock,
@@ -4748,10 +4755,10 @@ class TestRunSquashMode:
         assert excinfo.value.code == 2
         assert "task directory not found" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_plan_not_completed(
         self,
         _check: MagicMock,
@@ -4783,10 +4790,10 @@ class TestRunSquashMode:
         assert excinfo.value.code == 2
         assert "plan not completed" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_uncommitted_changes_exits(
         self,
         _check: MagicMock,
@@ -4822,10 +4829,10 @@ class TestRunSquashMode:
         assert "uncommitted changes" in err
         assert "src/foo.py" in err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_zero_commits_ahead_exits(
         self,
         _check: MagicMock,
@@ -4857,11 +4864,11 @@ class TestRunSquashMode:
         assert excinfo.value.code == 2
         assert "no commits ahead" in capsys.readouterr().err
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_one_commit_ahead_is_noop(
         self,
         _check: MagicMock,
@@ -4896,11 +4903,11 @@ class TestRunSquashMode:
         mock_executor_cls.assert_not_called()
         mock_svc.squash_commits.assert_not_called()
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_one_commit_ahead_is_silent_in_repo_path_mode(
         self,
         _check: MagicMock,
@@ -4937,12 +4944,12 @@ class TestRunSquashMode:
         mock_executor_cls.assert_not_called()
         mock_svc.squash_commits.assert_not_called()
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_happy_path_squashes_with_claude_message(
         self,
         mock_logger_cls: MagicMock,
@@ -4982,7 +4989,7 @@ class TestRunSquashMode:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats") as mock_display:
+            with patch("cadence.cli_commands.squash.display_stats") as mock_display:
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -4992,12 +4999,12 @@ class TestRunSquashMode:
         mock_display.assert_called_once()
         mock_log.close.assert_called_once_with(success=True)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_phase_summary_emitted_on_success(
         self,
         mock_logger_cls: MagicMock,
@@ -5047,7 +5054,7 @@ class TestRunSquashMode:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -5057,12 +5064,12 @@ class TestRunSquashMode:
         )
         assert "phase squash done in" in printed
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_claude_returns_no_markers_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -5107,12 +5114,12 @@ class TestRunSquashMode:
         mock_log.error.assert_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_claude_executor_error_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -5156,12 +5163,12 @@ class TestRunSquashMode:
         mock_svc.squash_commits.assert_not_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_squash_runtime_error_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -5206,12 +5213,12 @@ class TestRunSquashMode:
         assert excinfo.value.code == 1
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_idle_timeout_aborts_before_squash(
         self,
         mock_logger_cls: MagicMock,
@@ -5258,12 +5265,12 @@ class TestRunSquashMode:
         mock_svc.squash_commits.assert_not_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_keyboard_interrupt_returns_cleanly(
         self,
         mock_logger_cls: MagicMock,
@@ -5305,12 +5312,12 @@ class TestRunSquashMode:
         mock_svc.squash_commits.assert_not_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_unexpected_exception_logged_and_exits_cleanly(
         self,
         mock_logger_cls: MagicMock,
@@ -5355,12 +5362,12 @@ class TestRunSquashMode:
         mock_log.error.assert_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_per_task_config_yaml_overrides_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -5398,7 +5405,7 @@ class TestRunSquashMode:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -5406,12 +5413,12 @@ class TestRunSquashMode:
         mock_svc.squash_commits.assert_called_once_with("parent-branch", "msg body")
         mock_svc.commits_ahead.assert_called_with("parent-branch")
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_aborts_when_working_tree_dirty_after_claude(
         self,
         mock_logger_cls: MagicMock,
@@ -5463,7 +5470,7 @@ class TestRunSquashMode:
     def test_repo_path_plumbs_to_setup_runtime(self, tmp_path: Path) -> None:
         worktree = str(tmp_path / "wt")
 
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.squash._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit) as excinfo:
                 run_squash_mode(repo_path=worktree)
@@ -5475,7 +5482,7 @@ class TestRunSquashMode:
         assert kwargs["anchor"] is None
 
     def test_no_repo_path_passes_dot_and_none(self) -> None:
-        with patch("cadence.cli._setup_runtime") as mock_setup:
+        with patch("cadence.cli_commands.squash._setup_runtime") as mock_setup:
             mock_setup.side_effect = SystemExit(99)
             with pytest.raises(SystemExit):
                 run_squash_mode()
@@ -5484,12 +5491,12 @@ class TestRunSquashMode:
         assert kwargs["repo_path"] == "."
         assert kwargs["claude_cwd"] is None
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_executor_uses_squash_model_not_task_model(
         self,
         mock_logger_cls: MagicMock,
@@ -5534,7 +5541,7 @@ class TestRunSquashMode:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -5542,12 +5549,12 @@ class TestRunSquashMode:
         mock_executor_cls.assert_called_once()
         assert mock_executor_cls.call_args.kwargs["model"] == "claude-haiku-4-5"
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_default_squash_model_flows_through(
         self,
         mock_logger_cls: MagicMock,
@@ -5590,7 +5597,7 @@ class TestRunSquashMode:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -5598,12 +5605,12 @@ class TestRunSquashMode:
         mock_executor_cls.assert_called_once()
         assert mock_executor_cls.call_args.kwargs["model"] == "claude-sonnet-4-6"
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_phase_summary_uses_squash_model(
         self,
         mock_logger_cls: MagicMock,
@@ -5650,8 +5657,11 @@ class TestRunSquashMode:
         os.chdir(tmp_path)
         try:
             with (
-                patch("cadence.cli.display_stats"),
-                patch("cadence.cli.format_phase_summary", return_value="summary") as mock_fmt,
+                patch("cadence.cli_commands.squash.display_stats"),
+                patch(
+                    "cadence.cli_commands.squash.format_phase_summary",
+                    return_value="summary",
+                ) as mock_fmt,
             ):
                 run_squash_mode()
         finally:
@@ -5680,9 +5690,9 @@ class TestTooLongBranchDiesLoud:
         assert "git branch -m" in err
         assert f"mv {tasks_root}/" in err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_run_plan_on_too_long_branch_dies_loud(
         self,
         _detect: MagicMock,
@@ -5703,9 +5713,9 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_run_task_on_too_long_branch_dies_loud(
         self,
         _detect: MagicMock,
@@ -5726,10 +5736,10 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_squash_on_too_long_branch_dies_loud(
         self,
         _check: MagicMock,
@@ -5779,10 +5789,10 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_review_on_too_long_branch_dies_loud(
         self,
         _check: MagicMock,
@@ -5804,10 +5814,10 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_report_api_changes_on_too_long_branch_dies_loud(
         self,
         _check: MagicMock,
@@ -5829,10 +5839,10 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_report_test_cases_on_too_long_branch_dies_loud(
         self,
         _check: MagicMock,
@@ -5854,9 +5864,9 @@ class TestTooLongBranchDiesLoud:
         assert excinfo.value.code == 2
         self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
     def test_run_plan_on_50_char_branch_proceeds(
         self,
         _detect: MagicMock,
@@ -6104,10 +6114,10 @@ class TestRunChainMode:
             None,
         )
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_file_missing_exits(
         self,
         mock_setup: MagicMock,
@@ -6131,10 +6141,10 @@ class TestRunChainMode:
         mock_task.assert_not_called()
         mock_squash.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_file_empty_exits(
         self,
         mock_setup: MagicMock,
@@ -6157,10 +6167,10 @@ class TestRunChainMode:
         assert "chain file is empty" in capsys.readouterr().err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_invalid_task_name_exits(
         self,
         mock_setup: MagicMock,
@@ -6183,10 +6193,10 @@ class TestRunChainMode:
         assert "invalid task name in chain file" in capsys.readouterr().err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_missing_task_dir_emits_warning_and_exits(
         self,
         mock_setup: MagicMock,
@@ -6220,10 +6230,10 @@ class TestRunChainMode:
         assert "ghost-task" in err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_missing_init_file_emits_warning_and_exits(
         self,
         mock_setup: MagicMock,
@@ -6256,10 +6266,10 @@ class TestRunChainMode:
         assert "init file not found" in err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_dirty_working_tree_exits(
         self,
         mock_setup: MagicMock,
@@ -6285,10 +6295,10 @@ class TestRunChainMode:
         assert "src/leaked.py" in err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_dirty_between_chain_tasks_aborts(
         self,
         mock_setup: MagicMock,
@@ -6331,10 +6341,10 @@ class TestRunChainMode:
         assert "at start of task 2/2 (beta)" in err
         assert "chain failed at task 2/2: beta" in err
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_detached_head_exits(
         self,
         mock_setup: MagicMock,
@@ -6357,10 +6367,10 @@ class TestRunChainMode:
         assert "cannot chain from a detached HEAD" in capsys.readouterr().err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_happy_path_three_tasks(
         self,
         mock_setup: MagicMock,
@@ -6413,10 +6423,10 @@ class TestRunChainMode:
         assert "[chain 3/3] gamma" in out
         assert "chain complete: 3 task(s)" in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_existing_branch_uses_checkout(
         self,
         mock_setup: MagicMock,
@@ -6452,10 +6462,10 @@ class TestRunChainMode:
         assert mock_plan.call_count == 2
         assert mock_squash.call_count == 2
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_fail_fast_stops_chain(
         self,
         mock_setup: MagicMock,
@@ -6499,10 +6509,10 @@ class TestRunChainMode:
         err = capsys.readouterr().err
         assert "chain failed at task 2/3: b" in err
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_config_propagated_to_helpers(
         self,
         mock_setup: MagicMock,
@@ -6551,10 +6561,10 @@ class TestRunChainMode:
             is squash_kwargs["chain_collector"]
         )
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_git_op_runtime_error_reports_chain_position(
         self,
         mock_setup: MagicMock,
@@ -6594,10 +6604,10 @@ class TestRunChainMode:
         assert "chain failed at task 1/2: a" in err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_invalid_per_task_yaml_reports_chain_position(
         self,
         mock_setup: MagicMock,
@@ -6640,10 +6650,10 @@ class TestRunChainMode:
         assert "invalid config.yaml for task second" in err
         assert "chain failed at task 2/2: second" in err
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_keyboard_interrupt_swallowed_by_inner_mode_stops_chain(
         self,
         mock_setup: MagicMock,
@@ -6654,8 +6664,6 @@ class TestRunChainMode:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         import os
-
-        from cadence.cli import _sigint
 
         mock_svc = MagicMock()
         mock_svc.is_dirty.return_value = False
@@ -6697,10 +6705,10 @@ class TestRunChainMode:
         assert "chain failed at task 2/3" not in err
         assert out.count("chain done in") == 1
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_summary_printed_with_summed_counts(
         self,
         mock_setup: MagicMock,
@@ -6760,10 +6768,10 @@ class TestRunChainMode:
         assert "cache_read 400" in out
         assert "cache_create 20" in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_summary_suppressed_when_print_usage_false(
         self,
         mock_setup: MagicMock,
@@ -6808,10 +6816,10 @@ class TestRunChainMode:
         out = capsys.readouterr().out
         assert "chain done in" not in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_summary_printed_when_task_fails(
         self,
         mock_setup: MagicMock,
@@ -6903,8 +6911,8 @@ class TestRunChainParallel:
         svc.root.return_value = str(tmp_path)
         return svc
 
-    @patch("cadence.cli.run_chain_parallel")
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_parallel")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_parallel_one_routes_to_sequential(
         self,
         mock_seq: MagicMock,
@@ -6920,8 +6928,8 @@ class TestRunChainParallel:
         mock_seq.assert_called_once_with(f, config=None)
         mock_par.assert_not_called()
 
-    @patch("cadence.cli.run_chain_parallel")
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_parallel")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_parallel_default_routes_to_sequential(
         self,
         mock_seq: MagicMock,
@@ -6937,8 +6945,8 @@ class TestRunChainParallel:
         mock_seq.assert_called_once_with(f, config=None)
         mock_par.assert_not_called()
 
-    @patch("cadence.cli.run_chain_parallel")
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_parallel")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_parallel_zero_exits_2(
         self,
         mock_seq: MagicMock,
@@ -6955,8 +6963,8 @@ class TestRunChainParallel:
         mock_seq.assert_not_called()
         mock_par.assert_not_called()
 
-    @patch("cadence.cli.run_chain_parallel")
-    @patch("cadence.cli.run_chain_mode")
+    @patch("cadence.cli_commands.chain.run_chain_parallel")
+    @patch("cadence.cli_commands.chain.run_chain_mode")
     def test_parallel_n_routes_to_parallel(
         self,
         mock_seq: MagicMock,
@@ -6980,10 +6988,10 @@ class TestRunChainParallel:
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "--parallel" in plain
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_happy_path_three_workers(
         self,
         mock_setup: MagicMock,
@@ -7029,10 +7037,10 @@ class TestRunChainParallel:
             assert f"[chain] {name}: completed" in out
         assert "[chain] complete: 3/3 succeeded" in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_dirty_working_tree_lists_files(
         self,
         mock_setup: MagicMock,
@@ -7057,10 +7065,10 @@ class TestRunChainParallel:
         assert "src/leaked.py" in err
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_fail_fast_cancels_pending(
         self,
         mock_setup: MagicMock,
@@ -7132,10 +7140,10 @@ class TestRunChainParallel:
         assert "[chain] b: failed at plan" in out
         assert "[chain] complete: 1/3 succeeded" in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_preflight_worktree_path_collision(
         self,
         mock_setup: MagicMock,
@@ -7175,10 +7183,10 @@ class TestRunChainParallel:
         svc.worktree_add.assert_not_called()
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_preflight_branch_collision(
         self,
         mock_setup: MagicMock,
@@ -7215,10 +7223,10 @@ class TestRunChainParallel:
         svc.worktree_add.assert_not_called()
         mock_plan.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_plan_question_aborts_worker(
         self,
         mock_setup: MagicMock,
@@ -7272,10 +7280,10 @@ class TestRunChainParallel:
         assert "[chain] alpha: failed at plan" in out
         assert "--parallel" in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_worker_failure_summary_uses_underlying_cause(
         self,
         mock_setup: MagicMock,
@@ -7322,10 +7330,10 @@ class TestRunChainParallel:
         assert "real underlying reason" in out
         assert not out.rstrip().endswith(": 1")
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_failure_progress_path_uses_sanitized_name_for_plan_and_task(
         self,
         mock_setup: MagicMock,
@@ -7373,10 +7381,10 @@ class TestRunChainParallel:
         assert expected in out
         assert f"cdc-tasks/{raw_name}/progress-plan.txt" not in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_summary_stdout_only(
         self,
         mock_setup: MagicMock,
@@ -7419,10 +7427,10 @@ class TestRunChainParallel:
         assert "[chain] complete: 2/2 succeeded" in out
         assert "PRIVATE_PROGRESS_LINE" not in out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_workers_invoked_with_repo_path(
         self,
         mock_setup: MagicMock,
@@ -7464,7 +7472,7 @@ class TestRunChainParallel:
         assert squash_kwargs["repo_path"] == expected_wt
 
     def test_install_sigquit_silent_in_worker_thread(self) -> None:
-        from cadence.cli import _install_sigquit
+        from cadence.cli_commands._shared import _install_sigquit
 
         errors: list[BaseException] = []
 
@@ -7479,10 +7487,10 @@ class TestRunChainParallel:
         t.join()
         assert errors == []
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_worktree_add_failure_in_worker_reports_phase(
         self,
         mock_setup: MagicMock,
@@ -7522,10 +7530,10 @@ class TestRunChainParallel:
         mock_squash.assert_not_called()
         svc.worktree_remove.assert_not_called()
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_worktree_remove_failure_warns_but_succeeds(
         self,
         mock_setup: MagicMock,
@@ -7559,10 +7567,10 @@ class TestRunChainParallel:
         assert "[chain] alpha: completed" in captured.out
         assert "[chain] complete: 1/1 succeeded" in captured.out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_unexpected_worker_exception_does_not_skip_summary(
         self,
         mock_setup: MagicMock,
@@ -7598,10 +7606,10 @@ class TestRunChainParallel:
         assert "disk full" in captured.err
         assert "[chain] complete: 0/1 succeeded" in captured.out
 
-    @patch("cadence.cli.run_squash_mode")
-    @patch("cadence.cli._run_task_on_current_branch")
-    @patch("cadence.cli._run_plan_on_current_branch")
-    @patch("cadence.cli._setup_runtime")
+    @patch("cadence.cli_commands.chain.run_squash_mode")
+    @patch("cadence.cli_commands.chain._run_task_on_current_branch")
+    @patch("cadence.cli_commands.chain._run_plan_on_current_branch")
+    @patch("cadence.cli_commands.chain._setup_runtime")
     def test_chain_summary_aggregates_workers(
         self,
         mock_setup: MagicMock,
@@ -7732,25 +7740,25 @@ class TestReportApiChangesCli:
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "report" in plain
 
-    @patch("cadence.cli.run_report_api_changes_mode")
+    @patch("cadence.cli_commands.report.run_report_api_changes_mode")
     def test_default_call(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "api-changes"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base=None, stdout_only=False, config=None)
 
-    @patch("cadence.cli.run_report_api_changes_mode")
+    @patch("cadence.cli_commands.report.run_report_api_changes_mode")
     def test_with_base(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "api-changes", "--base", "develop"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base="develop", stdout_only=False, config=None)
 
-    @patch("cadence.cli.run_report_api_changes_mode")
+    @patch("cadence.cli_commands.report.run_report_api_changes_mode")
     def test_with_stdout_only(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "api-changes", "--stdout-only"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base=None, stdout_only=True, config=None)
 
-    @patch("cadence.cli.run_report_api_changes_mode")
+    @patch("cadence.cli_commands.report.run_report_api_changes_mode")
     def test_global_config_propagates(self, mock_run: MagicMock, tmp_path: Path) -> None:
         cfg = tmp_path / "override.yaml"
         cfg.write_text("default_branch: main\n")
@@ -7771,10 +7779,10 @@ class TestRunReportApiChangesMode:
         svc.is_default_branch.return_value = is_default
         return svc
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_detached_head_exits_2(
         self,
         _check: MagicMock,
@@ -7793,10 +7801,10 @@ class TestRunReportApiChangesMode:
         assert excinfo.value.code == 2
         assert "detached HEAD" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_default_branch_exits_2(
         self,
         _check: MagicMock,
@@ -7815,13 +7823,13 @@ class TestRunReportApiChangesMode:
         assert excinfo.value.code == 2
         assert "default branch main" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_happy_path_writes_report_path_message(
         self,
         mock_logger_cls: MagicMock,
@@ -7869,13 +7877,13 @@ class TestRunReportApiChangesMode:
         assert mock_run_report.call_args.args == ("api-changes",)
         mock_log.close.assert_called_once_with(success=True)
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_stdout_only_skips_wrote_message(
         self,
         mock_logger_cls: MagicMock,
@@ -7917,13 +7925,13 @@ class TestRunReportApiChangesMode:
         kwargs = mock_run_report.call_args.kwargs
         assert kwargs["stdout_only"] is True
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_base_overrides_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -7962,13 +7970,13 @@ class TestRunReportApiChangesMode:
         assert kwargs["base"] == "develop"
         assert kwargs["default_branch"] == "develop"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_runtime_error_exits_1_and_log_close_failure(
         self,
         mock_logger_cls: MagicMock,
@@ -8007,13 +8015,13 @@ class TestRunReportApiChangesMode:
         mock_log.error.assert_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_keyboard_interrupt_returns_cleanly(
         self,
         mock_logger_cls: MagicMock,
@@ -8049,13 +8057,13 @@ class TestRunReportApiChangesMode:
 
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_per_task_yaml_overrides_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -8098,10 +8106,10 @@ class TestRunReportApiChangesMode:
         assert kwargs["base"] == "parent-branch"
         assert kwargs["default_branch"] == "parent-branch"
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_invalid_per_task_yaml_exits_1(
         self,
         _check: MagicMock,
@@ -8134,13 +8142,13 @@ class TestRunReportApiChangesMode:
         err = capsys.readouterr().err
         assert "top-level must be a mapping" in err
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_explicit_base_overrides_per_task_yaml(
         self,
         mock_logger_cls: MagicMock,
@@ -8183,13 +8191,13 @@ class TestRunReportApiChangesMode:
         assert kwargs["base"] == "staging"
         assert kwargs["default_branch"] == "staging"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_uses_review_model_when_report_model_unset(
         self,
         mock_logger_cls: MagicMock,
@@ -8231,13 +8239,13 @@ class TestRunReportApiChangesMode:
         ctor_kwargs = mock_executor_cls.call_args.kwargs
         assert ctor_kwargs["model"] == "claude-review-model"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_uses_report_model_when_set(
         self,
         mock_logger_cls: MagicMock,
@@ -8279,12 +8287,12 @@ class TestRunReportApiChangesMode:
         ctor_kwargs = mock_executor_cls.call_args.kwargs
         assert ctor_kwargs["model"] == "claude-report-model"
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_end_to_end_writes_file_via_real_run_report(
         self,
         mock_logger_cls: MagicMock,
@@ -8333,12 +8341,12 @@ class TestRunReportApiChangesMode:
         assert "wrote: cdc-tasks/feat-x/report-api-changes.md" in out
         mock_log.close.assert_called_once_with(success=True)
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_stdout_only_does_not_create_file(
         self,
         mock_logger_cls: MagicMock,
@@ -8385,12 +8393,12 @@ class TestRunReportApiChangesMode:
         assert body in out
         assert "wrote:" not in out
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_prompt_includes_project_context_files(
         self,
         mock_logger_cls: MagicMock,
@@ -8439,12 +8447,12 @@ class TestRunReportApiChangesMode:
         assert sentinel in prompt
         assert "## openapi.yaml" in prompt
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_prompt_includes_public_api_paths_when_set(
         self,
         mock_logger_cls: MagicMock,
@@ -8491,12 +8499,12 @@ class TestRunReportApiChangesMode:
         assert "src/api" in prompt
         assert "src/handlers" in prompt
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_prompt_uses_inference_when_paths_empty(
         self,
         mock_logger_cls: MagicMock,
@@ -8542,12 +8550,12 @@ class TestRunReportApiChangesMode:
         prompt = mock_executor.run.call_args.args[0]
         assert "infer from project structure" in prompt
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_phase_summary_emitted_after_report(
         self,
         mock_logger_cls: MagicMock,
@@ -8612,12 +8620,12 @@ class TestRunReportApiChangesMode:
         assert "out 50" in summary
         assert "cost ≈ $" in summary
 
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir")
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir")
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_phase_summary_suppressed_when_print_usage_false(
         self,
         mock_logger_cls: MagicMock,
@@ -8712,25 +8720,25 @@ class TestReportTestCasesCli:
         assert "--base" in plain
         assert "--stdout-only" in plain
 
-    @patch("cadence.cli.run_report_test_cases_mode")
+    @patch("cadence.cli_commands.report.run_report_test_cases_mode")
     def test_default_call(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "test-cases"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base=None, stdout_only=False, config=None)
 
-    @patch("cadence.cli.run_report_test_cases_mode")
+    @patch("cadence.cli_commands.report.run_report_test_cases_mode")
     def test_with_base(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "test-cases", "--base", "develop"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base="develop", stdout_only=False, config=None)
 
-    @patch("cadence.cli.run_report_test_cases_mode")
+    @patch("cadence.cli_commands.report.run_report_test_cases_mode")
     def test_with_stdout_only(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["report", "test-cases", "--stdout-only"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(base=None, stdout_only=True, config=None)
 
-    @patch("cadence.cli.run_report_test_cases_mode")
+    @patch("cadence.cli_commands.report.run_report_test_cases_mode")
     def test_global_config_propagates(self, mock_run: MagicMock, tmp_path: Path) -> None:
         cfg = tmp_path / "override.yaml"
         cfg.write_text("default_branch: main\n")
@@ -8751,10 +8759,10 @@ class TestRunReportTestCasesMode:
         svc.is_default_branch.return_value = is_default
         return svc
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_detached_head_exits_2(
         self,
         _check: MagicMock,
@@ -8773,10 +8781,10 @@ class TestRunReportTestCasesMode:
         assert excinfo.value.code == 2
         assert "detached HEAD" in capsys.readouterr().err
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_default_branch_exits_2(
         self,
         _check: MagicMock,
@@ -8795,13 +8803,13 @@ class TestRunReportTestCasesMode:
         assert excinfo.value.code == 2
         assert "default branch main" in capsys.readouterr().err
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_happy_path_writes_report_path_message(
         self,
         mock_logger_cls: MagicMock,
@@ -8849,13 +8857,13 @@ class TestRunReportTestCasesMode:
         assert mock_run_report.call_args.args == ("test-cases",)
         mock_log.close.assert_called_once_with(success=True)
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_stdout_only_skips_wrote_message(
         self,
         mock_logger_cls: MagicMock,
@@ -8896,13 +8904,13 @@ class TestRunReportTestCasesMode:
         kwargs = mock_run_report.call_args.kwargs
         assert kwargs["stdout_only"] is True
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_base_overrides_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -8940,13 +8948,13 @@ class TestRunReportTestCasesMode:
         assert kwargs["base"] == "develop"
         assert kwargs["default_branch"] == "develop"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_runtime_error_exits_1_and_log_close_failure(
         self,
         mock_logger_cls: MagicMock,
@@ -8985,13 +8993,13 @@ class TestRunReportTestCasesMode:
         mock_log.error.assert_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_uses_review_model_when_report_model_unset(
         self,
         mock_logger_cls: MagicMock,
@@ -9033,13 +9041,13 @@ class TestRunReportTestCasesMode:
         ctor_kwargs = mock_executor_cls.call_args.kwargs
         assert ctor_kwargs["model"] == "claude-review-model"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_uses_report_model_when_set(
         self,
         mock_logger_cls: MagicMock,
@@ -9081,13 +9089,13 @@ class TestRunReportTestCasesMode:
         ctor_kwargs = mock_executor_cls.call_args.kwargs
         assert ctor_kwargs["model"] == "claude-tc-model"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_per_task_yaml_overrides_default_branch(
         self,
         mock_logger_cls: MagicMock,
@@ -9129,13 +9137,13 @@ class TestRunReportTestCasesMode:
         assert kwargs["base"] == "parent-branch"
         assert kwargs["default_branch"] == "parent-branch"
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_keyboard_interrupt_returns_cleanly(
         self,
         mock_logger_cls: MagicMock,
@@ -9171,10 +9179,10 @@ class TestRunReportTestCasesMode:
 
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_invalid_per_task_yaml_exits_1(
         self,
         _check: MagicMock,
@@ -9207,13 +9215,13 @@ class TestRunReportTestCasesMode:
         err = capsys.readouterr().err
         assert "top-level must be a mapping" in err
 
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_explicit_base_overrides_per_task_yaml(
         self,
         mock_logger_cls: MagicMock,
@@ -9272,14 +9280,14 @@ class HookRecorder:
 
 
 class TestRunPlanModeHooks:
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_and_post_called_in_order(
         self,
         mock_svc_cls: MagicMock,
@@ -9327,14 +9335,14 @@ class TestRunPlanModeHooks:
         assert recorder.calls[1]["phase"] == "plan"
         mock_executor.run.assert_called_once()
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_hook_failure_aborts_phase(
         self,
         mock_svc_cls: MagicMock,
@@ -9382,14 +9390,14 @@ class TestRunPlanModeHooks:
         assert recorder.calls[0]["kind"] == "pre"
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_post_hook_failure_warns_but_succeeds(
         self,
         mock_svc_cls: MagicMock,
@@ -9439,14 +9447,14 @@ class TestRunPlanModeHooks:
         mock_log.warn.assert_any_call("post-%s hook exited %d", "plan", 3)
         mock_executor.run.assert_called_once()
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_env_contents(
         self,
         mock_svc_cls: MagicMock,
@@ -9501,14 +9509,14 @@ class TestRunPlanModeHooks:
         assert post_env["CADENCE_PHASE_RESULT"] == "success"
         assert post_env["CADENCE_PHASE_DURATION_MS"].isdigit()
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.plan.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_hooks_disabled_does_not_warn_or_exit(
         self,
         mock_svc_cls: MagicMock,
@@ -9557,15 +9565,15 @@ class TestRunPlanModeHooks:
 
 
 class TestRunTaskModeHooks:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_and_post_called(
         self,
         mock_svc_cls: MagicMock,
@@ -9618,15 +9626,15 @@ class TestRunTaskModeHooks:
         post_env = recorder.calls[1]["env"]
         assert post_env["CADENCE_PHASE_RESULT"] == "success"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_hook_failure_aborts(
         self,
         mock_svc_cls: MagicMock,
@@ -9673,15 +9681,15 @@ class TestRunTaskModeHooks:
         assert len(recorder.calls) == 1
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.task._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.task.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_post_hook_failure_warns(
         self,
         mock_svc_cls: MagicMock,
@@ -9734,15 +9742,15 @@ class TestRunTaskModeHooks:
 
 
 class TestRunReviewModeHooks:
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_and_post_called(
         self,
         mock_svc_cls: MagicMock,
@@ -9780,7 +9788,7 @@ class TestRunReviewModeHooks:
         recorder = HookRecorder()
         mock_run_hook.side_effect = recorder
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -9794,15 +9802,15 @@ class TestRunReviewModeHooks:
         assert pre_env["CADENCE_BRANCH"] == "0042-feature"
         assert pre_env["CADENCE_TASK_NAME"] == "0042-feature"
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_pre_hook_failure_aborts(
         self,
         mock_svc_cls: MagicMock,
@@ -9838,7 +9846,7 @@ class TestRunReviewModeHooks:
         recorder = HookRecorder(outcomes=[HookOutcome(ran=True, exit_code=11, timed_out=False)])
         mock_run_hook.side_effect = recorder
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner_cls.return_value = mock_runner
 
@@ -9851,15 +9859,15 @@ class TestRunReviewModeHooks:
         assert len(recorder.calls) == 1
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli._install_sigquit")
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.TerminalCollector")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
-    @patch("cadence.cli.Service")
+    @patch("cadence.cli_commands.review._install_sigquit")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.review.TerminalCollector")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
+    @patch("cadence.cli_commands._shared.Service")
     def test_post_hook_failure_warns(
         self,
         mock_svc_cls: MagicMock,
@@ -9903,7 +9911,7 @@ class TestRunReviewModeHooks:
         )
         mock_run_hook.side_effect = recorder
 
-        with patch("cadence.cli.Runner") as mock_runner_cls:
+        with patch("cadence.cli_commands.review.Runner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner.run.return_value = True
             mock_runner_cls.return_value = mock_runner
@@ -9931,13 +9939,13 @@ class TestRunSquashModeHooks:
         svc.root.return_value = "/repo"
         return svc
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_and_post_called(
         self,
         mock_logger_cls: MagicMock,
@@ -9978,7 +9986,7 @@ class TestRunSquashModeHooks:
         os.chdir(tmp_path)
         try:
             expected_tasks_root = os.path.abspath("cdc-tasks")
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -10003,13 +10011,13 @@ class TestRunSquashModeHooks:
 
         mock_svc.squash_commits.assert_called_once()
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_hook_failure_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -10059,13 +10067,13 @@ class TestRunSquashModeHooks:
         assert recorder.calls[0]["kind"] == "pre"
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_post_hook_failure_warns_but_squash_preserved(
         self,
         mock_logger_cls: MagicMock,
@@ -10111,7 +10119,7 @@ class TestRunSquashModeHooks:
         original_cwd = os.getcwd()
         os.chdir(tmp_path)
         try:
-            with patch("cadence.cli.display_stats"):
+            with patch("cadence.cli_commands.squash.display_stats"):
                 run_squash_mode()
         finally:
             os.chdir(original_cwd)
@@ -10120,11 +10128,11 @@ class TestRunSquashModeHooks:
         mock_log.warn.assert_any_call("post-%s hook exited %d", "squash", 6)
         mock_log.close.assert_called_once_with(success=True)
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
     def test_validation_failures_skip_hook(
         self,
         _check: MagicMock,
@@ -10223,14 +10231,14 @@ class TestRunReportApiChangesModeHooks:
         svc.root.return_value = "/repo"
         return svc
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_and_post_called(
         self,
         mock_logger_cls: MagicMock,
@@ -10289,14 +10297,14 @@ class TestRunReportApiChangesModeHooks:
 
         mock_run_report.assert_called_once()
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_hook_failure_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -10339,14 +10347,14 @@ class TestRunReportApiChangesModeHooks:
         assert len(recorder.calls) == 1
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_post_hook_records_failure_when_run_report_raises(
         self,
         mock_logger_cls: MagicMock,
@@ -10404,14 +10412,14 @@ class TestRunReportTestCasesModeHooks:
         svc.root.return_value = "/repo"
         return svc
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_and_post_called_with_test_cases_report_type(
         self,
         mock_logger_cls: MagicMock,
@@ -10457,14 +10465,14 @@ class TestRunReportTestCasesModeHooks:
         assert post_env["CADENCE_REPORT_TYPE"] == "test-cases"
         assert post_env["CADENCE_PHASE_RESULT"] == "success"
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_pre_hook_failure_aborts(
         self,
         mock_logger_cls: MagicMock,
@@ -10506,14 +10514,14 @@ class TestRunReportTestCasesModeHooks:
         mock_run_report.assert_not_called()
         mock_log.close.assert_called_once_with(success=False)
 
-    @patch("cadence.cli.run_hook")
-    @patch("cadence.cli.run_report")
-    @patch("cadence.cli.ClaudeExecutor")
-    @patch("cadence.cli.Service")
-    @patch("cadence.cli.load_config")
-    @patch("cadence.cli.detect_local_dir", return_value=None)
-    @patch("cadence.cli.check_claude_dep")
-    @patch("cadence.cli.Logger")
+    @patch("cadence.cli_commands._shared.run_hook")
+    @patch("cadence.cli_commands.report.run_report")
+    @patch("cadence.cli_commands._shared.ClaudeExecutor")
+    @patch("cadence.cli_commands._shared.Service")
+    @patch("cadence.cli_commands._shared.load_config")
+    @patch("cadence.cli_commands._shared.detect_local_dir", return_value=None)
+    @patch("cadence.cli_commands._shared.check_claude_dep")
+    @patch("cadence.cli_commands._shared.Logger")
     def test_post_hook_records_failure_when_run_report_raises(
         self,
         mock_logger_cls: MagicMock,
@@ -10571,25 +10579,25 @@ class TestStatusCli:
         assert result.exit_code == 0
         assert "Show the status of cadence tasks" in result.output
 
-    @patch("cadence.cli.run_status_mode")
+    @patch("cadence.cli_commands.status.run_status_mode")
     def test_status_no_flags(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["status"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(current_only=False, json_output=False, config=None)
 
-    @patch("cadence.cli.run_status_mode")
+    @patch("cadence.cli_commands.status.run_status_mode")
     def test_status_current_flag(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["status", "--current"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(current_only=True, json_output=False, config=None)
 
-    @patch("cadence.cli.run_status_mode")
+    @patch("cadence.cli_commands.status.run_status_mode")
     def test_status_json_flag(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["status", "--json"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(current_only=False, json_output=True, config=None)
 
-    @patch("cadence.cli.run_status_mode")
+    @patch("cadence.cli_commands.status.run_status_mode")
     def test_status_global_config_propagates(self, mock_run: MagicMock, tmp_path: Path) -> None:
         cfg = tmp_path / "override.yaml"
         cfg.write_text("default_branch: main\n")
@@ -10866,13 +10874,13 @@ class TestDoctorCli:
         plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
         assert "doctor" in plain
 
-    @patch("cadence.cli.run_doctor_mode")
+    @patch("cadence.cli_commands.doctor.run_doctor_mode")
     def test_doctor_calls_run_doctor_mode(self, mock_run: MagicMock) -> None:
         result = self._runner().invoke(app, ["doctor"])
         assert result.exit_code == 0
         mock_run.assert_called_once_with(config=None)
 
-    @patch("cadence.cli.run_doctor_mode")
+    @patch("cadence.cli_commands.doctor.run_doctor_mode")
     def test_global_config_propagates_to_doctor(self, mock_run: MagicMock, tmp_path: Path) -> None:
         cfg = tmp_path / "override.yaml"
         cfg.write_text("default_branch: main\n")
@@ -10979,7 +10987,7 @@ class TestBuildLoggerProgressJsonl:
         from cadence.status import Mode, PhaseHolder
 
         progress_path = str(tmp_path / "progress-plan.txt")
-        with patch("cadence.cli.Logger") as mock_logger_cls:
+        with patch("cadence.cli_commands._shared.Logger") as mock_logger_cls:
             _build_logger(
                 progress_path,
                 "plan-file",
@@ -11007,7 +11015,7 @@ class TestBuildLoggerProgressJsonl:
         from cadence.status import Mode, PhaseHolder
 
         progress_path = str(tmp_path / "progress-plan.txt")
-        with patch("cadence.cli.Logger") as mock_logger_cls:
+        with patch("cadence.cli_commands._shared.Logger") as mock_logger_cls:
             _build_logger(
                 progress_path,
                 "plan-file",
@@ -11038,9 +11046,12 @@ class TestBuildLoggerProgressJsonl:
             raise SystemExit(0)
 
         with (
-            patch("cadence.cli._setup_runtime") as setup,
-            patch("cadence.cli.compute_progress_path", return_value=str(tmp_path / "progress.txt")),
-            patch("cadence.cli._build_logger", side_effect=fake_build_logger),
+            patch("cadence.cli_commands.plan._setup_runtime") as setup,
+            patch(
+                "cadence.cli_commands.plan.compute_progress_path",
+                return_value=str(tmp_path / "progress.txt"),
+            ),
+            patch("cadence.cli_commands.plan._build_logger", side_effect=fake_build_logger),
         ):
             setup.return_value = (
                 cfg,
