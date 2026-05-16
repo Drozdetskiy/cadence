@@ -135,7 +135,7 @@ YAML overrides via the global `--config` option (or auto-discovered `config.yaml
 
 | YAML key | Type | Default | Description |
 |----------|------|---------|-------------|
-| `claude_error_patterns` | list[string] | `["You've hit your limit", "API Error:", "cannot be launched inside another Claude Code session", "Not logged in"]` | Claude error patterns (case-insensitive substring) |
+| `claude_error_patterns` | list[string] | `["You've hit your limit", "API Error:", "cannot be launched inside another Claude Code session", "Not logged in"]` | Claude error patterns (case-sensitive substring — must match the case Claude emits) |
 | `claude_limit_patterns` | list[string] | `["You've hit your limit"]` | Claude rate-limit patterns (for wait+retry) |
 
 Check priority: limit patterns are checked first. If a match occurs and `wait_on_limit > 0` -> wait and retry. If a match occurs and `wait_on_limit == 0` -> fall through to error-pattern behaviour (exit). Limit patterns intentionally overlap with error patterns; `wait_on_limit` acts as a toggle.

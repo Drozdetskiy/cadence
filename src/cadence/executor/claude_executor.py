@@ -87,11 +87,14 @@ def detect_signal(text: str) -> str:
 
 
 def match_pattern(output: str, patterns: list[str]) -> str:
-    lower = output.lower()
+    """Case-sensitive substring; mirror the exact case Claude emits.
+
+    See detect_signal for matching semantics.
+    """
     for pat in patterns:
         if not pat or not pat.strip():
             continue
-        if pat.lower() in lower:
+        if pat in output:
             return pat
     return ""
 

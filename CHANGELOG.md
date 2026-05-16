@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.25.2 - 2026-05-16
+
+### Changed
+
+- `claude_error_patterns` and `claude_limit_patterns` are now matched case-sensitively against Claude output (previously both sides were lowercased). Default patterns are unchanged because they already mirror the case Claude emits, but any user-defined patterns in `.cadence/config.yaml` whose case differs from Claude's output will stop matching — update them to the exact case Claude prints (e.g. `API Error:`, `Not logged in`).
+
 ## v0.25.1 - 2026-05-16
 
 ### Fixes
