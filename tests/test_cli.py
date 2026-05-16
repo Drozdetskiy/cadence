@@ -3010,6 +3010,61 @@ class TestRunTaskInitMode:
         assert excinfo.value.code == 2
         assert "invalid task name" in capsys.readouterr().err
 
+    def test_init_rejects_too_long_task_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import os
+
+        long_name = "a" * 55
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                run_task_init_mode(long_name)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "too long" in err
+        assert "55" in err
+        assert "50" in err
+        assert not (tmp_path / "cdc-tasks" / long_name).exists()
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_init_accepts_50_char_task_name(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = "main"
+        mock_svc.branch_exists.return_value = False
+        mock_service_cls.return_value = mock_svc
+
+        name = "a" * 50
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            run_task_init_mode(name)
+        finally:
+            os.chdir(original_cwd)
+
+        mock_svc.create_branch.assert_called_once_with(name)
+        task_dir = tmp_path / "cdc-tasks" / name
+        assert task_dir.is_dir()
+        assert (task_dir / "init").is_file()
+
     @patch("cadence.cli.Service", side_effect=RuntimeError("not a repo"))
     @patch("cadence.cli.load_config")
     @patch("cadence.cli.detect_local_dir", return_value=None)
@@ -5368,6 +5423,231 @@ class TestRunSquashMode:
         assert kwargs.get("model") != "claude-opus-4-7"
 
 
+class TestTooLongBranchDiesLoud:
+    LONG_BRANCH = "1037-pre-dirty-leaks-into-validation-and-failure-commit"
+    FIFTY_BRANCH = "a" * 50
+
+    @staticmethod
+    def _assert_too_long_message(err: str, branch: str, tasks_root: str = "cdc-tasks") -> None:
+        assert "too long" in err
+        assert str(len(branch)) in err
+        assert "50" in err
+        assert branch in err
+        assert "git branch -m" in err
+        assert f"mv {tasks_root}/" in err
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_plan_on_too_long_branch_dies_loud(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            _run_plan_on_current_branch(config=None)
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_task_on_too_long_branch_dies_loud(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            _run_task_on_current_branch(config=None)
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_squash_on_too_long_branch_dies_loud(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_squash_mode()
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    def test_status_on_too_long_branch_dies_loud(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "user.email", "test@example.com"], check=True
+        )
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+        (repo / "README.md").write_text("hello\n")
+        subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "initial"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "checkout", "-q", "-b", self.LONG_BRANCH], check=True
+        )
+
+        monkeypatch.chdir(repo)
+        with pytest.raises(SystemExit) as excinfo:
+            run_status_mode(current_only=False, json_output=False)
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_review_on_too_long_branch_dies_loud(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_review_mode()
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_report_api_changes_on_too_long_branch_dies_loud(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_report_api_changes_mode()
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    @patch("cadence.cli.check_claude_dep")
+    def test_report_test_cases_on_too_long_branch_dies_loud(
+        self,
+        _check: MagicMock,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.LONG_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        with pytest.raises(SystemExit) as excinfo:
+            run_report_test_cases_mode()
+        assert excinfo.value.code == 2
+        self._assert_too_long_message(capsys.readouterr().err, self.LONG_BRANCH)
+
+    @patch("cadence.cli.Service")
+    @patch("cadence.cli.load_config")
+    @patch("cadence.cli.detect_local_dir", return_value=None)
+    def test_run_plan_on_50_char_branch_proceeds(
+        self,
+        _detect: MagicMock,
+        mock_config: MagicMock,
+        mock_service_cls: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import os
+
+        from cadence.config import Config
+
+        mock_config.return_value = Config(tasks_root="cdc-tasks", default_branch="main")
+
+        mock_svc = MagicMock()
+        mock_svc.current_branch.return_value = self.FIFTY_BRANCH
+        mock_service_cls.return_value = mock_svc
+
+        task_dir = tmp_path / "cdc-tasks" / self.FIFTY_BRANCH
+        task_dir.mkdir(parents=True)
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                _run_plan_on_current_branch(config=None)
+        finally:
+            os.chdir(original_cwd)
+
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "too long" not in err
+        assert "init file not found" in err
+
+
 class TestParseChainFile:
     def test_missing_file_exits(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         missing = tmp_path / "absent.txt"
@@ -5423,6 +5703,21 @@ class TestParseChainFile:
         assert "duplicate task names in chain file" in err
         assert "task-a" in err
         assert "task-b" in err
+
+    def test_chain_file_rejects_too_long_task_name(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        long_name = "a" * 55
+        chain = tmp_path / "chain.txt"
+        chain.write_text(f"{long_name}\n")
+        with pytest.raises(SystemExit) as excinfo:
+            _parse_chain_file(chain)
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "too long in chain file" in err
+        assert "55" in err
+        assert "50" in err
+        assert long_name in err
 
 
 class TestValidateChainTasks:

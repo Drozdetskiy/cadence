@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import IO
+from typing import IO, Final
 
 from rich.console import Console
 from rich.style import Style
@@ -32,6 +32,8 @@ class ProgressLoggerConfig:
 
 _DASHES = "-" * 60
 
+MAX_TASK_NAME_LEN: Final[int] = 50
+
 
 def sanitize_plan_name(name: str) -> str:
     name = name.lower()
@@ -39,9 +41,12 @@ def sanitize_plan_name(name: str) -> str:
     name = re.sub(r"\s+", "-", name)
     name = re.sub(r"[^a-z0-9-]", "", name)
     name = re.sub(r"-{2,}", "-", name)
-    name = name[:50]
     name = name.strip("-")
-    return name or "unnamed"
+    if not name:
+        return "unnamed"
+    if len(name) > MAX_TASK_NAME_LEN:
+        raise ValueError(f"task name too long: {len(name)} chars, max {MAX_TASK_NAME_LEN}")
+    return name
 
 
 def _is_progress_completed(f: IO[str]) -> bool:
