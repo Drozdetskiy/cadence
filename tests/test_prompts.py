@@ -658,7 +658,7 @@ class TestBuildReviewSecondPrompt:
         for name in ("testing", "simplification", "documentation"):
             assert f"{{{{agent:{name}}}}}" not in result
         assert result.count("Report findings only - no positive observations.") == 2
-        assert "<<<CADENCE:REVIEW_DONE>>>" in result
+        assert "<<<CADENCE:REVIEW_SECOND_DONE>>>" in result
 
     def test_includes_decision_surface_section_headings(self) -> None:
         result = build_review_second_prompt(

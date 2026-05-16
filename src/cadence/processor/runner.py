@@ -30,6 +30,7 @@ from cadence.processor.signals import (
     is_all_tasks_done,
     is_plan_ready,
     is_review_done,
+    is_review_second_done,
     is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
@@ -118,6 +119,7 @@ class Dependencies:
     logger: Logger
     holder: PhaseHolder
     review_executor: Executor | None = None
+    review_second_executor: Executor | None = None
     plan_model: str = ""
     task_model: str = ""
     review_model: str = ""
@@ -159,6 +161,10 @@ class Runner:
     @property
     def _review_executor(self) -> Executor:
         return self._deps.review_executor or self._deps.executor
+
+    @property
+    def _review_loop_executor(self) -> Executor:
+        return self._deps.review_second_executor or self._review_executor
 
     def run(self) -> bool:
         dispatch: dict[Mode, Callable[[], bool]] = {
@@ -456,7 +462,7 @@ class Runner:
 
                 log.log_event(IterationStartEvent(ts=now_ts(), phase="review-loop", iteration=i))
                 result = self._run_iteration(
-                    self._review_executor,
+                    self._review_loop_executor,
                     prompt,
                     iteration=i,
                     phase_stats=phase_stats,
@@ -484,7 +490,7 @@ class Runner:
                     log.error("review reported failure")
                     raise RuntimeError("review failed")
 
-                if is_review_done(result.signal):
+                if is_review_done(result.signal) or is_review_second_done(result.signal):
                     log.print("review loop complete, no more findings")
                     return True
 

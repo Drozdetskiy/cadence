@@ -85,7 +85,7 @@ REVIEW_DONE means "this iteration produced ZERO confirmed issues to fix" — NOT
 
 Path A - NO issues found in this iteration:
 - You reviewed the code and found nothing critical/major to fix
-- Output: <<<CADENCE:REVIEW_DONE>>>
+- Output: <<<CADENCE:REVIEW_SECOND_DONE>>>
 
 Path B - Issues found AND fixed:
 1. Fix verified critical/major issues only

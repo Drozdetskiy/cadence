@@ -6,6 +6,7 @@ from cadence.processor.signals import (
     is_report_done,
     is_report_failed,
     is_review_done,
+    is_review_second_done,
     is_task_failed,
     parse_plan_draft_payload,
     parse_question_payload,
@@ -19,6 +20,7 @@ from cadence.status import (
     SignalReportDone,
     SignalReportFailed,
     SignalReviewDone,
+    SignalReviewSecondDone,
 )
 
 
@@ -139,6 +141,21 @@ class TestIsReviewDone:
 
     def test_empty(self) -> None:
         assert is_review_done("") is False
+
+    def test_review_second_done_is_not_review_done(self) -> None:
+        assert is_review_done(SignalReviewSecondDone) is False
+
+
+class TestIsReviewSecondDone:
+    def test_review_second_done(self) -> None:
+        assert is_review_second_done(SignalReviewSecondDone) is True
+
+    def test_not_review_second_done(self) -> None:
+        assert is_review_second_done(SignalReviewDone) is False
+        assert is_review_second_done(SignalFailed) is False
+
+    def test_empty(self) -> None:
+        assert is_review_second_done("") is False
 
 
 class TestIsTaskFailed:

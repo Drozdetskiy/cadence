@@ -42,6 +42,7 @@ from cadence.status import (
     SignalFailed,
     SignalPlanReady,
     SignalReviewDone,
+    SignalReviewSecondDone,
 )
 from cadence.usage import UsageStats
 
@@ -797,6 +798,7 @@ def _make_review_runner(
     *,
     plan_file: str = "",
     review_executor: object | None = None,
+    review_second_executor: object | None = None,
     max_iterations: int = 10,
     mode: Mode = Mode.REVIEW,
 ) -> tuple[Runner, MagicMock, MagicMock]:
@@ -814,6 +816,7 @@ def _make_review_runner(
         logger=log,
         holder=holder,
         review_executor=review_executor,  # type: ignore[arg-type]
+        review_second_executor=review_second_executor,  # type: ignore[arg-type]
     )
     cfg = AppConfig(
         max_iterations=max_iterations,
@@ -908,6 +911,22 @@ class TestRunClaudeReviewLoop:
         runner, _log, _ = _make_review_runner(executor)
         assert runner.run_claude_review_loop() is True
         assert executor.run.call_count == 1
+
+    def test_review_second_signal_terminates_loop(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewSecondDone)
+        runner, log, _ = _make_review_runner(executor)
+        assert runner.run_claude_review_loop() is True
+        assert executor.run.call_count == 1
+        log.print.assert_any_call("review loop complete, no more findings")
+
+    def test_legacy_review_done_signal_still_terminates_loop(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        runner, log, _ = _make_review_runner(executor)
+        assert runner.run_claude_review_loop() is True
+        assert executor.run.call_count == 1
+        log.print.assert_any_call("review loop complete, no more findings")
 
     def test_no_commit_detection_stops_loop(self) -> None:
         executor = MagicMock()
@@ -1133,6 +1152,22 @@ class TestRunReviewOnly:
         assert executor.run.call_count == 2
         assert call("nothing to verify, skipping review loop") not in log.print.call_args_list
 
+    def test_review_second_signal_does_not_skip_loop_after_first_pass(self) -> None:
+        executor = MagicMock()
+        executor.run.side_effect = [
+            Result(output="", signal=SignalReviewSecondDone),  # round 1 — wrong signal
+            Result(output="", signal=SignalReviewDone),  # loop iteration terminates
+        ]
+        runner, log, _ = _make_review_runner(
+            executor,
+            plan_file="",
+            mode=Mode.REVIEW,
+        )
+        assert runner.run_review_only() is True
+        assert executor.run.call_count == 2
+        assert runner.last_review_done is False
+        assert call("nothing to verify, skipping review loop") not in log.print.call_args_list
+
 
 class TestReviewAgentModelsWiring:
     def test_review_first_threads_agent_models_override(self) -> None:
@@ -1256,6 +1291,54 @@ class TestReviewExecutorRouting:
         runner, _log, _ = _make_review_runner(executor)
         # No review_executor; property should return the primary one.
         assert runner._review_executor is executor
+
+
+class TestReviewSecondExecutorRouting:
+    def test_review_second_executor_used_for_loop(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        primary = MagicMock()
+        review = MagicMock()
+        review_second = MagicMock()
+        primary.run.return_value = Result(output="", signal=SignalCompleted)
+        review.run.return_value = Result(output="", signal="")  # forces loop
+        review_second.run.return_value = Result(output="", signal=SignalReviewSecondDone)
+        runner, _log, _ = _make_review_runner(
+            primary,
+            plan_file=str(plan),
+            review_executor=review,
+            review_second_executor=review_second,
+            mode=Mode.FULL,
+        )
+        assert runner.run_full() is True
+        assert primary.run.call_count == 1
+        assert review.run.call_count == 1
+        assert review_second.run.call_count == 1
+
+    def test_review_second_executor_falls_back_to_review_executor(self, tmp_path: Path) -> None:
+        plan = _write_plan(tmp_path, _PLAN_DONE)
+        primary = MagicMock()
+        review = MagicMock()
+        primary.run.return_value = Result(output="", signal=SignalCompleted)
+        review.run.side_effect = [
+            Result(output="", signal=""),  # review_first — forces loop
+            Result(output="", signal=SignalReviewDone),  # loop iteration
+        ]
+        runner, _log, _ = _make_review_runner(
+            primary,
+            plan_file=str(plan),
+            review_executor=review,
+            review_second_executor=None,
+            mode=Mode.FULL,
+        )
+        assert runner.run_full() is True
+        assert primary.run.call_count == 1
+        assert review.run.call_count == 2
+
+    def test_review_second_executor_falls_back_to_primary_when_both_none(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        runner, _log, _ = _make_review_runner(executor)
+        assert runner._review_loop_executor is executor
 
 
 def _flatten_print_calls(log: MagicMock) -> str:

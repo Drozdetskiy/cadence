@@ -738,6 +738,11 @@ def run_task_mode(
 
     claude = factory(log, cfg.task_model)
     review_claude = factory(log, cfg.review_model) if cfg.review_model != cfg.task_model else None
+    review_second_claude = (
+        factory(log, cfg.review_second_model)
+        if cfg.review_second_model and cfg.review_second_model != cfg.review_model
+        else None
+    )
 
     deps = Dependencies(
         executor=claude,
@@ -745,6 +750,7 @@ def run_task_mode(
         logger=log,
         holder=holder,
         review_executor=review_claude,
+        review_second_executor=review_second_claude,
         plan_model=cfg.plan_model,
         task_model=cfg.task_model,
         review_model=cfg.review_model,
@@ -864,11 +870,17 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
 
     git_svc.set_log(log)
 
+    review_second_claude = (
+        factory(log, cfg.review_second_model)
+        if cfg.review_second_model and cfg.review_second_model != cfg.review_model
+        else None
+    )
     deps = Dependencies(
         executor=factory(log, cfg.review_model),
         input_collector=TerminalCollector(),
         logger=log,
         holder=holder,
+        review_second_executor=review_second_claude,
         plan_model=cfg.plan_model,
         task_model=cfg.task_model,
         review_model=cfg.review_model,

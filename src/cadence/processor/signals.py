@@ -18,6 +18,7 @@ from cadence.status import (
     SignalReportEnd,
     SignalReportFailed,
     SignalReviewDone,
+    SignalReviewSecondDone,
 )
 
 
@@ -109,6 +110,10 @@ def is_plan_ready(signal: str) -> bool:
 
 def is_review_done(signal: str) -> bool:
     return signal == SignalReviewDone
+
+
+def is_review_second_done(signal: str) -> bool:
+    return signal == SignalReviewSecondDone
 
 
 def is_task_failed(signal: str) -> bool:
