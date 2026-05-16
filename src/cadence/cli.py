@@ -51,7 +51,12 @@ from cadence.processor.runner import (
 )
 from cadence.processor.signals import parse_squash_commit_message
 from cadence.progress.colors import Colors
-from cadence.progress.logger import Logger, ProgressLoggerConfig, sanitize_plan_name
+from cadence.progress.logger import (
+    MAX_TASK_NAME_LEN,
+    Logger,
+    ProgressLoggerConfig,
+    sanitize_plan_name,
+)
 from cadence.status import Mode, PhaseHolder
 from cadence.templates import load_template, render_template
 from cadence.usage import (
@@ -152,6 +157,15 @@ def _parse_chain_file(path: Path) -> list[str]:
         if "/" in line or "\\" in line or line.startswith((".", "-")):
             typer.echo(f"error: invalid task name in chain file: {line}", err=True)
             raise SystemExit(2)
+        try:
+            sanitize_plan_name(line)
+        except ValueError:
+            typer.echo(
+                f"error: task name too long in chain file: {line} "
+                f"({len(line)} chars, max {MAX_TASK_NAME_LEN})",
+                err=True,
+            )
+            raise SystemExit(2) from None
         names.append(line)
     if not names:
         typer.echo("error: chain file is empty", err=True)
@@ -689,6 +703,7 @@ def run_task_mode(
         raise SystemExit(1) from None
 
     branch = git_svc.current_branch()
+    _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
 
     try:
         progress_path = compute_progress_path(
@@ -809,6 +824,8 @@ def run_review_mode(base: str | None = None, *, config: Path | None = None) -> N
         default_branch = base
 
     branch = git_svc.current_branch()
+    if branch:
+        _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
     plan_file = find_existing_plan(cfg.tasks_root, branch, default_branch)
     try:
         head_hash = git_svc.head_hash()
@@ -934,6 +951,7 @@ def run_squash_mode(
     if not branch:
         typer.echo("error: cannot squash from a detached HEAD", err=True)
         raise SystemExit(2)
+    _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
 
     task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
 
@@ -1148,6 +1166,7 @@ def run_report_api_changes_mode(
     if not branch:
         typer.echo("error: cannot report from a detached HEAD", err=True)
         raise SystemExit(2)
+    _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
 
     task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
 
@@ -1284,6 +1303,7 @@ def run_report_test_cases_mode(
     if not branch:
         typer.echo("error: cannot report from a detached HEAD", err=True)
         raise SystemExit(2)
+    _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
 
     task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
 
@@ -1411,6 +1431,13 @@ def run_task_init_mode(
         typer.echo(f"error: invalid task name: {task_name!r}", err=True)
         raise SystemExit(2)
 
+    try:
+        sanitize_plan_name(task_name)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        typer.echo("hint: shorten the task name", err=True)
+        raise SystemExit(2) from None
+
     if template is not None and (
         not template or "/" in template or "\\" in template or template.startswith((".", "-"))
     ):
@@ -1527,6 +1554,8 @@ def run_status_mode(
         raise SystemExit(2) from None
 
     branch = git_svc.current_branch()
+    if branch:
+        _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
     tasks_root_path = Path(cfg.tasks_root)
     threshold_seconds = cfg.running_threshold_minutes * 60
 
@@ -1596,6 +1625,21 @@ def run_doctor_mode(*, config: Path | None = None) -> None:
         raise SystemExit(exit_code)
 
 
+def _sanitize_branch_or_die(branch: str, *, tasks_root: str) -> str:
+    try:
+        return sanitize_plan_name(branch)
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        typer.echo(
+            f"hint: branch name '{branch}' is too long for cadence's path lookup.",
+            err=True,
+        )
+        typer.echo("  rename branch and task directory, e.g.:", err=True)
+        typer.echo("    git branch -m <shorter-name>", err=True)
+        typer.echo(f"    mv {tasks_root}/<old> {tasks_root}/<shorter-name>", err=True)
+        raise SystemExit(2) from None
+
+
 def _resolve_current_task_dir(
     config: Path | None,
     *,
@@ -1621,7 +1665,7 @@ def _resolve_current_task_dir(
         typer.echo(f"error: cannot run on default branch {default_stripped}", err=True)
         raise SystemExit(2)
 
-    task_dir = Path(cfg.tasks_root) / sanitize_plan_name(branch)
+    task_dir = Path(cfg.tasks_root) / _sanitize_branch_or_die(branch, tasks_root=cfg.tasks_root)
     if not task_dir.is_dir():
         typer.echo(f"error: task directory not found: {task_dir}", err=True)
         raise SystemExit(2)

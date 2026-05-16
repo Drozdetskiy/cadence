@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.25.1 - 2026-05-16
+
+### Fixes
+
+- `cadence init <name>` now refuses task names longer than 50 characters before creating any branch or directory, instead of silently truncating later lookups.
+- `cadence run plan|task|squash|review|report|status` and `cadence chain` now fail with a clear error (naming the branch, its length, the limit, and a `git branch -m` + `mv` rename recipe) when the current branch or a chain entry exceeds the 50-character task-name limit, instead of reporting a misleading "task directory not found" against a truncated path.
+
 ## v0.25.0 - 2026-05-15
 
 ### Changed

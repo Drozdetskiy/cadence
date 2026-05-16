@@ -211,9 +211,27 @@ class TestSanitizePlanName:
     def test_empty_fallback(self) -> None:
         assert sanitize_plan_name("!!!") == "unnamed"
 
-    def test_length_limit(self) -> None:
-        result = sanitize_plan_name("a" * 100)
-        assert len(result) <= 50
+    def test_length_limit_raises(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            sanitize_plan_name("a" * 100)
+        msg = str(excinfo.value)
+        assert "100" in msg
+        assert "50" in msg
+
+    def test_boundary_50_ok(self) -> None:
+        assert sanitize_plan_name("a" * 50) == "a" * 50
+
+    def test_boundary_51_raises(self) -> None:
+        with pytest.raises(ValueError):
+            sanitize_plan_name("a" * 51)
+
+    def test_too_long_message_mentions_length_and_limit(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            sanitize_plan_name("a" * 55)
+        msg = str(excinfo.value)
+        assert "too long" in msg
+        assert "55" in msg
+        assert "50" in msg
 
     def test_slash_becomes_dash(self) -> None:
         assert sanitize_plan_name("feat/foo") == "feat-foo"
