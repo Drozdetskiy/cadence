@@ -35,9 +35,12 @@ class Config:
     iteration_delay_ms: int = 2000
     task_retry_count: int = 1
     max_iterations: int = 50
+    min_plan_iterations: int = 1
+    min_review_iterations: int = 1
     session_timeout: str = "0"
     idle_timeout: str = "5m"
     wait_on_limit: str = "0"
+    limit_retry_max: int = 10
     tasks_root: str = "cdc-tasks"
     default_branch: str = "main"
     init_prompt_name: str = "init"
@@ -115,6 +118,16 @@ def _parse_agent_models(raw: dict[str, Any]) -> dict[str, str]:
     return result
 
 
+def _validate_limit_retry_max(value: int) -> None:
+    if value < 1:
+        raise ValueError(f"limit_retry_max must be >= 1 (got {value})")
+
+
+def _validate_min_iterations(key: str, value: int) -> None:
+    if value < 0:
+        raise ValueError(f"{key} must be >= 0 (got {value})")
+
+
 _DURATION_RE = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
@@ -178,6 +191,9 @@ def load_config(config_dir: Path | None) -> Config:
         "iteration_delay_ms",
         "task_retry_count",
         "max_iterations",
+        "min_plan_iterations",
+        "min_review_iterations",
+        "limit_retry_max",
         "hooks_timeout_seconds",
         "running_threshold_minutes",
         "import_max_bytes",
@@ -201,6 +217,10 @@ def load_config(config_dir: Path | None) -> Config:
     for key in _INT_FIELDS:
         if key in data:
             setattr(cfg, key, int(data[key]))
+
+    _validate_limit_retry_max(cfg.limit_retry_max)
+    _validate_min_iterations("min_plan_iterations", cfg.min_plan_iterations)
+    _validate_min_iterations("min_review_iterations", cfg.min_review_iterations)
 
     for key in _BOOL_FIELDS:
         if key in data:
@@ -239,6 +259,9 @@ class YamlOverrides:
     report_api_changes_model: str | None = None
     report_test_cases_model: str | None = None
     default_branch: str | None = None
+    limit_retry_max: int | None = None
+    min_plan_iterations: int | None = None
+    min_review_iterations: int | None = None
     agent_models: dict[str, str] = field(default_factory=dict)
 
 
@@ -291,6 +314,17 @@ def parse_yaml_overrides(text: str | None) -> YamlOverrides:
     if isinstance(default_branch, str) and default_branch:
         overrides.default_branch = default_branch
 
+    if "limit_retry_max" in raw:
+        limit_retry_max = int(raw["limit_retry_max"])
+        _validate_limit_retry_max(limit_retry_max)
+        overrides.limit_retry_max = limit_retry_max
+
+    for key in ("min_plan_iterations", "min_review_iterations"):
+        if key in raw:
+            value = int(raw[key])
+            _validate_min_iterations(key, value)
+            setattr(overrides, key, value)
+
     overrides.agent_models = _parse_agent_models(raw)
 
     return overrides
@@ -318,6 +352,12 @@ def apply_yaml_overrides(cfg: Config, overrides: YamlOverrides) -> None:
         cfg.report_test_cases_model = overrides.report_test_cases_model
     if overrides.default_branch is not None:
         cfg.default_branch = overrides.default_branch
+    if overrides.limit_retry_max is not None:
+        cfg.limit_retry_max = overrides.limit_retry_max
+    if overrides.min_plan_iterations is not None:
+        cfg.min_plan_iterations = overrides.min_plan_iterations
+    if overrides.min_review_iterations is not None:
+        cfg.min_review_iterations = overrides.min_review_iterations
     if overrides.agent_models:
         for name, model in overrides.agent_models.items():
             cfg.agent_models[name] = model

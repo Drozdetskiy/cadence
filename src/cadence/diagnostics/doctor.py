@@ -325,10 +325,13 @@ EMBEDDED_AGENT_NAMES: tuple[str, ...] = (
 _NON_NEGATIVE_INT_FIELDS: tuple[str, ...] = (
     "iteration_delay_ms",
     "task_retry_count",
+    "min_plan_iterations",
+    "min_review_iterations",
 )
 
 _POSITIVE_INT_FIELDS: tuple[str, ...] = (
     "max_iterations",
+    "limit_retry_max",
     "hooks_timeout_seconds",
     "running_threshold_minutes",
     "import_max_bytes",

@@ -357,6 +357,20 @@ class TestCheckConfig:
         fails = [r for r in results if r.name == "idle_timeout" and r.status == STATUS_FAIL]
         assert len(fails) == 1
 
+    def test_runner_policy_out_of_range_fails(self, tmp_path: Path) -> None:
+        local = tmp_path / ".cadence"
+        local.mkdir()
+        (local / "config.yaml").write_text("limit_retry_max: 0\nmin_plan_iterations: -1\n")
+        results = check_config(local)
+        retry_fails = [
+            r for r in results if r.name == "limit_retry_max" and r.status == STATUS_FAIL
+        ]
+        plan_fails = [
+            r for r in results if r.name == "min_plan_iterations" and r.status == STATUS_FAIL
+        ]
+        assert len(retry_fails) == 1
+        assert len(plan_fails) == 1
+
     def test_valid_duration(self, tmp_path: Path) -> None:
         local = tmp_path / ".cadence"
         local.mkdir()

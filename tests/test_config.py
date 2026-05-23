@@ -43,6 +43,9 @@ class TestConfigDefaults:
         assert cfg.iteration_delay_ms == 2000
         assert cfg.task_retry_count == 1
         assert cfg.max_iterations == 50
+        assert cfg.min_plan_iterations == 1
+        assert cfg.min_review_iterations == 1
+        assert cfg.limit_retry_max == 10
         assert cfg.session_timeout == "0"
         assert cfg.idle_timeout == "5m"
         assert cfg.wait_on_limit == "0"
@@ -383,6 +386,42 @@ class TestLoadConfig:
         ):
             load_config(tmp_path)
 
+    def test_load_runner_policy_keys(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(
+            "limit_retry_max: 5\nmin_plan_iterations: 8\nmin_review_iterations: 4\n"
+        )
+        cfg = load_config(tmp_path)
+        assert cfg.limit_retry_max == 5
+        assert cfg.min_plan_iterations == 8
+        assert cfg.min_review_iterations == 4
+
+    @pytest.mark.parametrize("bad_value", [0, -3])
+    def test_limit_retry_max_below_one_raises(self, tmp_path: Path, bad_value: int) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text(f"limit_retry_max: {bad_value}\n")
+        with pytest.raises(ValueError, match=r"limit_retry_max must be >= 1"):
+            load_config(tmp_path)
+
+    def test_min_plan_iterations_negative_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("min_plan_iterations: -1\n")
+        with pytest.raises(ValueError, match=r"min_plan_iterations must be >= 0"):
+            load_config(tmp_path)
+
+    def test_min_review_iterations_negative_raises(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("min_review_iterations: -1\n")
+        with pytest.raises(ValueError, match=r"min_review_iterations must be >= 0"):
+            load_config(tmp_path)
+
+    def test_min_plan_iterations_zero_accepted(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "config.yaml"
+        yaml_path.write_text("min_plan_iterations: 0\nmin_review_iterations: 0\n")
+        cfg = load_config(tmp_path)
+        assert cfg.min_plan_iterations == 0
+        assert cfg.min_review_iterations == 0
+
 
 class TestParseYamlOverrides:
     def test_empty_text(self) -> None:
@@ -619,6 +658,31 @@ class TestParseYamlOverrides:
         assert overrides.report_api_changes_model == "opus-api"
         assert overrides.report_test_cases_model == "opus-tc"
 
+    def test_runner_policy_keys_default_none(self) -> None:
+        overrides = parse_yaml_overrides("task:\n  model: sonnet\n")
+        assert overrides.limit_retry_max is None
+        assert overrides.min_plan_iterations is None
+        assert overrides.min_review_iterations is None
+
+    def test_runner_policy_keys_parsed(self) -> None:
+        text = "limit_retry_max: 3\nmin_plan_iterations: 6\nmin_review_iterations: 2\n"
+        overrides = parse_yaml_overrides(text)
+        assert overrides.limit_retry_max == 3
+        assert overrides.min_plan_iterations == 6
+        assert overrides.min_review_iterations == 2
+
+    def test_per_task_limit_retry_max_below_one_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"limit_retry_max must be >= 1"):
+            parse_yaml_overrides("limit_retry_max: 0\n")
+
+    def test_per_task_min_plan_iterations_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"min_plan_iterations must be >= 0"):
+            parse_yaml_overrides("min_plan_iterations: -2\n")
+
+    def test_per_task_min_review_iterations_negative_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"min_review_iterations must be >= 0"):
+            parse_yaml_overrides("min_review_iterations: -2\n")
+
 
 class TestLoadYamlConfig:
     def test_loads_valid_file(self, tmp_path: Path) -> None:
@@ -731,6 +795,23 @@ class TestApplyYamlOverrides:
         cfg = Config(agent_models={"quality": "opus"})
         apply_yaml_overrides(cfg, YamlOverrides())
         assert cfg.agent_models == {"quality": "opus"}
+
+    def test_runner_policy_keys_override(self) -> None:
+        cfg = Config()
+        apply_yaml_overrides(
+            cfg,
+            YamlOverrides(limit_retry_max=3, min_plan_iterations=6, min_review_iterations=2),
+        )
+        assert cfg.limit_retry_max == 3
+        assert cfg.min_plan_iterations == 6
+        assert cfg.min_review_iterations == 2
+
+    def test_runner_policy_keys_none_is_no_op(self) -> None:
+        cfg = Config(limit_retry_max=5, min_plan_iterations=8, min_review_iterations=4)
+        apply_yaml_overrides(cfg, YamlOverrides())
+        assert cfg.limit_retry_max == 5
+        assert cfg.min_plan_iterations == 8
+        assert cfg.min_review_iterations == 4
 
 
 class TestFindYamlConfig:

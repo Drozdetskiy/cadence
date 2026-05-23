@@ -59,9 +59,12 @@ review_model: claude-opus-4-7
 iteration_delay_ms: 2000
 task_retry_count: 1
 max_iterations: 50
+min_plan_iterations: 1
+min_review_iterations: 1
 session_timeout: "0"
 idle_timeout: "0"
 wait_on_limit: "0"
+limit_retry_max: 10
 
 # Paths and VCS
 default_branch: main
@@ -113,14 +116,19 @@ YAML overrides via the global `--config` option (or auto-discovered `config.yaml
 | `iteration_delay_ms` | int | `2000` | >= 0 | Delay between iterations (ms) |
 | `task_retry_count` | int | `1` | >= 0 | Number of retries on FAILED (0 = none, 1 = one retry) |
 | `max_iterations` | int | `50` | >= 1 | Maximum task iterations per plan |
+| `min_plan_iterations` | int | `1` | >= 0 | Minimum plan iterations before a `PLAN_READY` signal is accepted (floor; also the lower bound of the plan iteration cap) |
+| `min_review_iterations` | int | `1` | >= 0 | Minimum review iterations before a `REVIEW_DONE`/`REVIEW_SECOND_DONE` signal is accepted (floor; also the lower bound of the review iteration cap) |
+
+`min_plan_iterations` / `min_review_iterations` are also overridable per-task via the plan-adjacent `config.yaml`.
 
 ### Timeouts and rate limit
 
-| YAML key | Type | Default | Description |
-|----------|------|---------|-------------|
-| `session_timeout` | duration string | `"0"` (disabled) | Maximum duration of a single claude session |
-| `idle_timeout` | duration string | `"0"` (disabled) | Kill the session if there is no output for the given time |
-| `wait_on_limit` | duration string | `"0"` (disabled) | Wait time before retrying on rate limit |
+| YAML key | Type | Default | Validation | Description |
+|----------|------|---------|------------|-------------|
+| `session_timeout` | duration string | `"0"` (disabled) | duration | Maximum duration of a single claude session |
+| `idle_timeout` | duration string | `"0"` (disabled) | duration | Kill the session if there is no output for the given time |
+| `wait_on_limit` | duration string | `"0"` (disabled) | duration | Wait time before retrying on rate limit |
+| `limit_retry_max` | int | `10` | >= 1 | Maximum number of retries after a rate-limit match before giving up (only consulted when `wait_on_limit > 0`); also overridable per-task |
 
 ### Paths and VCS
 
