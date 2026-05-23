@@ -62,11 +62,8 @@ from cadence.usage import (
     format_phase_summary,
 )
 
-MIN_PLAN_ITERATIONS = 5
 PLAN_ITERATION_DIVISOR = 5
-MIN_REVIEW_ITERATIONS = 3
 REVIEW_ITERATION_DIVISOR = 10
-_LIMIT_RETRY_MAX = 10
 
 
 class Executor(Protocol):
@@ -428,7 +425,8 @@ class Runner:
     def run_claude_review_loop(self) -> bool:
         log = self._deps.logger
         max_review_iterations = max(
-            MIN_REVIEW_ITERATIONS,
+            1,
+            self._app.min_review_iterations,
             self._app.max_iterations // REVIEW_ITERATION_DIVISOR,
         )
 
@@ -491,6 +489,15 @@ class Runner:
                     raise RuntimeError("review failed")
 
                 if is_review_done(result.signal) or is_review_second_done(result.signal):
+                    if i < self._app.min_review_iterations:
+                        log.print(
+                            "review done but minimum review iterations not reached "
+                            "(%d/%d), continuing",
+                            i,
+                            self._app.min_review_iterations,
+                        )
+                        self._sleep_with_cancel(self._iteration_delay)
+                        continue
                     log.print("review loop complete, no more findings")
                     return True
 
@@ -522,7 +529,8 @@ class Runner:
         self._deps.holder.set(PhasePlan)
 
         max_plan_iterations = max(
-            MIN_PLAN_ITERATIONS,
+            1,
+            self._app.min_plan_iterations,
             self._app.max_iterations // PLAN_ITERATION_DIVISOR,
         )
 
@@ -584,6 +592,15 @@ class Runner:
                     raise RuntimeError("plan creation failed")
 
                 if is_plan_ready(result.signal):
+                    if i < self._app.min_plan_iterations:
+                        log.print(
+                            "plan ready but minimum plan iterations not reached "
+                            "(%d/%d), continuing",
+                            i,
+                            self._app.min_plan_iterations,
+                        )
+                        self._sleep_with_cancel(self._iteration_delay)
+                        continue
                     log.print("plan is ready")
                     return True
 
@@ -794,7 +811,7 @@ class Runner:
         prompt: str,
     ) -> Result:
         result = self._run_with_session_timeout(executor, prompt)
-        for _ in range(_LIMIT_RETRY_MAX):
+        for _ in range(self._app.limit_retry_max):
             if result.error is None:
                 return result
             if not isinstance(result.error, LimitPatternError):
@@ -808,8 +825,6 @@ class Runner:
 
 
 __all__ = [
-    "MIN_PLAN_ITERATIONS",
-    "MIN_REVIEW_ITERATIONS",
     "PLAN_ITERATION_DIVISOR",
     "REVIEW_ITERATION_DIVISOR",
     "Dependencies",

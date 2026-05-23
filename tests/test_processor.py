@@ -303,7 +303,8 @@ class TestRunnerPlanCreationErrors:
     def test_max_iterations_warns(self) -> None:
         executor = MagicMock()
         executor.run.return_value = Result(output="no signals", signal="")
-        runner, log, _input_mock = _make_runner(executor, max_iterations=5)
+        # max_iterations=25 -> plan cap = max(min_plan_iterations=1, 25 // 5) = 5
+        runner, log, _input_mock = _make_runner(executor, max_iterations=25)
 
         runner.run_plan_creation()
 
@@ -801,6 +802,7 @@ def _make_review_runner(
     review_second_executor: object | None = None,
     max_iterations: int = 10,
     mode: Mode = Mode.REVIEW,
+    app_cfg: AppConfig | None = None,
 ) -> tuple[Runner, MagicMock, MagicMock]:
     ctx = RunContext(
         mode=mode,
@@ -818,7 +820,7 @@ def _make_review_runner(
         review_executor=review_executor,  # type: ignore[arg-type]
         review_second_executor=review_second_executor,  # type: ignore[arg-type]
     )
-    cfg = AppConfig(
+    cfg = app_cfg or AppConfig(
         max_iterations=max_iterations,
         iteration_delay_ms=0,
     )
@@ -952,7 +954,8 @@ class TestRunClaudeReviewLoop:
             return Result(output="", signal=SignalReviewDone)
 
         executor.run.side_effect = fake_run
-        runner, _log, _ = _make_review_runner(executor)
+        # max_iterations=20 -> review cap = max(min_review_iterations=1, 20 // 10) = 2
+        runner, _log, _ = _make_review_runner(executor, max_iterations=20)
         git = MagicMock()
         git.head_hash.return_value = "samehash"
         runner.set_git_checker(git)
@@ -973,7 +976,8 @@ class TestRunClaudeReviewLoop:
             return Result(output="", signal=SignalReviewDone)
 
         executor.run.side_effect = fake_run
-        runner, _log, _ = _make_review_runner(executor)
+        # max_iterations=20 -> review cap = max(min_review_iterations=1, 20 // 10) = 2
+        runner, _log, _ = _make_review_runner(executor, max_iterations=20)
         git = MagicMock()
         git.head_hash.side_effect = ["before", "after", "after2"]
         runner.set_git_checker(git)
@@ -985,7 +989,7 @@ class TestRunClaudeReviewLoop:
     def test_iteration_cap_respected(self) -> None:
         executor = MagicMock()
         executor.run.return_value = Result(output="", signal="")
-        # max_iterations=50 -> review max = max(3, 50//10) = 5
+        # max_iterations=50 -> review max = max(1, min_review_iterations=1, 50//10) = 5
         runner, log, _ = _make_review_runner(executor, max_iterations=50)
         # No git checker so no-commit detection is disabled.
         assert runner.run_claude_review_loop() is True
@@ -1008,6 +1012,116 @@ class TestRunClaudeReviewLoop:
         )
         runner, _log, _ = _make_review_runner(executor)
         assert runner.run_claude_review_loop() is False
+
+
+class TestRunnerConfigDrivenPolicy:
+    def test_runner_respects_custom_min_plan_iterations(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            min_plan_iterations=2,
+        )
+        runner, _log, _ = _make_runner(executor, app_cfg=cfg)
+
+        assert runner.run_plan_creation() is True
+        # PLAN_READY ignored on iteration 1, accepted on iteration 2.
+        assert executor.run.call_count == 2
+
+    def test_runner_respects_custom_min_review_iterations(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewSecondDone)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            min_review_iterations=2,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+
+        assert runner.run_claude_review_loop() is True
+        # REVIEW_SECOND_DONE ignored on iteration 1, accepted on iteration 2.
+        assert executor.run.call_count == 2
+
+    def test_min_plan_iterations_raises_the_cap(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="no signals", signal="")
+        # max_iterations=5 -> divisor gives 5//5=1, but the floor of 3 raises the cap.
+        cfg = AppConfig(
+            max_iterations=5,
+            iteration_delay_ms=0,
+            min_plan_iterations=3,
+        )
+        runner, _log, _ = _make_runner(executor, app_cfg=cfg)
+
+        assert runner.run_plan_creation() is False
+        # Cap driven by min_plan_iterations (3), not the divisor (1).
+        assert executor.run.call_count == 3
+
+    def test_min_review_iterations_raises_the_cap(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal="")
+        # max_iterations=5 -> divisor gives 5//10=0, but the floor of 3 raises the cap.
+        cfg = AppConfig(
+            max_iterations=5,
+            iteration_delay_ms=0,
+            min_review_iterations=3,
+        )
+        # No git checker so no-commit detection is disabled.
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+
+        assert runner.run_claude_review_loop() is True
+        # Cap driven by min_review_iterations (3), not the divisor (0).
+        assert executor.run.call_count == 3
+
+    def test_plan_runs_at_least_once_when_min_zero_and_max_small(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="done", signal=SignalPlanReady)
+        # min=0 and max_iterations<5 would make the divisor cap 0; the cap floor of 1
+        # guarantees the phase still runs once instead of silently no-opping.
+        cfg = AppConfig(
+            max_iterations=3,
+            iteration_delay_ms=0,
+            min_plan_iterations=0,
+        )
+        runner, _log, _ = _make_runner(executor, app_cfg=cfg)
+
+        assert runner.run_plan_creation() is True
+        assert executor.run.call_count == 1
+
+    def test_review_runs_at_least_once_when_min_zero_and_max_small(self) -> None:
+        executor = MagicMock()
+        executor.run.return_value = Result(output="", signal=SignalReviewDone)
+        # min=0 and max_iterations<10 would make the divisor cap 0; the cap floor of 1
+        # guarantees the phase still runs once instead of silently no-opping.
+        cfg = AppConfig(
+            max_iterations=5,
+            iteration_delay_ms=0,
+            min_review_iterations=0,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+
+        assert runner.run_claude_review_loop() is True
+        assert executor.run.call_count == 1
+
+    def test_runner_respects_custom_limit_retry_max(self) -> None:
+        executor = MagicMock()
+        limit_err = LimitPatternError("You've hit your limit", "claude /usage")
+        executor.run.return_value = Result(output="", signal="", error=limit_err)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            wait_on_limit="1s",
+            limit_retry_max=2,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        runner._sleep_with_cancel = lambda duration: None  # type: ignore[method-assign]
+
+        result = runner._run_with_limit_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        assert isinstance(result.error, LimitPatternError)
+        # 1 initial run + limit_retry_max retries.
+        assert executor.run.call_count == 1 + cfg.limit_retry_max
 
 
 class TestRunnerForwardsCommitFormat:

@@ -181,7 +181,7 @@ Requires: plan_file != ""
 Interactive plan creation through Q&A with Claude.
 
 ```
-max_plan_iterations = max(5, max_iterations // 5)
+max_plan_iterations = max(min_plan_iterations, max_iterations // 5)
 last_revision_feedback = ""
 
 loop 1..max_plan_iterations:
@@ -193,7 +193,8 @@ loop 1..max_plan_iterations:
   Result handling:
   - Error: handle_pattern_match_error, return
   - FAILED signal: return error
-  - PLAN_READY signal: return (success)
+  - PLAN_READY signal: if i < min_plan_iterations, log and continue
+    (floor-before-signal); otherwise return (success)
   - Session timeout: skip output parsing, retry (preserve last_revision_feedback)
 
   If not timed out:
@@ -300,7 +301,7 @@ The SECOND review pass: an iterative loop, invoked from `_run_review_pipeline` a
 - Logged section per iteration: `claude review N: critical/major`.
 
 ```
-max_review_iterations = max(3, max_iterations // 10)
+max_review_iterations = max(min_review_iterations, max_iterations // 10)
 
 loop i = 1..max_review_iterations:
   1. print_section(ClaudeReviewSection(i, "critical/major"))
@@ -308,7 +309,10 @@ loop i = 1..max_review_iterations:
   3. result = run_with_limit_retry(review_loop_executor.run, ReviewSecondPrompt, "claude")
   4. Error: handle_pattern_match_error -> return
   5. FAILED signal: raise error
-  6. REVIEW_DONE or REVIEW_SECOND_DONE signal: return ("no more findings")
+  6. REVIEW_DONE or REVIEW_SECOND_DONE signal: if i < min_review_iterations, log
+     and continue (floor-before-signal, evaluated BEFORE the timeout/HEAD checks
+     below so they are not consulted while the floor is active); otherwise return
+     ("no more findings")
   7. last_session_timed_out: skip HEAD check, continue
   8. HEAD unchanged (head_after == head_before): return ("no changes detected")
   9. log "issues fixed, running another review iteration"
@@ -371,16 +375,16 @@ This is needed because an idle timeout without a signal looks like "found nothin
 ## Rate limit retry: run_with_limit_retry
 
 ```
-loop:
-  result = run_with_session_timeout(run, prompt, tool_name)
-
+result = run_with_session_timeout(run, prompt, tool_name)
+loop limit_retry_max times:
   If not error: return result
   If not LimitPatternError: return result (do not retry)
   If wait_on_limit <= 0: return result (no wait config)
 
   log "rate limit detected, waiting..."
   sleep_with_cancel(wait_on_limit)
-  -- retry indefinitely
+  result = run_with_session_timeout(run, prompt, tool_name)
+return result
 ```
 
 Order of checks:
@@ -388,7 +392,8 @@ Order of checks:
 2. PatternMatchError (regular error): return without retry
 3. Other errors: return without retry
 
-Retry indefinitely: the loop is not bounded by attempt count, only by cancellation.
+Bounded retry: the loop retries at most `limit_retry_max` times (config key, default
+10) before returning the last result, so a persistent rate limit cannot loop forever.
 
 ## Break / pause / resume mechanism
 
@@ -420,18 +425,31 @@ Claude review loop:
 
 ## Iteration calculation
 
-Constants:
+The iteration cap is config-driven. The two divisors stay module constants, while
+the lower bounds come from the `min_plan_iterations` / `min_review_iterations` config
+keys (both default `1`):
 ```
-MIN_REVIEW_ITERATIONS    = 3     # minimum for claude review
 REVIEW_ITERATION_DIVISOR = 10    # review iterations = max_iterations // 10
-MIN_PLAN_ITERATIONS      = 5     # minimum for plan creation
 PLAN_ITERATION_DIVISOR   = 5     # plan iterations = max_iterations // 5
+
+max_review_iterations = max(1, min_review_iterations, max_iterations // 10)
+max_plan_iterations   = max(1, min_plan_iterations,   max_iterations // 5)
 ```
 
-When max_iterations = 50 (default):
+The leading `1` guarantees at least one iteration even when `min_*_iterations` is set
+to `0` and `max_iterations` is small enough that `max_iterations // DIVISOR` is `0`
+(so the phase never silently runs zero iterations).
+
+The same `min_*_iterations` keys also act as a floor-before-signal: a `PLAN_READY` /
+`REVIEW_DONE` / `REVIEW_SECOND_DONE` signal is ignored while the iteration index is
+below the floor, forcing that many iterations before completion is accepted. With the
+default of `1`, the completion signal is accepted on the first iteration (behaviour is
+unchanged from before these keys existed).
+
+When max_iterations = 50 (default) with the default floors of 1:
 - Task: 1..50
-- Review: max(3, 50 // 10) = 5
-- Plan: max(5, 50 // 5) = 10
+- Review: max(1, 50 // 10) = 5
+- Plan: max(1, 50 // 5) = 10
 
 ## Prompt system
 
