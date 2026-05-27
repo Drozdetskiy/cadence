@@ -1,9 +1,10 @@
 # Changelog
 
-## v0.25.3 - 2026-05-24
+## v0.25.3 - 2026-05-27
 
 ### New Features
 
+- New `review_second.model` (or top-level `review_second_model:`) config key runs the review loop's second pass on a different Claude model from the first pass; leave it empty (the default) to keep reusing `review_model`. The bundled second-pass prompt emits a `<<<CADENCE:REVIEW_SECOND_DONE>>>` termination signal, and the review loop now also terminates on the legacy `<<<CADENCE:REVIEW_DONE>>>` signal so existing custom prompts keep working.
 - Three policy values are now tunable config keys, settable repo-level in `.cadence/config.yaml` and per-task in `config.yaml`: `limit_retry_max` (default `10`, must be `>= 1`) caps how many times a rate-limit wait-and-retry repeats before giving up; `min_plan_iterations` and `min_review_iterations` (both default `1`, must be `>= 0`) set a minimum number of plan / review iterations. Out-of-range values are rejected at config load and flagged by `cadence doctor`.
 - `min_plan_iterations` / `min_review_iterations` above `1` now force that many plan / review iterations before a completion signal (`PLAN_READY` / `REVIEW_DONE` / `REVIEW_SECOND_DONE`) is accepted — the signal is ignored while below the floor. With the default of `1`, zero-config behavior is unchanged (the completion signal is still accepted on the first iteration).
 
