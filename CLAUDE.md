@@ -26,7 +26,7 @@ src/cadence/
     signals.py      - Signal payload parsing (QUESTION, PLAN_READY, ALL_TASKS_DONE, TASK_FAILED, REVIEW_DONE) + is_* helpers
     prompts.py      - Prompt loading with local override fallback; build_plan_prompt, build_task_prompt, build_review_first_prompt, build_review_second_prompt; expand_agent_references / format_agent_expansion / replace_prompt_variables
     agents.py       - Agent loader (local .cadence/agents/<name>.txt → embedded cadence.defaults.agents); AgentDef, frontmatter parser, model normalization
-    runner.py       - Runner: orchestrates plan creation, task execution, and review (run_claude_review + run_claude_review_loop) phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch
+    runner.py       - Runner: orchestrates plan creation, task execution, and review (run_claude_review + run_claude_review_loop) phases via Protocol dependencies; supports an optional second review_executor; break/pause + session timeout; Mode.REVIEW dispatch; retries any failing claude call (any `result.error`) up to `limit_retry_max` times via `_run_with_retry`, except the `claude_error_patterns` hard-stop which fails immediately
   progress/
     colors.py       - Rich Style mapping from ColorConfig
     flock.py        - File locking via fcntl.flock

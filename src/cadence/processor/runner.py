@@ -742,7 +742,7 @@ class Runner:
         phase: str = "",
     ) -> Result:
         start = time.monotonic()
-        result = self._run_with_limit_retry(executor, prompt)
+        result = self._run_with_retry(executor, prompt)
         duration_ms = int((time.monotonic() - start) * 1000)
         iter_stats = UsageStats()
         iter_stats.add(result.usage, duration_ms=duration_ms)
@@ -805,21 +805,25 @@ class Runner:
         if self._chain_collector is not None:
             self._chain_collector.merge(phase_stats)
 
-    def _run_with_limit_retry(
+    def _run_with_retry(
         self,
         executor: Executor,
         prompt: str,
     ) -> Result:
         result = self._run_with_session_timeout(executor, prompt)
-        for _ in range(self._app.limit_retry_max):
+        for attempt in range(1, self._app.limit_retry_max + 1):
             if result.error is None:
                 return result
-            if not isinstance(result.error, LimitPatternError):
+            if isinstance(result.error, PatternMatchError):
                 return result
-            if self._wait_on_limit <= 0:
-                return result
-            self._deps.logger.warn("rate limit detected, waiting...")
-            self._sleep_with_cancel(self._wait_on_limit)
+            if isinstance(result.error, LimitPatternError) and self._wait_on_limit > 0:
+                backoff = self._wait_on_limit
+            else:
+                backoff = self._iteration_delay
+            self._deps.logger.warn(
+                "retry %d/%d: %s", attempt, self._app.limit_retry_max, result.error
+            )
+            self._sleep_with_cancel(backoff)
             result = self._run_with_session_timeout(executor, prompt)
         return result
 
