@@ -1115,13 +1115,122 @@ class TestRunnerConfigDrivenPolicy:
             limit_retry_max=2,
         )
         runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
-        runner._sleep_with_cancel = lambda duration: None  # type: ignore[method-assign]
+        waits: list[float] = []
+        runner._sleep_with_cancel = lambda duration: waits.append(duration)  # type: ignore[method-assign]
 
-        result = runner._run_with_limit_retry(executor, "prompt")  # type: ignore[arg-type]
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
 
         assert isinstance(result.error, LimitPatternError)
         # 1 initial run + limit_retry_max retries.
         assert executor.run.call_count == 1 + cfg.limit_retry_max
+        # Rate-limit error with wait_on_limit>0 backs off by wait_on_limit (1s).
+        assert waits == [1.0] * cfg.limit_retry_max
+
+    def test_runner_retries_generic_error(self) -> None:
+        executor = MagicMock()
+        generic_err = RuntimeError("claude exited with code 1 without completing")
+        executor.run.side_effect = [
+            Result(output="", signal="", error=generic_err),
+            Result(output="", signal="", error=generic_err),
+            Result(output="ok", signal=SignalReviewDone),
+        ]
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=500,
+            limit_retry_max=10,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        waits: list[float] = []
+        runner._sleep_with_cancel = lambda duration: waits.append(duration)  # type: ignore[method-assign]
+
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        assert result.error is None
+        assert executor.run.call_count == 3
+        # Generic error backs off by iteration_delay (500ms), not wait_on_limit.
+        assert waits == [0.5, 0.5]
+        # Each retry attempt is logged with its attempt number and the error.
+        assert _log.warn.call_args_list == [
+            call("retry %d/%d: %s", 1, cfg.limit_retry_max, generic_err),
+            call("retry %d/%d: %s", 2, cfg.limit_retry_max, generic_err),
+        ]
+
+    def test_runner_gives_up_after_limit_retry_max(self) -> None:
+        executor = MagicMock()
+        generic_err = RuntimeError("claude exited with code 1 without completing")
+        executor.run.return_value = Result(output="", signal="", error=generic_err)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            limit_retry_max=4,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        runner._sleep_with_cancel = lambda duration: None  # type: ignore[method-assign]
+
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        assert result.error is generic_err
+        assert executor.run.call_count == 1 + cfg.limit_retry_max
+
+    def test_runner_retries_with_wait_on_limit_zero(self) -> None:
+        executor = MagicMock()
+        generic_err = RuntimeError("transient failure")
+        executor.run.side_effect = [
+            Result(output="", signal="", error=generic_err),
+            Result(output="ok", signal=SignalReviewDone),
+        ]
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            wait_on_limit="0",
+            limit_retry_max=10,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        runner._sleep_with_cancel = lambda duration: None  # type: ignore[method-assign]
+
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        assert result.error is None
+        assert executor.run.call_count == 2
+
+    def test_runner_limit_error_without_wait_uses_iteration_delay(self) -> None:
+        executor = MagicMock()
+        limit_err = LimitPatternError("You've hit your limit", "claude /usage")
+        executor.run.return_value = Result(output="", signal="", error=limit_err)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=250,
+            wait_on_limit="0",
+            limit_retry_max=3,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        waits: list[float] = []
+        runner._sleep_with_cancel = lambda duration: waits.append(duration)  # type: ignore[method-assign]
+
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        # A rate-limit error with wait_on_limit<=0 is still retried (old code
+        # returned immediately), backing off by iteration_delay instead.
+        assert isinstance(result.error, LimitPatternError)
+        assert executor.run.call_count == 1 + cfg.limit_retry_max
+        assert waits == [0.25] * cfg.limit_retry_max
+
+    def test_runner_does_not_retry_pattern_match_error(self) -> None:
+        executor = MagicMock()
+        pattern_err = PatternMatchError("API Error:", "claude /usage")
+        executor.run.return_value = Result(output="", signal="", error=pattern_err)
+        cfg = AppConfig(
+            max_iterations=50,
+            iteration_delay_ms=0,
+            limit_retry_max=10,
+        )
+        runner, _log, _ = _make_review_runner(executor, app_cfg=cfg)
+        runner._sleep_with_cancel = lambda duration: None  # type: ignore[method-assign]
+
+        result = runner._run_with_retry(executor, "prompt")  # type: ignore[arg-type]
+
+        assert result.error is pattern_err
+        assert executor.run.call_count == 1
 
 
 class TestRunnerForwardsCommitFormat:

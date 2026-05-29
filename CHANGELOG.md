@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.25.4 - 2026-05-29
+
+### Changed
+
+- cadence now automatically retries ANY failing `claude` call — API 5xx / errors, a subprocess crash (e.g. `claude exited with code N without completing`), network timeouts, and rate limits — up to `limit_retry_max` (default `10`) times out of the box, instead of retrying only recognized rate limits. The deliberate `claude_error_patterns` hard-stop still fails immediately without retrying. Each retry is logged as `retry N/M: <error>`. Rate-limit retries with `wait_on_limit > 0` still wait that configured duration; all other retries wait `iteration_delay_ms`.
+
 ## v0.25.3 - 2026-05-27
 
 ### New Features

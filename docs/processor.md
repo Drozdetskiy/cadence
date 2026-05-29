@@ -188,7 +188,7 @@ loop 1..max_plan_iterations:
   1. print_section(PlanIterationSection(i))
   2. Build prompt = build_plan_prompt()
   3. If last_revision_feedback present: append "PREVIOUS DRAFT FEEDBACK: ..."
-  4. run_with_limit_retry(claude.run, prompt, "claude")
+  4. run_with_retry(claude.run, prompt)
 
   Result handling:
   - Error: handle_pattern_match_error, return
@@ -230,7 +230,7 @@ loop i = 1..max_iterations:
      - a separate threading.Event checked on break
      - cancels only the current session on Ctrl+\
 
-  4. result = run_with_limit_retry(claude.run, prompt, "claude")
+  4. result = run_with_retry(claude.run, prompt)
 
   5. Check for manual break:
      - is_break(): break_event.is_set() and the main thread is not cancelled
@@ -278,7 +278,7 @@ The FIRST review pass: a single one-shot review run.
 - Logged section: `claude review 0: all findings`.
 
 ```
-1. result = run_with_limit_retry(review_claude.run, prompt, "claude")
+1. result = run_with_retry(review_claude.run, prompt)
 2. Error: handle_pattern_match_error -> raise
 3. FAILED signal: raise error
 4. REVIEW_DONE signal: ok (sets last_review_done = True)
@@ -306,7 +306,7 @@ max_review_iterations = max(min_review_iterations, max_iterations // 10)
 loop i = 1..max_review_iterations:
   1. print_section(ClaudeReviewSection(i, "critical/major"))
   2. head_before = head_hash() (for no-commit detection)
-  3. result = run_with_limit_retry(review_loop_executor.run, ReviewSecondPrompt, "claude")
+  3. result = run_with_retry(review_loop_executor.run, ReviewSecondPrompt)
   4. Error: handle_pattern_match_error -> return
   5. FAILED signal: raise error
   6. REVIEW_DONE or REVIEW_SECOND_DONE signal: if i < min_review_iterations, log
@@ -372,28 +372,40 @@ The processor handles the result via the `result.idle_timed_out` flag.
 If idle timeout fires without a signal: `last_session_timed_out = True`.
 This is needed because an idle timeout without a signal looks like "found nothing" to review loops, when in fact the session "hung".
 
-## Rate limit retry: run_with_limit_retry
+## Error retry: run_with_retry
+
+`_run_with_retry` retries on ANY error (`result.error is not None`), not just
+recognized rate limits. The one exception is the user hard-stop `PatternMatchError`
+(a `claude_error_patterns` hit), which is never retried.
 
 ```
-result = run_with_session_timeout(run, prompt, tool_name)
-loop limit_retry_max times:
-  If not error: return result
-  If not LimitPatternError: return result (do not retry)
-  If wait_on_limit <= 0: return result (no wait config)
+result = run_with_session_timeout(run, prompt)
+loop attempt = 1..limit_retry_max:
+  If result.error is None: return result (success)
+  If PatternMatchError: return result (user hard-stop, never retried)
 
-  log "rate limit detected, waiting..."
-  sleep_with_cancel(wait_on_limit)
-  result = run_with_session_timeout(run, prompt, tool_name)
-return result
+  If LimitPatternError and wait_on_limit > 0: backoff = wait_on_limit
+  Else: backoff = iteration_delay
+
+  log "retry %d/%d: %s" (attempt, limit_retry_max, error)
+  sleep_with_cancel(backoff)
+  result = run_with_session_timeout(run, prompt)
+return result  # last error falls through to _check_result_error, which raises it
 ```
 
-Order of checks:
-1. LimitPatternError: if a wait is configured -> retry; if not -> return (will fall through to error handling)
-2. PatternMatchError (regular error): return without retry
-3. Other errors: return without retry
+What is retried:
+- API 5xx / errors, subprocess crash (e.g. `claude exited with code N without
+  completing`), network timeouts, rate limits — any non-`PatternMatchError` error.
+- `PatternMatchError` (a `claude_error_patterns` hit) is the only exception: it is
+  returned immediately and `_check_result_error` raises it (`handle_pattern_match_error`).
 
-Bounded retry: the loop retries at most `limit_retry_max` times (config key, default
-10) before returning the last result, so a persistent rate limit cannot loop forever.
+Backoff rule:
+- `LimitPatternError` with `wait_on_limit > 0` waits `wait_on_limit`.
+- Every other case (generic errors, or rate-limit when `wait_on_limit <= 0`) waits
+  `iteration_delay_ms`. No exponential backoff or jitter.
+
+Bounded retry: 1 initial run + up to `limit_retry_max` retries (config key, default
+10) before returning the last result, so a persistent error cannot loop forever.
 
 ## Break / pause / resume mechanism
 
